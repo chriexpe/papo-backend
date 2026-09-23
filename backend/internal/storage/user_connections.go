@@ -206,6 +206,9 @@ func RotateUserConnection(ctx context.Context, userID, oldHash, newID, newHash s
 	); err != nil {
 		return models.UserConnection{}, fmt.Errorf("falha ao rotacionar a conexão: %w", err)
 	}
+	if err := movePushRegistrationsTx(ctx, tx, oldID, newConn.ID); err != nil {
+		return models.UserConnection{}, fmt.Errorf("falha ao mover push registrations: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return models.UserConnection{}, fmt.Errorf("falha ao rotacionar a conexão: %w", err)
@@ -218,38 +221,27 @@ func RotateUserConnection(ctx context.Context, userID, oldHash, newID, newHash s
 // conexão). Retorna ErrNotFound quando a conexão não existe, pertence a outro
 // usuário ou já foi substituída.
 func RevokeUserConnection(ctx context.Context, userID, connectionID string) error {
-	result, err := GetDB().ExecContext(ctx,
+	tx,err:=GetDB().BeginTx(ctx,nil); if err!=nil{return err}; defer tx.Rollback()
+	result, err := tx.ExecContext(ctx,
 		"UPDATE user_connections SET replaced_at = now() WHERE id = $1 AND user_id = $2 AND replaced_at IS NULL",
-		connectionID, userID,
-	)
-	if err != nil {
-		return fmt.Errorf("falha ao revogar a conexão: %w", err)
-	}
-
-	if n, _ := result.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-
-	return nil
+		connectionID, userID)
+	if err != nil { return fmt.Errorf("falha ao revogar a conexão: %w", err) }
+	if n,_:=result.RowsAffected(); n==0 { return ErrNotFound }
+	if err:=deletePushRegistrationsForConnectionTx(ctx,tx,userID,connectionID); err!=nil{return err}
+	return tx.Commit()
 }
 
 // RevokeAllUserConnections revoga todas as conexões ativas do usuário
 // (reuso de token, drop de todas as conexões, troca de senha). Retorna o
 // número de conexões revogadas.
 func RevokeAllUserConnections(ctx context.Context, userID string) (int, error) {
-	result, err := GetDB().ExecContext(ctx,
-		"UPDATE user_connections SET replaced_at = now() WHERE user_id = $1 AND replaced_at IS NULL",
-		userID,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("falha ao revogar as conexões do usuário: %w", err)
-	}
-
-	n, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("falha ao revogar as conexões do usuário: %w", err)
-	}
-
+	tx,err:=GetDB().BeginTx(ctx,nil); if err!=nil{return 0,err}; defer tx.Rollback()
+	result, err := tx.ExecContext(ctx,
+		"UPDATE user_connections SET replaced_at = now() WHERE user_id = $1 AND replaced_at IS NULL", userID)
+	if err != nil { return 0, fmt.Errorf("falha ao revogar as conexões do usuário: %w", err) }
+	if err:=deletePushRegistrationsForUserTx(ctx,tx,userID); err!=nil{return 0,err}
+	n,err:=result.RowsAffected(); if err!=nil{return 0,err}
+	if err:=tx.Commit();err!=nil{return 0,err}
 	return int(n), nil
 }
 
@@ -277,6 +269,9 @@ func HandleConnectionReuse(ctx context.Context, userID string) (int, error) {
 		userID,
 	); err != nil {
 		return 0, fmt.Errorf("falha ao tratar o reuso de token: %w", err)
+	}
+	if err:=deletePushRegistrationsForUserTx(ctx,tx,userID); err!=nil {
+		return 0, fmt.Errorf("falha ao limpar push registrations: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
