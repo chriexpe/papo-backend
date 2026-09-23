@@ -140,13 +140,15 @@ type NotificationDelivery struct {
 // Rotina async/best-effort: falhas individuais são logadas e puladas.
 //
 // Triggers (geram row + evento): menção direta @user_id no conteúdo,
-// reply_to de uma mensagem do usuário e @everyone (somente quando o autor
-// tem a permissão everyone_message; sem a permissão, @everyone não faz
-// nada). O autor da mensagem nunca é notificado. Configuração 'all' sem
+// reply_to de uma mensagem do usuário quando notifyReply=true e @everyone
+// (somente quando o autor tem a permissão everyone_message; sem a permissão,
+// @everyone não faz nada). notifyReply=false desliga somente o trigger da
+// resposta; os outros triggers e a configuração 'all' continuam valendo.
+// O autor da mensagem nunca é notificado. Configuração 'all' sem
 // trigger: só evento (id efêmero, sem row). Configuração 'off': nada.
 // Somente usuários que podem ler o canal (mesma regra do broadcast do
 // canal) são notificados.
-func DispatchMessageNotifications(ctx context.Context, requestID string, message models.Message) []NotificationDelivery {
+func DispatchMessageNotifications(ctx context.Context, requestID string, message models.Message, notifyReply bool) []NotificationDelivery {
 	authorID := ""
 	content := ""
 	if message.AuthorID != nil {
@@ -161,7 +163,7 @@ func DispatchMessageNotifications(ctx context.Context, requestID string, message
 		triggered[match[1]] = true
 	}
 
-	if message.ReplyTo != nil && *message.ReplyTo != "" {
+	if notifyReply && message.ReplyTo != nil && *message.ReplyTo != "" {
 		referenced, err := storage.GetMessageByID(ctx, *message.ReplyTo)
 		if err != nil {
 			if !errors.Is(err, storage.ErrNotFound) {
