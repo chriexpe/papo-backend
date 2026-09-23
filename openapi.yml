@@ -688,7 +688,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/PushRegistration'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: Campo ausente ou inválido
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -710,7 +714,11 @@ paths:
         '204':
           description: Registration ausente ou removida
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: Campo ausente ou inválido
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
