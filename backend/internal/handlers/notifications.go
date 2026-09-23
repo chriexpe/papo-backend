@@ -189,4 +189,7 @@ func dispatchMessageNotifications(ctx context.Context, requestID string, message
 			MessageContent: d.MessageContent,
 		})
 	}
+	// Push consumes the exact same eligibility result as WebSocket delivery.
+	// Transport failures are best-effort and never fail message creation.
+	services.DeliverPushForNotifications(ctx, requestID, deliveries, message)
 }
