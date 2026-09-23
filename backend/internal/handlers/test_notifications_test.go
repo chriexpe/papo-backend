@@ -589,6 +589,94 @@ func TestCreateMessageRouteReplyToCreatesNotification(t *testing.T) {
 	}
 }
 
+// TestCreateMessageRouteReplyToNotifyFalseSuppressesNotification garante que
+// o campo multipart notify_reply=false desliga o trigger implícito da resposta.
+func TestCreateMessageRouteReplyToNotifyFalseSuppressesNotification(t *testing.T) {
+	e := newApp()
+	ownerID, ownerToken := registerAndLogin(t, e)
+	createServerFor(t, ownerID)
+	channel := createChannelFor(t, "chn_"+randHex(4))
+	otherID, otherToken := registerAndLogin(t, e)
+
+	targetRec := doMultipart(t, e, http.MethodPost, "/messages",
+		map[string]string{"channel_id": channel.ID, "content": "mensagem alvo"}, nil, authCookie(otherToken))
+	if targetRec.Code != http.StatusCreated {
+		t.Fatalf("esperava status 201 para mensagem alvo, obtive %d (corpo: %s)", targetRec.Code, targetRec.Body.String())
+	}
+	var target models.MessageWithAttachment
+	if err := json.Unmarshal(targetRec.Body.Bytes(), &target); err != nil {
+		t.Fatalf("falha ao decodificar mensagem alvo: %v", err)
+	}
+
+	rec := doMultipart(t, e, http.MethodPost, "/messages",
+		map[string]string{
+			"channel_id":   channel.ID,
+			"content":      "resposta silenciosa",
+			"reply_to":     target.ID,
+			"notify_reply": "false",
+		}, nil, authCookie(ownerToken))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperava status 201, obtive %d (corpo: %s)", rec.Code, rec.Body.String())
+	}
+
+	assertNoUserNotification(t, e, otherToken, otherID)
+}
+
+// TestCreateMessageRouteReplyNotifyFalseKeepsDirectMention garante que o
+// toggle da resposta não suprime uma menção direta independente no conteúdo.
+func TestCreateMessageRouteReplyNotifyFalseKeepsDirectMention(t *testing.T) {
+	e := newApp()
+	ownerID, ownerToken := registerAndLogin(t, e)
+	createServerFor(t, ownerID)
+	channel := createChannelFor(t, "chn_"+randHex(4))
+	otherID, otherToken := registerAndLogin(t, e)
+
+	targetRec := doMultipart(t, e, http.MethodPost, "/messages",
+		map[string]string{"channel_id": channel.ID, "content": "mensagem alvo"}, nil, authCookie(otherToken))
+	if targetRec.Code != http.StatusCreated {
+		t.Fatalf("esperava status 201 para mensagem alvo, obtive %d (corpo: %s)", targetRec.Code, targetRec.Body.String())
+	}
+	var target models.MessageWithAttachment
+	if err := json.Unmarshal(targetRec.Body.Bytes(), &target); err != nil {
+		t.Fatalf("falha ao decodificar mensagem alvo: %v", err)
+	}
+
+	rec := doMultipart(t, e, http.MethodPost, "/messages",
+		map[string]string{
+			"channel_id":   channel.ID,
+			"content":      "resposta @" + otherID,
+			"reply_to":     target.ID,
+			"notify_reply": "false",
+		}, nil, authCookie(ownerToken))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("esperava status 201, obtive %d (corpo: %s)", rec.Code, rec.Body.String())
+	}
+
+	list := waitForUserNotifications(t, e, otherToken, otherID, 1)
+	if len(list.Notifications) != 1 {
+		t.Fatalf("menção direta deveria continuar notificando")
+	}
+}
+
+// TestCreateMessageRouteReplyNotifyInvalid garante contrato estrito booleano
+// no multipart, em vez de ignorar silenciosamente um valor inválido.
+func TestCreateMessageRouteReplyNotifyInvalid(t *testing.T) {
+	e := newApp()
+	ownerID, ownerToken := registerAndLogin(t, e)
+	createServerFor(t, ownerID)
+	channel := createChannelFor(t, "chn_"+randHex(4))
+
+	rec := doMultipart(t, e, http.MethodPost, "/messages",
+		map[string]string{
+			"channel_id":   channel.ID,
+			"content":      "mensagem",
+			"notify_reply": "talvez",
+		}, nil, authCookie(ownerToken))
+
+	assertProblem(t, rec, http.StatusBadRequest, "invalid-param", "Parâmetro inválido",
+		"notify_reply deve ser true ou false")
+}
+
 // TestCreateMessageRouteEveryoneCreatesNotifications garante que @everyone
 // enviado pelo dono do servidor (permissão everyone_message implícita) gera
 // notificação para os demais usuários do canal.
