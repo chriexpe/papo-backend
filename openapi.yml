@@ -3051,6 +3051,15 @@ components:
           description: >
             Opcional. Id da mensagem respondida; deve existir e estar no mesmo
             canal.
+        notify_reply:
+          type: boolean
+          default: true
+          description: >
+            Opcional. Quando reply_to está presente, controla somente se a
+            resposta em si é um trigger de notificação para o autor da mensagem
+            referenciada. Omitido equivale a true para compatibilidade com
+            clientes anteriores. false não suprime menções diretas, @everyone
+            nem entregas causadas por notification_settings=all.
         attachments:
           type: array
           items:

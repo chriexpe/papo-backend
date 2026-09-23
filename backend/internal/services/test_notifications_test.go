@@ -497,6 +497,64 @@ func TestDispatchMessageNotificationsReplyTo(t *testing.T) {
 	}
 }
 
+// TestDispatchMessageNotificationsReplySuppressed garante que notifyReply=false
+// remove somente o trigger implícito da resposta em only_mentions.
+func TestDispatchMessageNotificationsReplySuppressed(t *testing.T) {
+	cleanServers(testCtx())
+	owner := notificationTestUser(t)
+	other := notificationTestUser(t)
+	channel := notificationTestChannel(t, owner.ID)
+
+	target, err := storage.CreateMessage(context.Background(), channel.ID, other.ID, "mensagem alvo", "", nil)
+	if err != nil {
+		t.Fatalf("falha ao criar mensagem alvo: %v", err)
+	}
+	message, err := storage.CreateMessage(context.Background(), channel.ID, owner.ID, "resposta", target.ID, nil)
+	if err != nil {
+		t.Fatalf("falha ao criar resposta: %v", err)
+	}
+
+	deliveries := DispatchMessageNotifications(context.Background(), "req-1", message, false)
+	if got := notificationDeliveryCount(deliveries, other.ID); got != 0 {
+		t.Errorf("notifyReply=false não deveria gerar trigger de resposta; obtive %d entregas", got)
+	}
+}
+
+// TestDispatchMessageNotificationsReplySuppressedAllStillDelivers garante que
+// notifyReply=false não vira um bloqueio global: notification_settings=all
+// continua entregando o evento comum, sem criar row de trigger da resposta.
+func TestDispatchMessageNotificationsReplySuppressedAllStillDelivers(t *testing.T) {
+	cleanServers(testCtx())
+	owner := notificationTestUser(t)
+	other := notificationTestUser(t)
+	channel := notificationTestChannel(t, owner.ID)
+
+	if _, err := UpdateChannelUserSetting(testCtx(), other.ID, channel.ID, other.ID, "all"); err != nil {
+		t.Fatalf("falha ao configurar notifications=all: %v", err)
+	}
+	target, err := storage.CreateMessage(context.Background(), channel.ID, other.ID, "mensagem alvo", "", nil)
+	if err != nil {
+		t.Fatalf("falha ao criar mensagem alvo: %v", err)
+	}
+	message, err := storage.CreateMessage(context.Background(), channel.ID, owner.ID, "resposta", target.ID, nil)
+	if err != nil {
+		t.Fatalf("falha ao criar resposta: %v", err)
+	}
+
+	deliveries := DispatchMessageNotifications(context.Background(), "req-1", message, false)
+	if got := notificationDeliveryCount(deliveries, other.ID); got != 1 {
+		t.Fatalf("notifications=all deveria continuar entregando; obtive %d entregas", got)
+	}
+
+	list, err := ListUserNotifications(testCtx(), other.ID, other.ID, nil, "")
+	if err != nil {
+		t.Fatalf("falha ao listar notificações: %v", err)
+	}
+	if len(list.Notifications) != 0 {
+		t.Errorf("reply suprimido não deveria criar row persistida; obtive %d", len(list.Notifications))
+	}
+}
+
 // TestDispatchMessageNotificationsEveryone garante que @everyone enviado pelo
 // dono do servidor (permissão everyone_message implícita) gera entrega para
 // os demais usuários do canal, nunca para o autor.
@@ -756,5 +814,5 @@ func notificationDeliveryCount(deliveries []NotificationDelivery, userID string)
 // dispatchMessageNotifications encapsula a chamada ao dispatch.
 func dispatchMessageNotifications(t *testing.T, requestID string, message models.Message) []NotificationDelivery {
 	t.Helper()
-	return DispatchMessageNotifications(context.Background(), requestID, message)
+	return DispatchMessageNotifications(context.Background(), requestID, message, true)
 }

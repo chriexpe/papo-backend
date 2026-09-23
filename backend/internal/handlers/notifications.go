@@ -172,8 +172,8 @@ func ReadNotificationHandler(baseURL string, c echo.Context) error {
 // mensagem recém-criada (menções, replies e @everyone) e distribui os eventos
 // new_notification em unicast. Best-effort: falhas são logadas e não afetam a
 // mensagem já criada.
-func dispatchMessageNotifications(ctx context.Context, requestID string, message models.Message) {
-	deliveries := services.DispatchMessageNotifications(ctx, requestID, message)
+func dispatchMessageNotifications(ctx context.Context, requestID string, message models.Message, notifyReply bool) {
+	deliveries := services.DispatchMessageNotifications(ctx, requestID, message, notifyReply)
 	if len(deliveries) == 0 {
 		return
 	}
