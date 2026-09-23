@@ -68,8 +68,10 @@ func ListMessagesHandler(baseURL string, c echo.Context) error {
 }
 
 // CreateMessageHandler implementa POST /messages (multipart/form-data).
-// Campos: channel_id (obrigatório), content (opcional) e attachments
-// (arquivos, opcionais, campo repetível). Permissão: send_messages do canal
+// Campos: channel_id (obrigatório), content, reply_to, notify_reply (opcionais)
+// e attachments (arquivos, opcionais, campo repetível). notify_reply controla
+// somente o trigger implícito da resposta e assume true quando omitido.
+// Permissão: send_messages do canal
 // (livre em canais sem roles definidas) e send_attachment no servidor quando
 // há attachments.
 func CreateMessageHandler(baseURL string, c echo.Context) error {
@@ -91,6 +93,24 @@ func CreateMessageHandler(baseURL string, c echo.Context) error {
 	channelID := c.FormValue("channel_id")
 	content := c.FormValue("content")
 	replyTo := c.FormValue("reply_to")
+
+	// Compatibilidade com clientes anteriores: uma resposta continua
+	// notificando o autor da mensagem referenciada quando notify_reply não é
+	// enviado. O campo controla somente esse trigger implícito; menções diretas,
+	// @everyone e notification_settings=all continuam independentes.
+	notifyReply := true
+	if value := c.FormValue("notify_reply"); value != "" {
+		switch value {
+		case "true":
+			notifyReply = true
+		case "false":
+			notifyReply = false
+		default:
+			return utils.SendProblem(c, baseURL, http.StatusBadRequest,
+				"invalid-param", "Parâmetro inválido",
+				"notify_reply deve ser true ou false")
+		}
+	}
 
 	var inputs []services.AttachmentInput
 	if c.Request().MultipartForm != nil {
@@ -169,7 +189,7 @@ func CreateMessageHandler(baseURL string, c echo.Context) error {
 
 	// Dispara as notificações da mensagem em background (menções, replies e
 	// @everyone); as entregas chegam via WS new_notification (unicast).
-	go dispatchMessageNotifications(context.Background(), requestID, message.Message)
+	go dispatchMessageNotifications(context.Background(), requestID, message.Message, notifyReply)
 
 	return c.JSON(http.StatusCreated, message)
 }
