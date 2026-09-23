@@ -658,6 +658,74 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /users/{user_id}/push_registrations/{installation_id}:
+    put:
+      tags: [Notifications]
+      summary: Registra uma capability de push desta instalação
+      description: >
+        Registra uma capability delegada para entrega via Papo Push Relay.
+        O backend nunca recebe token FCM nem credenciais Firebase. address e
+        auth_token são write-only e ligados à sessão autenticada atual.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - name: installation_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushRegistrationRequest'
+      responses:
+        '200':
+          description: Registration criada ou atualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushRegistration'
+        '400':
+          description: Campo ausente ou inválido
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Notifications]
+      summary: Remove a capability de push desta instalação
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - name: installation_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Registration ausente ou removida
+        '400':
+          description: Campo ausente ou inválido
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /users/{user_id}/notifications:
     get:
       tags: [Notifications]
@@ -3056,6 +3124,56 @@ components:
           items:
             type: string
             format: binary
+
+    PushRegistrationRequest:
+      type: object
+      required: [provider, address, auth_token, platform]
+      properties:
+        provider:
+          type: string
+          enum: [papo_relay]
+        address:
+          type: string
+          format: uri
+          writeOnly: true
+          description: >
+            HTTPS capability endpoint emitido por push.papo.chat. Não é um
+            token FCM e nunca é retornado pelo backend.
+        auth_token:
+          type: string
+          writeOnly: true
+          description: Bearer secret da capability; nunca retornado nem logado.
+        platform:
+          type: string
+          enum: [android]
+        app_version:
+          type: string
+          nullable: true
+
+    PushRegistration:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        installation_id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+          enum: [papo_relay]
+        platform:
+          type: string
+          enum: [android]
+        app_version:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     UpdateMessageRequest:
       type: object

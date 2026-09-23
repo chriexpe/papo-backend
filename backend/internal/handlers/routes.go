@@ -65,6 +65,12 @@ func RegisterUserRoutes(e *echo.Echo, cfg *config.Config) {
 	e.PUT("/users/:user_id/read_notification", func(c echo.Context) error {
 		return ReadNotificationHandler(cfg.BaseURL, c)
 	}, middleware.JWTMiddleware)
+	e.PUT("/users/:user_id/push_registrations/:installation_id", func(c echo.Context) error {
+		return RegisterPushHandler(cfg.BaseURL, c)
+	}, middleware.JWTMiddleware)
+	e.DELETE("/users/:user_id/push_registrations/:installation_id", func(c echo.Context) error {
+		return UnregisterPushHandler(cfg.BaseURL, c)
+	}, middleware.JWTMiddleware)
 	e.PUT("/users/:user_id/avatar", func(c echo.Context) error {
 		return UpdateAvatarHandler(cfg.BaseURL, c)
 	}, middleware.JWTMiddleware)
