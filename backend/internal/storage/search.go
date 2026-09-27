@@ -88,9 +88,9 @@ func SearchMessages(ctx context.Context, p SearchParams) ([]models.SearchResult,
 	}
 	if p.ContainsLink != nil {
 		if *p.ContainsLink {
-			conds = append(conds, "EXISTS (SELECT 1 FROM message_previews mp WHERE mp.message_id = m.id)")
+			conds = append(conds, "(COALESCE(m.content, '') LIKE '%https://%' OR COALESCE(m.content, '') LIKE '%http://%')")
 		} else {
-			conds = append(conds, "NOT EXISTS (SELECT 1 FROM message_previews mp WHERE mp.message_id = m.id)")
+			conds = append(conds, "(COALESCE(m.content, '') NOT LIKE '%https://%' AND COALESCE(m.content, '') NOT LIKE '%http://%')")
 		}
 	}
 	if p.Since != nil {
