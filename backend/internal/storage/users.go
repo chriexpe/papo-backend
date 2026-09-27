@@ -93,7 +93,7 @@ func scanUserSummary(row rowScanner) (models.UserSummary, error) {
 	return user, nil
 }
 
-// CreateUser cria um novo usuário com settings vazias e retorna o registro criado.
+// CreateUser cria um novo usuário com settings válidas e retorna o registro criado.
 func CreateUser(ctx context.Context, username, passwordHash, ip string) (models.User, models.UserSettings, error) {
 	tx, err := GetDB().BeginTx(ctx, nil)
 	if err != nil {
@@ -107,15 +107,14 @@ func CreateUser(ctx context.Context, username, passwordHash, ip string) (models.
 		return models.User{}, models.UserSettings{}, mapStorageError(err)
 	}
 
-	emptyUserSettings, errJson := json.Marshal(models.UserSettings{})
-
-	if errJson != nil {
-		return models.User{}, models.UserSettings{}, mapStorageError(err)
+	defaultConfig, errJSON := json.Marshal(models.DefaultUserConfig())
+	if errJSON != nil {
+		return models.User{}, models.UserSettings{}, fmt.Errorf("falha ao codificar settings iniciais: %w", errJSON)
 	}
 
 	userSettings, err := scanUserSettings(tx.QueryRowContext(ctx,
 		`INSERT INTO user_settings (user_id, config, version) VALUES ($1, $2, $3) RETURNING `+userSettingsColumns,
-		user.ID, string(emptyUserSettings), models.CurrentVersion,
+		user.ID, string(defaultConfig), models.CurrentVersion,
 	))
 	if err != nil {
 		return models.User{}, models.UserSettings{}, mapStorageError(err)
