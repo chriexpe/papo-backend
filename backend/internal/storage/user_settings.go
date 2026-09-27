@@ -23,10 +23,20 @@ func scanUserSettings(row rowScanner) (models.UserSettings, error) {
 		return models.UserSettings{}, err
 	}
 
-	settings.Config = models.UserConfig{}
+	settings.Config = models.DefaultUserConfig()
 	if len(config) > 0 {
-		if err := json.Unmarshal(config, &settings.Config); err != nil {
+		var decoded models.UserConfig
+		if err := json.Unmarshal(config, &decoded); err != nil {
 			return models.UserSettings{}, fmt.Errorf("falha ao decodificar configurações do usuário: %w", err)
+		}
+		// CreateUser antigo gravava o wrapper UserSettings inteiro dentro de
+		// config. Ao decodificá-lo como UserConfig, os três campos ficam
+		// zerados. Rows vazias/corrompidas da mesma forma convergem para os
+		// defaults válidos em vez de fazer o primeiro PUT do cliente falhar.
+		if decoded.Theme != "" &&
+			decoded.Display.FontSize != "" &&
+			decoded.Display.MessageDensity != "" {
+			settings.Config = decoded
 		}
 	}
 
