@@ -202,6 +202,25 @@ func UpdateChannelPermissions(ctx context.Context, channelID, roleID string, per
 	return channel, nil
 }
 
+
+// DeleteChannelPermissions remove o override de uma role. Quando a última
+// entrada sai, o mapa fica vazio e o canal volta à política aberta padrão.
+func DeleteChannelPermissions(ctx context.Context, channelID, roleID string) (models.Channel, error) {
+	row := GetDB().QueryRowContext(ctx,
+		`UPDATE channels
+		 SET permissions = COALESCE(permissions, '{}'::jsonb) - $2::text
+		 WHERE id = $1
+		 RETURNING `+channelColumns,
+		channelID, roleID,
+	)
+
+	channel, err := scanChannel(row)
+	if err != nil {
+		return models.Channel{}, mapStorageError(err)
+	}
+	return channel, nil
+}
+
 // ChangeChannelPosition move um canal para newPosition e recalcula as
 // posições dos demais canais (as posições permanecem contíguas, de 1 até o
 // número de canais). A operação é serializada com o mesmo advisory lock da
