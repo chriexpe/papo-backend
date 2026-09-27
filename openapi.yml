@@ -3310,6 +3310,14 @@ components:
           type: string
           format: uuid
           description: Filtro por autor da mensagem
+        channel:
+          type: string
+          format: uuid
+          description: Filtro por canal
+        mentions:
+          type: string
+          format: uuid
+          description: Filtro por mensagens que mencionam este usuário
         order:
           type: string
           enum: [asc, desc]
@@ -3325,6 +3333,9 @@ components:
         contains_attachment:
           type: boolean
           description: Filtra mensagens com attachment
+        contains_link:
+          type: boolean
+          description: Filtra mensagens com link preview
 
     SearchResult:
       type: object
