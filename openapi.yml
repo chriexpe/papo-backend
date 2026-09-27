@@ -1150,6 +1150,27 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+    delete:
+      tags: [Channels]
+      summary: Remove as permissões específicas de uma role no canal
+      description: >
+        Permission Check: `manage_channels`. Ao remover a última entrada,
+        o canal volta a não ter overrides por role e usa a política aberta padrão.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/RoleId'
+      responses:
+        '204':
+          description: Override removido
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /channels/{channel_id}/user/{user_id}/settings:
     post:
       tags: [Notifications]
