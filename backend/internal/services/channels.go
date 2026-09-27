@@ -396,3 +396,43 @@ func UpdateChannelPermissions(ctx context.Context, actorID, channelID, roleID st
 
 	return permission, nil
 }
+
+
+// DeleteChannelPermissions remove a regra de uma role do canal. Se era a
+// última regra, o canal volta a não ter overrides e portanto à política
+// aberta padrão do serviço.
+func DeleteChannelPermissions(ctx context.Context, actorID, channelID, roleID string) error {
+	if channelID == "" {
+		return ErrChannelNotFound
+	}
+	if roleID == "" {
+		return ErrRoleNotFound
+	}
+	if _, err := storage.GetChannelByID(ctx, channelID); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return ErrChannelNotFound
+		}
+		return err
+	}
+	if _, err := storage.GetRoleByID(ctx, roleID); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return ErrRoleNotFound
+		}
+		return err
+	}
+	if _, err := storage.DeleteChannelPermissions(ctx, channelID, roleID); err != nil {
+		return err
+	}
+
+	RecordAudit(ctx, AuditEntry{
+		ActorID:    actorID,
+		Action:     ActionChannelPermUpdate,
+		EntityType: EntityChannel,
+		EntityID:   &channelID,
+		Metadata: map[string]any{
+			"role_id": roleID,
+			"removed": true,
+		},
+	})
+	return nil
+}
