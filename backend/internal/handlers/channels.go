@@ -279,6 +279,46 @@ func UpdateChannelPermissionsHandler(baseURL string, c echo.Context) error {
 	})
 }
 
+
+// DeleteChannelPermissionsHandler implementa
+// DELETE /channels/:channel_id/permissions/:role_id.
+func DeleteChannelPermissionsHandler(baseURL string, c echo.Context) error {
+	userID, ok := c.Get(middleware.UserIDContextKey).(string)
+	if !ok {
+		return utils.SendProblem(c, baseURL, http.StatusUnauthorized,
+			"unauthorized", "Token inválido ou expirado",
+			"token de autenticação ausente, inválido ou expirado")
+	}
+
+	channelID := c.Param("channel_id")
+	if channelID == "" {
+		return utils.SendProblem(c, baseURL, http.StatusBadRequest,
+			"invalid-param", "Parâmetro inválido", "channel_id ausente")
+	}
+	roleID := c.Param("role_id")
+	if roleID == "" {
+		return utils.SendProblem(c, baseURL, http.StatusBadRequest,
+			"invalid-param", "Parâmetro inválido", "role_id ausente")
+	}
+
+	err := services.DeleteChannelPermissions(c.Request().Context(), userID, channelID, roleID)
+	switch {
+	case errors.Is(err, services.ErrChannelNotFound):
+		return utils.SendProblem(c, baseURL, http.StatusNotFound,
+			"not-found", "Recurso não encontrado", "canal não encontrado")
+	case errors.Is(err, services.ErrRoleNotFound):
+		return utils.SendProblem(c, baseURL, http.StatusNotFound,
+			"not-found", "Recurso não encontrado", "role não encontrada")
+	case err != nil:
+		utils.Errorf("request_id=%s falha ao remover permissões do canal: %v",
+			c.Request().Header.Get(echo.HeaderXRequestID), err)
+		return utils.SendProblem(c, baseURL, http.StatusInternalServerError,
+			"internal", "Erro interno", "falha ao remover as permissões do canal")
+	}
+
+	return c.NoContent(http.StatusNoContent)
+}
+
 type changeChannelPositionRequest struct {
 	OldPosition int `json:"old_position"`
 	NewPosition int `json:"new_position"`
