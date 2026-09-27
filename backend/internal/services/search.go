@@ -18,8 +18,8 @@ const searchDateLayout = "2006-01-02"
 
 // SearchMessages executa a busca de mensagens (POST /search) com full-text
 // search em português (mesmo config 'portuguese' do tsvector) e filtros
-// combináveis: texto, autor, intervalo de datas (inclusive) e attachment.
-// Pelo menos 1 filtro é obrigatório.
+// combináveis: texto, autor, canal, menção a usuário, intervalo de datas
+// (inclusive), attachment e link preview. Pelo menos 1 filtro é obrigatório.
 //
 // A autorização é a mesma da leitura de mensagens: os resultados são
 // limitados a canais legíveis pelo usuário (dono do servidor, canais abertos
@@ -40,7 +40,9 @@ func SearchMessages(ctx context.Context, req models.SearchRequest, since *time.T
 	}
 
 	text := strings.TrimSpace(req.Text)
-	if text == "" && req.Author == "" && req.DateStart == "" && req.DateEnd == "" && req.ContainsAttachment == nil {
+	if text == "" && req.Author == "" && req.Channel == "" && req.Mentions == "" &&
+		req.DateStart == "" && req.DateEnd == "" && req.ContainsAttachment == nil &&
+		req.ContainsLink == nil {
 		return models.SearchResponse{}, ErrInvalidInput
 	}
 
@@ -84,9 +86,12 @@ func SearchMessages(ctx context.Context, req models.SearchRequest, since *time.T
 		UserID:             userID,
 		Text:               text,
 		AuthorID:           req.Author,
+		ChannelID:          req.Channel,
+		MentionsUserID:     req.Mentions,
 		DateStart:          dateStart,
 		DateEndExclusive:   dateEndExclusive,
 		ContainsAttachment: req.ContainsAttachment,
+		ContainsLink:       req.ContainsLink,
 		Since:              since,
 		LastID:             lastID,
 		OrderAsc:           orderAsc,
