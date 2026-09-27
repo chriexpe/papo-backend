@@ -3335,7 +3335,7 @@ components:
           description: Filtra mensagens com attachment
         contains_link:
           type: boolean
-          description: Filtra mensagens com link preview
+          description: Filtra mensagens cujo conteúdo contém URL http/https
 
     SearchResult:
       type: object
