@@ -71,7 +71,7 @@ func SearchMessages(ctx context.Context, p SearchParams) ([]models.SearchResult,
 		conds = append(conds, "m.channel_id = "+arg(p.ChannelID))
 	}
 	if p.MentionsUserID != "" {
-		conds = append(conds, "COALESCE(m.content, '') LIKE "+arg("%<@"+p.MentionsUserID+">%"))
+		conds = append(conds, "COALESCE(m.content, '') LIKE "+arg("%@"+p.MentionsUserID+"%"))
 	}
 	if p.DateStart != nil {
 		conds = append(conds, "m.created_at >= "+arg(*p.DateStart))
