@@ -19,9 +19,12 @@ type SearchParams struct {
 	UserID             string
 	Text               string
 	AuthorID           string
+	ChannelID          string
+	MentionsUserID     string
 	DateStart          *time.Time
 	DateEndExclusive   *time.Time
 	ContainsAttachment *bool
+	ContainsLink       *bool
 	Since              *time.Time
 	LastID             string
 	OrderAsc           bool
@@ -64,6 +67,12 @@ func SearchMessages(ctx context.Context, p SearchParams) ([]models.SearchResult,
 	if p.AuthorID != "" {
 		conds = append(conds, "m.author_id = "+arg(p.AuthorID))
 	}
+	if p.ChannelID != "" {
+		conds = append(conds, "m.channel_id = "+arg(p.ChannelID))
+	}
+	if p.MentionsUserID != "" {
+		conds = append(conds, "COALESCE(m.content, '') LIKE "+arg("%<@"+p.MentionsUserID+">%"))
+	}
 	if p.DateStart != nil {
 		conds = append(conds, "m.created_at >= "+arg(*p.DateStart))
 	}
@@ -75,6 +84,13 @@ func SearchMessages(ctx context.Context, p SearchParams) ([]models.SearchResult,
 			conds = append(conds, "EXISTS (SELECT 1 FROM attachments a WHERE a.messages_id = m.id)")
 		} else {
 			conds = append(conds, "NOT EXISTS (SELECT 1 FROM attachments a WHERE a.messages_id = m.id)")
+		}
+	}
+	if p.ContainsLink != nil {
+		if *p.ContainsLink {
+			conds = append(conds, "EXISTS (SELECT 1 FROM message_previews mp WHERE mp.message_id = m.id)")
+		} else {
+			conds = append(conds, "NOT EXISTS (SELECT 1 FROM message_previews mp WHERE mp.message_id = m.id)")
 		}
 	}
 	if p.Since != nil {
