@@ -50,7 +50,9 @@ func (d *FCMDelivery) buildMessage(m Message, t Target) *messaging.Message {
 	return msg
 }
 
-// Send envia a mensagem para todos os targets via FCM (SendAll em lote).
+// Send envia a mensagem para todos os targets via FCM (SendEach: uma requisição
+// por mensagem, em paralelo). SendAll usaria o endpoint /batch do FCM, que o
+// Google desativou em 2024 (retornava 404 e descartava a entrega).
 func (d *FCMDelivery) Send(ctx context.Context, message Message, targets []Target) (Result, error) {
 	msgs := make([]*messaging.Message, 0, len(targets))
 	for _, t := range targets {
@@ -60,9 +62,9 @@ func (d *FCMDelivery) Send(ctx context.Context, message Message, targets []Targe
 		return Result{}, nil
 	}
 
-	responses, err := d.client.SendAll(ctx, msgs)
+	responses, err := d.client.SendEach(ctx, msgs)
 	if err != nil {
-		// Falha na batch (rede, credencial, etc.) → retryable.
+		// Falha no envio (rede, credencial, etc.) → retryable.
 		return Result{retryable: true}, fmt.Errorf("falha ao enviar ao FCM: %w", err)
 	}
 
