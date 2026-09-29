@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -36,6 +37,51 @@ func truncateNotificationContent(content string) string {
 	}
 
 	return string([]rune(content)[:maxNotificationPreviewLength])
+}
+
+// pushMentionRegex casa a menção como o cliente a escreve (<@uuid>) e a forma
+// sem colchetes (@uuid), a mesma que notificationMentionRegex reconhece.
+var pushMentionRegex = regexp.MustCompile(
+	`(?i)<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>|@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
+
+// pushDisplayName é o nome que o usuário vê: o apelido, quando existe.
+func pushDisplayName(nickname *string, username string) string {
+	if nickname != nil && strings.TrimSpace(*nickname) != "" {
+		return *nickname
+	}
+	return username
+}
+
+// resolvePushMentions troca as menções por @nome no texto do push: o sistema
+// do celular mostra o corpo como chega, sem passar pelo cliente. lookup
+// devolve o nome de um usuário ou "" quando não o encontra; cada id é
+// consultado uma vez só. Menção a usuário desconhecido fica como está.
+func resolvePushMentions(content string, lookup func(id string) string) string {
+	names := map[string]string{}
+	return pushMentionRegex.ReplaceAllStringFunc(content, func(match string) string {
+		groups := pushMentionRegex.FindStringSubmatch(match)
+		id := strings.ToLower(groups[1] + groups[2])
+		name, known := names[id]
+		if !known {
+			name = lookup(id)
+			names[id] = name
+		}
+		if name == "" {
+			return match
+		}
+		return "@" + name
+	})
+}
+
+// lookupPushDisplayName busca o nome exibido de um usuário para o push.
+func lookupPushDisplayName(ctx context.Context) func(id string) string {
+	return func(id string) string {
+		user, err := storage.GetUserByID(ctx, id)
+		if err != nil {
+			return ""
+		}
+		return pushDisplayName(user.Nickname, user.Username)
+	}
 }
 
 // buildPushJobPayload serializa o payload mínimo gravado em push_outbox.payload
@@ -226,8 +272,16 @@ func DispatchMessageNotifications(ctx context.Context, requestID string, message
 			utils.Errorf("request_id=%s notificações: falha ao buscar o autor %s: %v",
 				requestID, authorID, err)
 		} else {
-			authorUsername = author.Username
+			authorUsername = pushDisplayName(author.Nickname, author.Username)
 		}
+	}
+
+	// O corpo do push é mostrado pelo sistema como chega: as menções saem
+	// com o nome, não com o id. O conteúdo da notificação e do evento WS
+	// continua cru, porque o cliente resolve os nomes por conta própria.
+	pushContent := content
+	if cfg.UseFCMRelay {
+		pushContent = resolvePushMentions(content, lookupPushDisplayName(ctx))
 	}
 
 	// Filtra os candidatos pelos leitores do canal (mesma regra do
@@ -288,7 +342,7 @@ func DispatchMessageNotifications(ctx context.Context, requestID string, message
 			if cfg.UseFCMRelay {
 				notificationID = &notification.ID
 
-				payload := buildPushJobPayload(notificationID, message.ID, message.ChannelID, authorUsername, content)
+				payload := buildPushJobPayload(notificationID, message.ID, message.ChannelID, authorUsername, pushContent)
 				if err := storage.CreatePushJobInTx(tx, ctx, candidate.UserID, notificationID, payload); err != nil {
 					utils.Errorf("request_id=%s notificações: falha ao gravar o job de push do usuário %s: %v",
 						requestID, candidate.UserID, err)
@@ -313,7 +367,7 @@ func DispatchMessageNotifications(ctx context.Context, requestID string, message
 
 			if cfg.UseFCMRelay {
 				notificationID = &ephemeralID
-				payload := buildPushJobPayload(notificationID, message.ID, message.ChannelID, authorUsername, content)
+				payload := buildPushJobPayload(notificationID, message.ID, message.ChannelID, authorUsername, pushContent)
 				if err := storage.CreatePushJob(ctx, candidate.UserID, notificationID, payload); err != nil {
 					utils.Errorf("request_id=%s notificações: falha ao gravar o job de push do usuário %s: %v",
 						requestID, candidate.UserID, err)
