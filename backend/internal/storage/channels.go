@@ -11,7 +11,7 @@ import (
 	"papo/internal/models"
 )
 
-const channelColumns = "id, name, permissions, type, position, created_at, topic"
+const channelColumns = "id, name, permissions, type, position, created_at, topic, parent_id"
 
 // ErrPositionConflict indica que a posição atual do canal não corresponde
 // à posição informada na requisição.
@@ -37,6 +37,7 @@ func scanChannel(row rowScanner) (models.Channel, error) {
 		&channel.Position,
 		&channel.CreatedAt,
 		&channel.Topic,
+		&channel.ParentID,
 	)
 	if err != nil {
 		return models.Channel{}, err
@@ -224,6 +225,12 @@ func DeleteChannelRolePermission(ctx context.Context, channelID, roleID string) 
 // o canal não está em oldPosition e ErrInvalidPosition quando newPosition
 // está fora do intervalo.
 func ChangeChannelPosition(ctx context.Context, channelID string, oldPosition, newPosition int) (models.Channel, error) {
+	return ChangeChannelPositionWithParent(ctx, channelID, oldPosition, newPosition, nil)
+}
+
+// ChangeChannelPositionWithParent move o canal e opcionalmente altera sua categoria.
+// nil preserva parent_id; string vazia remove; UUID associa à categoria.
+func ChangeChannelPositionWithParent(ctx context.Context, channelID string, oldPosition, newPosition int, parentID *string) (models.Channel, error) {
 	tx, err := GetDB().BeginTx(ctx, nil)
 	if err != nil {
 		return models.Channel{}, fmt.Errorf("falha ao mudar posição do canal: %w", err)
@@ -277,10 +284,22 @@ func ChangeChannelPosition(ctx context.Context, channelID string, oldPosition, n
 		}
 	}
 
-	row := tx.QueryRowContext(ctx,
-		"UPDATE channels SET position = $2 WHERE id = $1 RETURNING "+channelColumns,
-		channelID, newPosition,
-	)
+	var row rowScanner
+	if parentID == nil {
+		row = tx.QueryRowContext(ctx,
+			"UPDATE channels SET position = $2 WHERE id = $1 RETURNING "+channelColumns,
+			channelID, newPosition,
+		)
+	} else {
+		var parentArg any
+		if *parentID != "" {
+			parentArg = *parentID
+		}
+		row = tx.QueryRowContext(ctx,
+			"UPDATE channels SET position = $2, parent_id = $3 WHERE id = $1 RETURNING "+channelColumns,
+			channelID, newPosition, parentArg,
+		)
+	}
 
 	channel, err := scanChannel(row)
 	if err != nil {
@@ -314,7 +333,7 @@ func DeleteChannel(ctx context.Context, id string) error {
 // channelSummaryBaseColumns é a seleção base da visão ChannelSummary: dados
 // do canal, última mensagem (LATERAL, pode ser NULL) e o username do autor da
 // última mensagem (LEFT JOIN, pode ser NULL).
-const channelSummaryBaseColumns = `c.id, c.name, c.permissions, c.type, c.position, c.created_at, c.topic,
+const channelSummaryBaseColumns = `c.id, c.name, c.permissions, c.type, c.position, c.created_at, c.topic, c.parent_id,
 	lm.id, lm.content, lm.author_id, u.username, lm.created_at`
 
 // channelSummaryBaseJoins traz a última mensagem de cada canal (mesma ordem
@@ -375,6 +394,7 @@ func scanChannelSummary(row rowScanner, roleNames map[string]string) (models.Cha
 		&summary.Position,
 		&summary.CreatedAt,
 		&summary.Topic,
+		&summary.ParentID,
 		&lastMessageID,
 		&lastMessageContent,
 		&lastMessageAuthorID,
