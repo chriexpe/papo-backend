@@ -87,6 +87,7 @@ func CreateChannelHandler(baseURL string, c echo.Context) error {
 		Position:    channel.Position,
 		ChannelType: channel.Type,
 		Topic:       channel.Topic,
+		ParentID:    channel.ParentID,
 	})
 
 	return c.JSON(http.StatusCreated, channel)
@@ -147,6 +148,7 @@ func UpdateChannelHandler(baseURL string, c echo.Context) error {
 		Name:      channel.Name,
 		Position:  channel.Position,
 		Topic:     channel.Topic,
+		ParentID:  channel.ParentID,
 	})
 
 	return c.JSON(http.StatusOK, channel)
@@ -280,8 +282,9 @@ func UpdateChannelPermissionsHandler(baseURL string, c echo.Context) error {
 }
 
 type changeChannelPositionRequest struct {
-	OldPosition int `json:"old_position"`
-	NewPosition int `json:"new_position"`
+	OldPosition int     `json:"old_position"`
+	NewPosition int     `json:"new_position"`
+	ParentID    *string `json:"parent_id"`
 }
 
 // ChangeChannelPositionHandler implementa
@@ -308,8 +311,12 @@ func ChangeChannelPositionHandler(baseURL string, c echo.Context) error {
 			"invalid-param", "Parâmetro inválido", "corpo da requisição inválido")
 	}
 
-	channel, err := services.ChangeChannelPosition(c.Request().Context(), userID, channelID, req.OldPosition, req.NewPosition)
+	channel, err := services.ChangeChannelPositionWithParent(c.Request().Context(), userID, channelID, req.OldPosition, req.NewPosition, req.ParentID)
 	switch {
+	case errors.Is(err, services.ErrInvalidChannelParent):
+		return utils.SendProblem(c, baseURL, http.StatusBadRequest,
+			"invalid-param", "Parâmetro inválido",
+			"parent_id deve ser omitido, vazio para remover a categoria, ou o UUID de um canal category")
 	case errors.Is(err, services.ErrInvalidInput):
 		return utils.SendProblem(c, baseURL, http.StatusBadRequest,
 			"invalid-param", "Parâmetro inválido",
@@ -336,6 +343,7 @@ func ChangeChannelPositionHandler(baseURL string, c echo.Context) error {
 		Name:      channel.Name,
 		Position:  channel.Position,
 		Topic:     channel.Topic,
+		ParentID:  channel.ParentID,
 	})
 
 	return c.JSON(http.StatusOK, channel)
