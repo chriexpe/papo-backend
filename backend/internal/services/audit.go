@@ -112,15 +112,19 @@ func RecordAudit(ctx context.Context, e AuditEntry) {
 	}
 }
 
-// ListAuditLogs lista os logs de auditoria (GET /admin/audit-logs) com filtros
-// (action, actor_id, entity_type, since, until) e paginação cursor-based
-// (last_id), 100 por página. A autorização (manage_server) é feita no
-// middleware da rota; este serviço apenas aplica os filtros e monta a página.
+// ListAuditLogs lista os logs de auditoria com os filtros históricos.
 func ListAuditLogs(ctx context.Context, action, actorID, entityType string, since, until *time.Time, lastID string) (models.AuditLogList, error) {
-	return ListAuditLogsOrdered(ctx, action, actorID, entityType, since, until, lastID, "desc")
+	return ListAuditLogsFilteredOrdered(ctx, action, actorID, entityType, "", "", since, until, lastID, "desc")
 }
 
+// ListAuditLogsOrdered preserva o contrato existente e adiciona apenas a direção.
 func ListAuditLogsOrdered(ctx context.Context, action, actorID, entityType string, since, until *time.Time, lastID, order string) (models.AuditLogList, error) {
+	return ListAuditLogsFilteredOrdered(ctx, action, actorID, entityType, "", "", since, until, lastID, order)
+}
+
+// ListAuditLogsFilteredOrdered completa o contrato do cliente administrativo
+// com filtros por usuário alvo e canal, preservando a paginação asc/desc.
+func ListAuditLogsFilteredOrdered(ctx context.Context, action, actorID, entityType, targetUserID, channelID string, since, until *time.Time, lastID, order string) (models.AuditLogList, error) {
 	orderAsc := false
 	switch order {
 	case "", "desc":
@@ -130,14 +134,10 @@ func ListAuditLogsOrdered(ctx context.Context, action, actorID, entityType strin
 		return models.AuditLogList{}, ErrInvalidInput
 	}
 	logs, err := storage.ListAuditLogs(ctx, storage.AuditLogParams{
-		Action:     action,
-		ActorID:    actorID,
-		EntityType: entityType,
-		Since:      since,
-		Until:      until,
-		LastID:     lastID,
-		OrderAsc:   orderAsc,
-		Limit:      auditLogPageSize,
+		Action: action, ActorID: actorID, EntityType: entityType,
+		TargetUserID: targetUserID, ChannelID: channelID,
+		Since: since, Until: until, LastID: lastID,
+		OrderAsc: orderAsc, Limit: auditLogPageSize,
 	})
 	if err != nil {
 		return models.AuditLogList{}, err
@@ -151,15 +151,38 @@ func ListAuditLogsOrdered(ctx context.Context, action, actorID, entityType strin
 	entries := make([]models.AuditLogEntry, 0, len(logs))
 	for _, log := range logs {
 		entries = append(entries, models.AuditLogEntry{
-			ID:            log.ID,
+			ID: log.ID,
+			ActorID: log.ActorID,
 			ActorUsername: log.ActorUsername,
-			Action:        log.Action,
-			EntityType:    log.EntityType,
-			TargetUserID:  log.TargetUserID,
-			Metadata:      log.Metadata,
-			CreatedAt:     log.CreatedAt,
+			Action: log.Action,
+			EntityType: log.EntityType,
+			EntityID: log.EntityID,
+			TargetUserID: log.TargetUserID,
+			TargetUsername: auditMetadataString(log.Metadata, "target_username", "author_username"),
+			ChannelID: auditChannelID(log),
+			Metadata: log.Metadata,
+			CreatedAt: log.CreatedAt,
 		})
 	}
-
 	return models.AuditLogList{Logs: entries, HasMore: hasMore}, nil
+}
+
+func auditMetadataString(metadata map[string]any, keys ...string) *string {
+	for _, key := range keys {
+		if value, ok := metadata[key].(string); ok && value != "" {
+			copy := value
+			return &copy
+		}
+	}
+	return nil
+}
+
+func auditChannelID(log models.AuditLog) *string {
+	if id := auditMetadataString(log.Metadata, "channel_id"); id != nil {
+		return id
+	}
+	if log.EntityType == EntityChannel {
+		return log.EntityID
+	}
+	return nil
 }

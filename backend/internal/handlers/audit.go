@@ -12,8 +12,8 @@ import (
 )
 
 // ListAuditLogsHandler implementa GET /admin/audit-logs.
-// Filtros opcionais de query: action, actor_id, entity_type, since
-// (created_at >=), until (created_at <=) e last_id (cursor de paginação, id do
+// Filtros opcionais de query: action, actor_id, entity_type, target_user_id,
+// channel_id, since (created_at >=), until (created_at <=) e last_id (cursor de paginação, id do
 // último item da página anterior). Máximo de 100 logs por resposta.
 func ListAuditLogsHandler(baseURL string, c echo.Context) error {
 	var since, until *time.Time
@@ -36,8 +36,9 @@ func ListAuditLogsHandler(baseURL string, c echo.Context) error {
 		until = &parsed
 	}
 
-	resp, err := services.ListAuditLogsOrdered(c.Request().Context(),
+	resp, err := services.ListAuditLogsFilteredOrdered(c.Request().Context(),
 		c.QueryParam("action"), c.QueryParam("actor_id"), c.QueryParam("entity_type"),
+		c.QueryParam("target_user_id"), c.QueryParam("channel_id"),
 		since, until, c.QueryParam("last_id"), c.QueryParam("order"))
 	if errors.Is(err, services.ErrInvalidInput) {
 		return utils.SendProblem(c, baseURL, http.StatusBadRequest,

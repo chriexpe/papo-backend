@@ -18,10 +18,12 @@ import (
 // cursor de paginação (id do último item da página anterior), combinado com o
 // created_at desse item para a paginação keyset (created_at, id) DESC.
 type AuditLogParams struct {
-	Action     string
-	ActorID    string
-	EntityType string
-	Since      *time.Time
+	Action       string
+	ActorID      string
+	EntityType   string
+	TargetUserID string
+	ChannelID    string
+	Since        *time.Time
 	Until      *time.Time
 	LastID     string
 	OrderAsc   bool
@@ -127,6 +129,14 @@ func ListAuditLogs(ctx context.Context, p AuditLogParams) ([]models.AuditLog, er
 	}
 	if p.EntityType != "" {
 		conds = append(conds, "entity_type = "+arg(p.EntityType))
+	}
+	if p.TargetUserID != "" {
+		conds = append(conds, "target_user_id = "+arg(p.TargetUserID))
+	}
+	if p.ChannelID != "" {
+		channelArg := arg(p.ChannelID)
+		conds = append(conds, "(metadata->>'channel_id' = "+channelArg+
+			" OR (entity_type = 'channel' AND entity_id::text = "+channelArg+"))")
 	}
 	if p.Since != nil {
 		conds = append(conds, "created_at >= "+arg(*p.Since))

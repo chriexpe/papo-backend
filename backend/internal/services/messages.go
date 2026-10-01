@@ -601,16 +601,29 @@ func DeleteMessage(ctx context.Context, messageID, authorID string) (string, err
 		}
 	}
 
+	var targetUsername string
+	if message.AuthorID != nil {
+		targetUsername, _ = storage.GetUsernameByID(ctx, *message.AuthorID)
+	}
+
 	if err := deleteMessage(ctx, messageID); err != nil {
 		return "", err
 	}
 
+	metadata := map[string]any{"channel_id": message.ChannelID}
+	if message.AuthorID != nil {
+		metadata["author_id"] = *message.AuthorID
+	}
+	if targetUsername != "" {
+		metadata["author_username"] = targetUsername
+	}
 	RecordAudit(ctx, AuditEntry{
-		ActorID:    authorID,
-		Action:     ActionMessageDelete,
-		EntityType: EntityMessage,
-		EntityID:   &messageID,
-		Metadata:   map[string]any{"channel_id": message.ChannelID},
+		ActorID:      authorID,
+		Action:       ActionMessageDelete,
+		EntityType:   EntityMessage,
+		EntityID:     &messageID,
+		TargetUserID: message.AuthorID,
+		Metadata:     metadata,
 	})
 
 	return message.ChannelID, nil
