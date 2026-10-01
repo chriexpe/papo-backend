@@ -24,7 +24,7 @@ const (
 	// pingPeriod é o intervalo entre pings do protocolo WebSocket.
 	pingPeriod = (pongWait * 9) / 10
 	// maxMessageSize é o limite de tamanho de um evento inbound (JSON pequeno).
-	maxMessageSize = 128 * 1024
+	maxMessageSize = 384 * 1024
 	// typingCheckTimeout é o tempo máximo da checagem de permissão de canal
 	// de um evento de typing.
 	typingCheckTimeout = 5 * time.Second
@@ -206,6 +206,8 @@ func (c *Client) handle(raw []byte) {
 		c.sendEvent(HeartbeatAckOutbound{Type: EventTypeHeartbeatAck})
 	case EventTypeTyping:
 		c.handleTyping(raw)
+	case EventTypeActivityUpdate:
+		c.handleActivity(raw)
 	case EventTypeVoiceJoin:
 		c.handleVoiceJoin(raw)
 	case EventTypeVoiceLeave:
@@ -229,6 +231,36 @@ func (c *Client) handle(raw []byte) {
 	case EventTypeScreenShareStop:
 		c.handleScreenShareStop(raw)
 	}
+}
+
+// handleActivity valida e publica o Rich Presence desta conexão.
+func (c *Client) handleActivity(raw []byte) {
+	var event ActivityUpdateInbound
+	if err := json.Unmarshal(raw, &event); err != nil {
+		c.sendEvent(ErrorOutbound{Type: EventTypeError, Message: "evento inválido"})
+		return
+	}
+	if event.Activity != nil {
+		a := event.Activity
+		switch a.Kind {
+		case "listening", "playing", "working":
+		default:
+			c.sendEvent(ErrorOutbound{Type: EventTypeError, Message: "atividade inválida"})
+			return
+		}
+		if len(a.Name) == 0 || len(a.Name) > 256 ||
+			(a.Details != nil && len(*a.Details) > 512) ||
+			(a.State != nil && len(*a.State) > 512) ||
+			(a.Image != nil && len(*a.Image) > 256*1024) {
+			c.sendEvent(ErrorOutbound{Type: EventTypeError, Message: "atividade inválida"})
+			return
+		}
+		if a.EndsAt != nil && a.StartedAt != nil && a.EndsAt.Before(*a.StartedAt) {
+			c.sendEvent(ErrorOutbound{Type: EventTypeError, Message: "atividade inválida"})
+			return
+		}
+	}
+	c.hub.UpdateActivity(c, event.Activity)
 }
 
 // handleTyping valida o evento de typing e o distribui somente aos clientes
