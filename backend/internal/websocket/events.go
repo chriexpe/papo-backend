@@ -21,6 +21,8 @@ const (
 	EventTypeAvatarUpdate      EventType = "avatar_update"
 	EventTypePresenceUpdate    EventType = "presence_update"
 	EventTypePresenceSync      EventType = "presence_sync"
+	EventTypeActivityUpdate    EventType = "activity_update"
+	EventTypeActivitySync      EventType = "activity_sync"
 	EventTypeHeartbeat         EventType = "heartbeat"
 	EventTypeHeartbeatAck      EventType = "heartbeat_ack"
 	EventTypeError             EventType = "error"
@@ -56,7 +58,7 @@ const (
 // servidor, conforme o contrato da API.
 func (t EventType) IsInbound() bool {
 	switch t {
-	case EventTypeTyping, EventTypeHeartbeat,
+	case EventTypeTyping, EventTypeHeartbeat, EventTypeActivityUpdate,
 		EventTypeVoiceJoin, EventTypeVoiceLeave, EventTypeVoiceOffer,
 		EventTypeVoiceAnswer, EventTypeVoiceICECandidate,
 		EventTypeTrackSubscribe, EventTypeTrackUnsubscribe,
@@ -79,6 +81,23 @@ type TypingInbound struct {
 // HeartbeatInbound é o evento de keepalive enviado pelo cliente.
 type HeartbeatInbound struct {
 	Type EventType `json:"type"`
+}
+
+// ActivityPayload é a forma efêmera do Rich Presence transportado pelo WS.
+type ActivityPayload struct {
+	Kind      string     `json:"kind"`
+	Name      string     `json:"name"`
+	Details   *string    `json:"details,omitempty"`
+	State     *string    `json:"state,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	EndsAt    *time.Time `json:"ends_at,omitempty"`
+	Image     *string    `json:"image,omitempty"`
+}
+
+// ActivityUpdateInbound publica ou limpa a atividade desta conexão.
+type ActivityUpdateInbound struct {
+	Type     EventType        `json:"type"`
+	Activity *ActivityPayload `json:"activity"`
 }
 
 // Eventos inbound de voz (cliente -> servidor). O despachamento e a permissão
@@ -350,6 +369,22 @@ type RoleRemoveOutbound struct {
 type PresenceSyncOutbound struct {
 	Type    EventType        `json:"type"`
 	Members []PresenceMember `json:"members"`
+}
+
+type ActivityUpdateOutbound struct {
+	Type     EventType        `json:"type"`
+	UserID   string           `json:"user_id"`
+	Activity *ActivityPayload `json:"activity"`
+}
+
+type ActivityMember struct {
+	UserID   string          `json:"user_id"`
+	Activity ActivityPayload `json:"activity"`
+}
+
+type ActivitySyncOutbound struct {
+	Type    EventType        `json:"type"`
+	Members []ActivityMember `json:"members"`
 }
 
 // HeartbeatAckOutbound é o ack de keepalive enviado ao cliente.
