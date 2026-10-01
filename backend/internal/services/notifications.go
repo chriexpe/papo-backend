@@ -219,6 +219,13 @@ type NotificationDelivery struct {
 // Somente usuários que podem ler o canal (mesma regra do broadcast do
 // canal) são notificados.
 func DispatchMessageNotifications(ctx context.Context, requestID string, message models.Message) []NotificationDelivery {
+	return DispatchMessageNotificationsWithReply(ctx, requestID, message, true)
+}
+
+// DispatchMessageNotificationsWithReply preserva a mesma política e transporte,
+// mas permite ao remetente suprimir apenas o trigger implícito de reply_to.
+// Menções, @everyone e notification_settings=all continuam independentes.
+func DispatchMessageNotificationsWithReply(ctx context.Context, requestID string, message models.Message, notifyReply bool) []NotificationDelivery {
 	cfg := config.LoadConfig()
 	authorID := ""
 	content := ""
@@ -238,7 +245,7 @@ func DispatchMessageNotifications(ctx context.Context, requestID string, message
 		triggered[match[1]] = true
 	}
 
-	if message.ReplyTo != nil && *message.ReplyTo != "" {
+	if notifyReply && message.ReplyTo != nil && *message.ReplyTo != "" {
 		referenced, err := storage.GetMessageByID(ctx, *message.ReplyTo)
 		if err != nil {
 			if !errors.Is(err, storage.ErrNotFound) {
