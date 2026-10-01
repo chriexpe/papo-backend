@@ -3576,6 +3576,11 @@ components:
         score:
           type: number
           format: double
+        attachments:
+          type: array
+          description: Attachment metadata for the matching message, including thumbnail_id.
+          items:
+            $ref: '#/components/schemas/Attachment'
 
     AuditLogEntry:
       type: object
