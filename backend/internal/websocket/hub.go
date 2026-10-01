@@ -17,6 +17,7 @@ type Hub struct {
 	mu         sync.RWMutex
 	clients    map[*Client]struct{}
 	presence   *PresenceStore
+	activities *ActivityStore
 	register   chan *Client
 	unregister chan *Client
 	stop       chan struct{}
@@ -47,6 +48,7 @@ func NewHub() *Hub {
 	return &Hub{
 		clients:    make(map[*Client]struct{}),
 		presence:   NewPresenceStore(),
+		activities: NewActivityStore(),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		stop:       make(chan struct{}),
@@ -96,6 +98,7 @@ func (h *Hub) Run() {
 			// desregistrado (unregister duplicado é ignorado).
 			if removed {
 				c.closeSend()
+				h.activityOffline(c)
 
 				h.mu.RLock()
 				onClientOffline := h.onClientOffline
@@ -340,6 +343,10 @@ func (h *Hub) presenceOnline(c *Client) {
 		Type:    EventTypePresenceSync,
 		Members: members,
 	})
+	c.sendEvent(ActivitySyncOutbound{
+		Type:    EventTypeActivitySync,
+		Members: h.activities.Snapshot(),
+	})
 }
 
 func (h *Hub) SetOnClientOffline(fn func(userID, clientID string)) {
@@ -423,4 +430,23 @@ func (h *Hub) UpdatePersistedStatus(userID string, status *string) bool {
 		Nickname:      h.presence.Nickname(userID),
 	})
 	return true
+}
+
+
+// UpdateActivity publica a atividade desta conexão e distribui a atividade
+// efetiva do usuário.
+func (h *Hub) UpdateActivity(c *Client, activity *ActivityPayload) {
+	effective, changed := h.activities.Set(c.userID, c.clientID, activity)
+	if !changed { return }
+	h.Broadcast(ActivityUpdateOutbound{
+		Type: EventTypeActivityUpdate, UserID: c.userID, Activity: effective,
+	})
+}
+
+func (h *Hub) activityOffline(c *Client) {
+	effective, changed := h.activities.Set(c.userID, c.clientID, nil)
+	if !changed { return }
+	h.Broadcast(ActivityUpdateOutbound{
+		Type: EventTypeActivityUpdate, UserID: c.userID, Activity: effective,
+	})
 }
