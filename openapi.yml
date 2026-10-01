@@ -2005,6 +2005,20 @@ paths:
           schema:
             type: string
           description: Filtra por tipo de entidade (user, server, channel, message, attachment, role, user_role, emoji)
+        - name: target_user_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filtra pelo usuário alvo da ação
+        - name: channel_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Filtra pelo canal em metadata.channel_id ou pela própria entidade channel
         - name: since
           in: query
           required: false
@@ -2081,8 +2095,8 @@ paths:
         | `new_preview`    | outbound  | `{ type: "new_preview", message_id, preview_id }` (sem channel_id; distribuído após o processamento em background (crawl) da mensagem; um evento por preview) |
         | `remove_preview` | outbound  | `{ type: "remove_preview", message_id, preview_id }` (sem channel_id; edição que substitui/limpa os previews; um evento por preview) |
         | `new_notification` | unicast  | `{ type: "new_notification", id, user_id, message_id, message_content }` (id: row de notificação ou UUID efêmero quando a configuração all gera evento sem row; user_id: autor da mensagem; message_content: truncado a 512 caracteres) |
-        | `channel_create` | outbound  | `{ type: "channel_create", channel_id, name, channel_type, position, topic? }` (topic: null para canais category) |
-        | `channel_update` | outbound  | `{ type: "channel_update", channel_id, name, position, topic? }`                               |
+        | `channel_create` | outbound  | `{ type: "channel_create", channel_id, name, channel_type, position, topic?, parent_id? }` (parent_id null para raiz/categorias) |
+        | `channel_update` | outbound  | `{ type: "channel_update", channel_id, name, position, topic?, parent_id? }` |
         | `channel_delete` | outbound  | `{ type: "channel_delete", channel_id }`                                               |
         | `typing`         | inbound   | `{ type: "typing", channel_id }`                                                        |
         | `typing`         | outbound  | `{ type: "typing", channel_id, user_id, is_typing }`                                    |
@@ -2759,6 +2773,11 @@ components:
           description: >
             Tópico do canal (máx 512 caracteres). Válido apenas para canais de
             texto ou voz; null para canais category ou sem tópico.
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Categoria explícita do canal; null para canais raiz e categorias.
         permissions:
           type: array
           items:
@@ -2968,6 +2987,12 @@ components:
           type: integer
         new_position:
           type: integer
+        parent_id:
+          type: string
+          nullable: true
+          description: >
+            Opcional. Ausente preserva a categoria atual; string vazia remove
+            o canal da categoria; UUID associa a um canal do tipo category.
 
     UpdateChannelPermissionsRequest:
       type: object
@@ -3583,6 +3608,11 @@ components:
         id:
           type: string
           format: uuid
+        actor_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID do ator, quando a conta ainda existe
         actor_username:
           type: string
           description: Snapshot do username do ator no momento da operação
@@ -3592,11 +3622,25 @@ components:
         entity_type:
           type: string
           description: Tipo da entidade afetada (user, server, channel, message, attachment, role, user_role, emoji)
+        entity_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID da entidade afetada, quando aplicável
         target_user_id:
           type: string
           format: uuid
           nullable: true
-          description: Usuário alvo da ação, quando difere do ator
+          description: Usuário alvo da ação, quando aplicável
+        target_username:
+          type: string
+          nullable: true
+          description: Snapshot disponível do usuário alvo
+        channel_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Canal associado à ação, derivado do metadata ou da entidade channel
         metadata:
           type: object
           additionalProperties: true
