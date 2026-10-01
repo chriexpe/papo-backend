@@ -20,13 +20,17 @@ type AuditLog struct {
 
 // AuditLogEntry é a entrada exposta em GET /admin/audit-logs.
 type AuditLogEntry struct {
-	ID            string         `json:"id"`
-	ActorUsername string         `json:"actor_username"`
-	Action        string         `json:"action"`
-	EntityType    string         `json:"entity_type"`
-	TargetUserID  *string        `json:"target_user_id"`
-	Metadata      map[string]any `json:"metadata"`
-	CreatedAt     time.Time      `json:"created_at"`
+	ID             string         `json:"id"`
+	ActorID        *string        `json:"actor_id"`
+	ActorUsername  string         `json:"actor_username"`
+	Action         string         `json:"action"`
+	EntityType     string         `json:"entity_type"`
+	EntityID       *string        `json:"entity_id"`
+	TargetUserID   *string        `json:"target_user_id"`
+	TargetUsername *string        `json:"target_username"`
+	ChannelID      *string        `json:"channel_id"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 
 // AuditLogList é a resposta paginada de GET /admin/audit-logs.
