@@ -176,7 +176,11 @@ func ReadNotificationHandler(baseURL string, c echo.Context) error {
 // new_notification em unicast. Best-effort: falhas são logadas e não afetam a
 // mensagem já criada.
 func dispatchMessageNotifications(ctx context.Context, requestID string, message models.Message) {
-	deliveries := services.DispatchMessageNotifications(ctx, requestID, message)
+	dispatchMessageNotificationsWithReply(ctx, requestID, message, true)
+}
+
+func dispatchMessageNotificationsWithReply(ctx context.Context, requestID string, message models.Message, notifyReply bool) {
+	deliveries := services.DispatchMessageNotificationsWithReply(ctx, requestID, message, notifyReply)
 	if len(deliveries) == 0 {
 		return
 	}
