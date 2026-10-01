@@ -278,6 +278,7 @@ type ChannelCreateOutbound struct {
 	ChannelType string    `json:"channel_type"`
 	Position    int       `json:"position"`
 	Topic       *string   `json:"topic"`
+	ParentID    *string   `json:"parent_id"`
 }
 
 // ChannelUpdateOutbound é o evento de atualização de canal distribuído aos clientes.
@@ -288,6 +289,7 @@ type ChannelUpdateOutbound struct {
 	Name      string    `json:"name"`
 	Position  int       `json:"position"`
 	Topic     *string   `json:"topic"`
+	ParentID  *string   `json:"parent_id"`
 }
 
 // ChannelDeleteOutbound é o evento de exclusão de canal distribuído aos clientes.
