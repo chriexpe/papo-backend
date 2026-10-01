@@ -5,6 +5,8 @@ import (
 	"errors"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"papo/internal/models"
 	"papo/internal/storage"
 	"papo/internal/webrtc"
@@ -25,6 +27,9 @@ var ErrChannelLimitReached = errors.New("limite de canais atingido")
 // ErrChannelPositionConflict indica que a posição atual do canal não
 // corresponde à old_position informada (a ordem mudou após a leitura).
 var ErrChannelPositionConflict = errors.New("posição do canal desatualizada")
+
+// ErrInvalidChannelParent indica uma relação de categoria inválida.
+var ErrInvalidChannelParent = errors.New("categoria pai inválida")
 
 // maxChannelNameLength é o tamanho máximo do nome de um canal (32 caracteres, README).
 const maxChannelNameLength = 32
@@ -161,13 +166,15 @@ func UpdateChannel(ctx context.Context, actorID, id, name string, topic *string)
 	return storage.GetChannelSummary(ctx, id)
 }
 
-// ChangeChannelPosition move um canal para newPosition e recalcula as
-// posições dos demais canais do servidor
-// (README: PUT /channels/:channel_id/change_position).
-// Retorna ErrInvalidInput quando as posições são inválidas,
-// ErrChannelNotFound quando o canal não existe e
-// ErrChannelPositionConflict quando o canal não está em old_position.
+// ChangeChannelPosition move um canal sem alterar sua categoria.
 func ChangeChannelPosition(ctx context.Context, actorID, channelID string, oldPosition, newPosition int) (models.ChannelSummary, error) {
+	return ChangeChannelPositionWithParent(ctx, actorID, channelID, oldPosition, newPosition, nil)
+}
+
+// ChangeChannelPositionWithParent move um canal e, quando parentID é informado,
+// altera também sua categoria no mesmo write. nil preserva parent_id; "" remove;
+// UUID associa a um canal do tipo category.
+func ChangeChannelPositionWithParent(ctx context.Context, actorID, channelID string, oldPosition, newPosition int, parentID *string) (models.ChannelSummary, error) {
 	if channelID == "" {
 		return models.ChannelSummary{}, ErrChannelNotFound
 	}
@@ -175,7 +182,39 @@ func ChangeChannelPosition(ctx context.Context, actorID, channelID string, oldPo
 		return models.ChannelSummary{}, ErrInvalidInput
 	}
 
-	channel, err := storage.ChangeChannelPosition(ctx, channelID, oldPosition, newPosition)
+	var oldParent any
+	if parentID != nil {
+		moving, err := storage.GetChannelByID(ctx, channelID)
+		if errors.Is(err, storage.ErrNotFound) {
+			return models.ChannelSummary{}, ErrChannelNotFound
+		}
+		if err != nil {
+			return models.ChannelSummary{}, err
+		}
+		if moving.ParentID != nil {
+			oldParent = *moving.ParentID
+		}
+		if *parentID != "" {
+			if moving.Type == "category" || *parentID == channelID {
+				return models.ChannelSummary{}, ErrInvalidChannelParent
+			}
+			if _, err := uuid.Parse(*parentID); err != nil {
+				return models.ChannelSummary{}, ErrInvalidChannelParent
+			}
+			parent, err := storage.GetChannelByID(ctx, *parentID)
+			if errors.Is(err, storage.ErrNotFound) {
+				return models.ChannelSummary{}, ErrInvalidChannelParent
+			}
+			if err != nil {
+				return models.ChannelSummary{}, err
+			}
+			if parent.Type != "category" {
+				return models.ChannelSummary{}, ErrInvalidChannelParent
+			}
+		}
+	}
+
+	channel, err := storage.ChangeChannelPositionWithParent(ctx, channelID, oldPosition, newPosition, parentID)
 	switch {
 	case errors.Is(err, storage.ErrNotFound):
 		return models.ChannelSummary{}, ErrChannelNotFound
@@ -187,19 +226,23 @@ func ChangeChannelPosition(ctx context.Context, actorID, channelID string, oldPo
 		return models.ChannelSummary{}, err
 	}
 
+	metadata := map[string]any{
+		"old_position": oldPosition,
+		"new_position": newPosition,
+	}
+	if parentID != nil {
+		metadata["old_parent_id"] = oldParent
+		if *parentID == "" {
+			metadata["parent_id"] = nil
+		} else {
+			metadata["parent_id"] = *parentID
+		}
+	}
 	RecordAudit(ctx, AuditEntry{
-		ActorID:    actorID,
-		Action:     ActionChannelMovePosition,
-		EntityType: EntityChannel,
-		EntityID:   &channel.ID,
-		Metadata: map[string]any{
-			"old_position": oldPosition,
-			"new_position": newPosition,
-		},
+		ActorID: actorID, Action: ActionChannelMovePosition,
+		EntityType: EntityChannel, EntityID: &channel.ID, Metadata: metadata,
 	})
 
-	// Reconsulta a visão summary para que a resposta tenha a mesma forma da
-	// listagem (permissões expandidas e last_message).
 	return storage.GetChannelSummary(ctx, channel.ID)
 }
 
