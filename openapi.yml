@@ -2092,6 +2092,9 @@ paths:
         | `role_remove`    | outbound  | `{ type: "role_remove", user_id, role_id }` (role removida do usuário)                   |
         | `presence_update`| outbound  | `{ type: "presence_update", user_id, status, status_message, typing, nickname }` (status: online/offline/away/busy) |
         | `presence_sync`  | unicast   | `{ type: "presence_sync", members: (user_id, status, status_message, user_voice: channel_id[])[] }` (status: online/offline/away/busy; user_voice lista os canais de voz atuais; enviado na conexão; sem nickname) |
+        | `activity_update`| inbound   | `{ type: "activity_update", activity: { kind, name, details?, state?, started_at?, ends_at?, image? } | null }` |
+        | `activity_update`| outbound  | `{ type: "activity_update", user_id, activity: {...} | null }` |
+        | `activity_sync`  | unicast   | `{ type: "activity_sync", members: (user_id, activity)[] }` |
         | `heartbeat`      | inbound   | `{ type: "heartbeat" }`                                                                 |
         | `heartbeat_ack`  | outbound  | `{ type: "heartbeat_ack" }`                                                             |
         | `error`          | outbound  | `{ type: "error", message, code? }`                                                     |
