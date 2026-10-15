@@ -76,8 +76,24 @@ func CreateAppMessage(ctx context.Context, channelID, appID string, external *mo
 	return createMessageWithApp(ctx, channelID, "", "", appID, external, sourceID, content, replyTo, attachmentIDs)
 }
 
-// createMessageWithApp conserva as transações existentes e escolhe a chave de cada máquina.
+// createMessageWithApp persiste qualquer remetente na mesma transação.
 func createMessageWithApp(ctx context.Context, channelID, authorID, webhookID, appID string, external *models.ExternalAuthor, sourceID, content, replyTo string, attachmentIDs []string) (models.Message, bool, error) {
+	tx, err := GetDB().BeginTx(ctx, nil)
+	if err != nil {
+		return models.Message{}, false, fmt.Errorf("falha ao criar mensagem: %w", err)
+	}
+	defer tx.Rollback()
+	message, inserted, err := createMessageInTx(ctx, tx, channelID, authorID, webhookID, appID, external, sourceID, content, replyTo, attachmentIDs)
+	if err != nil {
+		return models.Message{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.Message{}, false, fmt.Errorf("falha ao criar mensagem: %w", err)
+	}
+	return message, inserted, nil
+}
+
+func createMessageInTx(ctx context.Context, tx *sql.Tx, channelID, authorID, webhookID, appID string, external *models.ExternalAuthor, sourceID, content, replyTo string, attachmentIDs []string) (models.Message, bool, error) {
 	conflict := "(webhook_id,external_message_id) WHERE webhook_id IS NOT NULL AND external_message_id IS NOT NULL"
 	if appID != "" {
 		conflict = "(app_installation_id,external_message_id) WHERE app_installation_id IS NOT NULL AND external_message_id IS NOT NULL"
@@ -89,10 +105,12 @@ func createMessageWithApp(ctx context.Context, channelID, authorID, webhookID, a
 		appArg = appID
 	}
 	readExisting := func() (models.Message, error) {
+		column, machineID := "webhook_id", webhookID
 		if appID != "" {
-			return GetAppMessage(ctx, appID, sourceID)
+			column, machineID = "app_installation_id", appID
 		}
-		return GetWebhookMessage(ctx, webhookID, sourceID)
+		message, err := scanMessage(tx.QueryRowContext(ctx, "SELECT "+messageColumns+" FROM messages WHERE "+column+"=$1 AND external_message_id=$2", machineID, sourceID))
+		return message, mapStorageError(err)
 	}
 
 	// NULL explícito por coluna: humano preenche author_id, webhook preenche
@@ -126,31 +144,10 @@ func createMessageWithApp(ctx context.Context, channelID, authorID, webhookID, a
 		replyToArg = replyTo
 	}
 
-	if len(attachmentIDs) == 0 {
-		message, err := scanMessage(GetDB().QueryRowContext(ctx, insertMessage,
-			channelID, authorArg, webhookArg, externalArg, sourceArg, contentArg, replyToArg, appArg))
-		if errors.Is(err, sql.ErrNoRows) && (webhookID != "" || appID != "") && sourceID != "" {
-			// Conflito na chave de idempotência: devolve a mensagem existente.
-			existing, readErr := readExisting()
-			return existing, false, readErr
-		}
-		if err != nil {
-			return models.Message{}, false, mapStorageError(err)
-		}
-		return message, true, nil
-	}
-
-	tx, err := GetDB().BeginTx(ctx, nil)
-	if err != nil {
-		return models.Message{}, false, fmt.Errorf("falha ao criar mensagem: %w", err)
-	}
-	defer tx.Rollback()
-
 	message, err := scanMessage(tx.QueryRowContext(ctx, insertMessage,
 		channelID, authorArg, webhookArg, externalArg, sourceArg, contentArg, replyToArg, appArg))
 	if errors.Is(err, sql.ErrNoRows) && (webhookID != "" || appID != "") && sourceID != "" {
 		// Conflito na chave de idempotência: devolve a mensagem existente.
-		_ = tx.Rollback()
 		existing, readErr := readExisting()
 		return existing, false, readErr
 	}
@@ -158,15 +155,13 @@ func createMessageWithApp(ctx context.Context, channelID, authorID, webhookID, a
 		return models.Message{}, false, mapStorageError(err)
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE attachments SET messages_id = $1 WHERE id = ANY($2)",
-		message.ID, attachmentIDs,
-	); err != nil {
-		return models.Message{}, false, fmt.Errorf("falha ao vincular attachments à mensagem: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return models.Message{}, false, fmt.Errorf("falha ao criar mensagem: %w", err)
+	if len(attachmentIDs) > 0 {
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE attachments SET messages_id = $1 WHERE id = ANY($2)",
+			message.ID, attachmentIDs,
+		); err != nil {
+			return models.Message{}, false, fmt.Errorf("falha ao vincular attachments à mensagem: %w", err)
+		}
 	}
 
 	return message, true, nil
@@ -373,7 +368,23 @@ func ListMessagesWithAttachmentsByChannelOrdered(ctx context.Context, channelID 
 // UpdateMessage atualiza o conteúdo de uma mensagem e define edited_at
 // com o tempo atual do banco. Retorna o registro atualizado.
 func UpdateMessage(ctx context.Context, id string, message models.Message) (models.Message, error) {
-	row := GetDB().QueryRowContext(ctx,
+	tx, err := GetDB().BeginTx(ctx, nil)
+	if err != nil {
+		return models.Message{}, mapStorageError(err)
+	}
+	defer tx.Rollback()
+	updated, err := updateMessageInTx(ctx, tx, id, message)
+	if err != nil {
+		return models.Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.Message{}, mapStorageError(err)
+	}
+	return updated, nil
+}
+
+func updateMessageInTx(ctx context.Context, tx *sql.Tx, id string, message models.Message) (models.Message, error) {
+	row := tx.QueryRowContext(ctx,
 		`UPDATE messages
 		 SET content = $2, edited_at = NOW()
 		 WHERE id = $1
@@ -391,7 +402,22 @@ func UpdateMessage(ctx context.Context, id string, message models.Message) (mode
 
 // DeleteMessage exclui uma mensagem pelo id.
 func DeleteMessage(ctx context.Context, id string) error {
-	result, err := GetDB().ExecContext(ctx,
+	tx, err := GetDB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("falha ao excluir mensagem: %w", err)
+	}
+	defer tx.Rollback()
+	if err := deleteMessageInTx(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("falha ao excluir mensagem: %w", err)
+	}
+	return nil
+}
+
+func deleteMessageInTx(ctx context.Context, tx *sql.Tx, id string) error {
+	result, err := tx.ExecContext(ctx,
 		"DELETE FROM messages WHERE id = $1",
 		id,
 	)

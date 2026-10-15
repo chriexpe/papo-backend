@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -300,7 +301,22 @@ func ChangeChannelPosition(ctx context.Context, channelID string, oldPosition, n
 
 // DeleteChannel exclui um canal pelo id.
 func DeleteChannel(ctx context.Context, id string) error {
-	result, err := GetDB().ExecContext(ctx,
+	tx, err := GetDB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("falha ao excluir canal: %w", err)
+	}
+	defer tx.Rollback()
+	if err := deleteChannelInTx(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("falha ao excluir canal: %w", err)
+	}
+	return nil
+}
+
+func deleteChannelInTx(ctx context.Context, tx *sql.Tx, id string) error {
+	result, err := tx.ExecContext(ctx,
 		"DELETE FROM channels WHERE id = $1",
 		id,
 	)
