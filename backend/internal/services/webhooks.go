@@ -11,12 +11,18 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"papo/internal/models"
 	"papo/internal/storage"
 	"papo/internal/utils"
+
+	"github.com/google/uuid"
 )
+
+// ErrWebhookLimitReached indica que o canal atingiu o limite de webhooks ativos.
+var ErrWebhookLimitReached = storage.ErrWebhookLimitReached
 
 var ErrWebhookNotFound = errors.New("webhook não encontrado")
 var ErrWebhookUnauthorized = errors.New("webhook não autorizado")
@@ -48,7 +54,8 @@ func webhookAvatarPath(webhookID string) string {
 // tempo constante na autenticação.
 // Retorna ErrInvalidInput quando o nome é vazio ou excede 80 caracteres,
 // ErrChannelNotFound quando o canal não existe e ErrPermissionDenied quando o
-// canal não aceita webhook (dm).
+// canal não aceita webhook (dm) ou o ator não pode ler o canal.
+// ErrWebhookLimitReached indica que o canal tem 50 webhooks ativos.
 func CreateWebhook(ctx context.Context, actorID, channelID, name string) (models.Webhook, string, error) {
 	if strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 80 {
 		return models.Webhook{}, "", ErrInvalidInput
@@ -63,6 +70,10 @@ func CreateWebhook(ctx context.Context, actorID, channelID, name string) (models
 	}
 	if channel.Type != "text" && channel.Type != "voice" {
 		return models.Webhook{}, "", ErrPermissionDenied
+	}
+
+	if err := requireWebhookChannelRead(ctx, channel, actorID); err != nil {
+		return models.Webhook{}, "", err
 	}
 
 	tokenBytes := make([]byte, 32)
@@ -87,9 +98,64 @@ func CreateWebhook(ctx context.Context, actorID, channelID, name string) (models
 	return webhook, secret, nil
 }
 
-// ListWebhooks lista os webhooks ativos de todos os canais (gestão).
-func ListWebhooks(ctx context.Context) ([]models.Webhook, error) {
-	return storage.ListWebhooks(ctx)
+// MaxWebhookListLimit é o teto de itens por página, como na listagem de mensagens.
+const MaxWebhookListLimit = 100
+
+// ListWebhooks pagina somente webhooks de canais que o ator pode ler.
+// Segue mensagens: since/last_id, order desc por padrão e limit 30 (máximo 100).
+func ListWebhooks(ctx context.Context, actorID string, since *time.Time, lastID, order string, limit int) (models.WebhookList, error) {
+	orderAsc := false
+	switch order {
+	case "", "desc":
+	case "asc":
+		orderAsc = true
+	default:
+		return models.WebhookList{}, ErrInvalidInput
+	}
+	if since != nil && lastID != "" {
+		if _, err := uuid.Parse(lastID); err != nil {
+			return models.WebhookList{}, ErrInvalidInput
+		}
+	}
+	if limit <= 0 {
+		limit = 30
+	}
+	if limit > MaxWebhookListLimit {
+		limit = MaxWebhookListLimit
+	}
+	items, err := storage.ListWebhooks(ctx, actorID, since, lastID, orderAsc, limit+1)
+	if err != nil {
+		return models.WebhookList{}, err
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return models.WebhookList{Webhooks: items, HasMore: hasMore}, nil
+}
+
+// requireWebhookChannelRead aplica a mesma ACL de leitura usada por mensagens.
+func requireWebhookChannelRead(ctx context.Context, channel models.Channel, actorID string) error {
+	allowed, err := userHasChannelPermission(ctx, channel, actorID, true, func(p models.ChannelPermission) bool { return p.ReadChannel })
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrPermissionDenied
+	}
+	return nil
+}
+
+// requireWebhookRead carrega o canal do webhook e exige leitura pelo ator.
+func requireWebhookRead(ctx context.Context, channelID, actorID string) error {
+	channel, err := storage.GetChannelByID(ctx, channelID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return ErrChannelNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return requireWebhookChannelRead(ctx, channel, actorID)
 }
 
 // GetWebhook resolve um webhook pelo id, incluindo revogados.
@@ -111,7 +177,8 @@ func GetWebhook(ctx context.Context, id string) (models.Webhook, error) {
 //     storage content-addressable.
 //
 // Retorna ErrWebhookNotFound quando o webhook não existe (inclusive revogado)
-// e ErrInvalidInput quando um campo viola as regras.
+// e ErrInvalidInput quando um campo viola as regras. ErrPermissionDenied indica
+// que o ator não pode ler o canal do webhook.
 func UpdateWebhookIdentity(ctx context.Context, actorID, webhookID string, displayName *string, avatar *string, avatarFormat string) (models.Webhook, error) {
 	existing, err := storage.GetWebhookByID(ctx, webhookID)
 	if errors.Is(err, storage.ErrNotFound) {
@@ -123,6 +190,10 @@ func UpdateWebhookIdentity(ctx context.Context, actorID, webhookID string, displ
 	// Webhook revogado é credencial inerte: não se edita.
 	if existing.RevokedAt != nil {
 		return models.Webhook{}, ErrWebhookNotFound
+	}
+
+	if err := requireWebhookRead(ctx, existing.ChannelID, actorID); err != nil {
+		return models.Webhook{}, err
 	}
 
 	var displayNameArg, avatarArg any
@@ -201,13 +272,20 @@ func GetWebhookAvatar(ctx context.Context, webhookID string) (models.Media, stri
 
 // RevokeWebhook revoga um webhook (soft delete): o token deixa de autenticar,
 // mas as mensagens já enviadas mantêm a atribuição. Retorna ErrWebhookNotFound
-// quando o webhook não existe ou já está revogado.
+// quando o webhook não existe ou já está revogado; exige leitura do canal.
 func RevokeWebhook(ctx context.Context, actorID, id string) error {
 	w, err := storage.GetWebhookByID(ctx, id)
 	if errors.Is(err, storage.ErrNotFound) {
 		return ErrWebhookNotFound
 	}
 	if err != nil {
+		return err
+	}
+
+	if w.RevokedAt != nil {
+		return ErrWebhookNotFound
+	}
+	if err := requireWebhookRead(ctx, w.ChannelID, actorID); err != nil {
 		return err
 	}
 
