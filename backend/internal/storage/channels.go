@@ -316,6 +316,15 @@ func DeleteChannel(ctx context.Context, id string) error {
 }
 
 func deleteChannelInTx(ctx context.Context, tx *sql.Tx, id string) error {
+	// O lock impede uma inclusão de escopo (FK) durante a captura dos destinatários.
+	var locked string
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM channels WHERE id=$1 FOR UPDATE", id).Scan(&locked); err != nil {
+		return mapStorageError(err)
+	}
+	if err := CreateAppEventInTx(tx, ctx, "channel.deleted", id, nil, map[string]any{"channel_id": id}); err != nil {
+		return err
+	}
+
 	result, err := tx.ExecContext(ctx,
 		"DELETE FROM channels WHERE id = $1",
 		id,
@@ -326,6 +335,11 @@ func deleteChannelInTx(ctx context.Context, tx *sql.Tx, id string) error {
 
 	if n, _ := result.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+
+	// A cascata já bloqueou as mensagens: mantém a ordem mensagem -> snapshot usada por DeleteMessage.
+	if err := redactAppEventsInTx(ctx, tx, "channel_id", id); err != nil {
+		return err
 	}
 
 	return nil

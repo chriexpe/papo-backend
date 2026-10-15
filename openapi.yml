@@ -8,6 +8,31 @@ info:
     - Autenticação via cookie HttpOnly `Auth` (JWT).
     - Erros seguem RFC 7807 (`application/problem+json`) e toda resposta
       inclui o header `X-Request-ID`.
+    Eventos duráveis de apps (produção e distribuição interna):
+    - As mutações e seus snapshots são confirmados na mesma transação.
+    - São produzidos message.created, message.updated, message.deleted,
+      reaction.added, reaction.removed e channel.deleted somente se houver
+      instalação ativa com read_messages e escopo no canal text/voice.
+    - message.created não é produzido em conflitos idempotentes.
+    - O conteúdo é um snapshot do instante da escrita; não inclui embeds,
+      previews nem bytes de anexos. REST continua sendo a fonte do estado atual.
+    - Exclusões redigem snapshots created/updated sem confirmação durável,
+      inclusive aqueles já atribuídos ao backlog: apenas IDs e redacted:true.
+      Eventos já confirmados são história e não são retraídos.
+    - Conteúdo exige instalação ativa, read_messages e escopo no momento da
+      leitura para entrega. Tombstones content-free capturam destinatários na
+      escrita, antes da cascata de escopos; para eles basta a instalação ativa.
+    - O dispatcher usa claims transacionais SKIP LOCKED e sequências locais
+      por instalação. A ordem é a atribuição, sem promessa de ordem por UUID,
+      início da transação ou timestamp. Consumidores deduplicam por event_id.
+    - Snapshots expiram por idade (APP_EVENT_RETENTION_DAYS, padrão 7 dias)
+      e backlog por instalação (APP_EVENT_MAX_DELIVERIES, padrão 10000).
+      A poda mantém replay_floor para detectar lacunas de retenção; novas
+      instalações não recebem fatos anteriores à sua criação.
+    - Esta entrega não expõe /app/gateway. O transporte WSS, hello/ready,
+      heartbeat, ack com epoch e replay at-least-once/resync_required serão
+      entregues em uma PR subsequente. Os schemas abaixo documentam os fatos
+      internos e não anunciam um endpoint disponível.
   version: 1.0.0
 servers:
   - url: http://localhost:8080
@@ -5422,3 +5447,151 @@ components:
           $ref: '#/components/schemas/AppCapabilities'
     AppEditRequest:
       $ref: '#/components/schemas/UpdateMessageRequest'
+
+    AppEventSnapshot:
+      type: object
+      description: |
+        Snapshot de message.created. A autoria é human, webhook ou app.
+        external_author é a identidade externa capturada; reply_to pode apontar
+        para uma mensagem já excluída. Nenhum embed ou preview é incluído.
+      required: [channel_id, message_id, sender_kind, sender_id, content, external_author, reply_to, created_at, attachments]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        sender_kind:
+          type: string
+          enum: [human, webhook, app]
+        sender_id:
+          type: string
+          format: uuid
+          nullable: true
+        external_author:
+          allOf:
+            - $ref: '#/components/schemas/ExternalAuthor'
+          nullable: true
+        content:
+          type: string
+          nullable: true
+        reply_to:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppEventAttachment'
+    AppEventAttachment:
+      type: object
+      description: Metadados imutáveis; o ID usa o caminho normal de mídia e pode deixar de existir.
+      additionalProperties: false
+      required: [id, mime_type, original_file_name, size_bytes, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        mime_type:
+          type: string
+        original_file_name:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    AppEventTombstone:
+      type: object
+      description: |
+        IDs apenas. channel.deleted contém somente channel_id; message.deleted
+        também contém message_id. Um snapshot created/updated redigido contém
+        ambos e redacted:true, preservando o tipo e event_id originais.
+      additionalProperties: false
+      required: [channel_id]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        redacted:
+          type: boolean
+          enum: [true]
+    AppEventMessageUpdate:
+      type: object
+      required: [channel_id, message_id, content, edited_at]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          nullable: true
+        edited_at:
+          type: string
+          format: date-time
+    AppEventReaction:
+      type: object
+      description: Exatamente um de emoji_id e unicode é não nulo. Sem conteúdo de mensagem.
+      required: [channel_id, message_id, user_id, emoji_id, unicode]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        emoji_id:
+          type: string
+          format: uuid
+          nullable: true
+        unicode:
+          type: string
+          nullable: true
+    AppEventDelivery:
+      type: object
+      description: |
+        Envelope interno do backlog. delivery_seq é local à instalação e pode
+        conter lacunas por autorização/retencão. event_id identifica o fato entre
+        tentativas; nenhum UUID serve como cursor. Transporte e acknowledgments
+        ainda não estão disponíveis nesta versão da API.
+      required: [event_id, type, channel_id, payload, created_at, delivery_seq]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [message.created, message.updated, message.deleted, reaction.added, reaction.removed, channel.deleted]
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        delivery_seq:
+          type: integer
+          format: int64
+          minimum: 1
+        payload:
+          anyOf:
+            - $ref: '#/components/schemas/AppEventSnapshot'
+            - $ref: '#/components/schemas/AppEventMessageUpdate'
+            - $ref: '#/components/schemas/AppEventReaction'
+            - $ref: '#/components/schemas/AppEventTombstone'

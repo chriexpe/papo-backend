@@ -154,6 +154,9 @@ func addReactionInTx(ctx context.Context, tx *sql.Tx, messageID, userID string, 
 		return models.MessageReaction{}, false, 0, err
 	}
 
+	if err := createReactionEventInTx(ctx, tx, "reaction.added", messageID, userID, emojiID, unicode); err != nil {
+		return models.MessageReaction{}, false, 0, err
+	}
 	return reaction, true, count, nil
 }
 
@@ -193,6 +196,10 @@ func removeReactionInTx(ctx context.Context, tx *sql.Tx, messageID, userID strin
 	if err != nil {
 		return 0, err
 	}
+	if err := createReactionEventInTx(ctx, tx, "reaction.removed", messageID, userID, emojiID, unicode); err != nil {
+		return 0, err
+	}
+
 	return count, nil
 }
 

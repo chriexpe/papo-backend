@@ -55,6 +55,10 @@ type Config struct {
 	// a cada 12h.
 	LogDuration time.Duration
 
+	// Snapshots de apps: idade máxima e teto de entregas por instalação.
+	AppEventRetention     time.Duration
+	AppEventMaxDeliveries int
+
 	// Voz/câmera (SFU embutido, WEBRTC_PAPO.md). STUN/TURN vazios por padrão:
 	// em LAN o ICE resolve direto; TURN (com TURN_SECRET) é requisito para
 	// exposição na internet.
@@ -169,6 +173,9 @@ func LoadConfig() *Config {
 		RobotsCacheTTL:       time.Duration(getEnvInt("ROBOTS_CACHE_TTL", 3600)) * time.Second,
 		PreviewFetchRateGlob: getEnvInt("PREVIEW_FETCH_RATE_GLOBAL", 30),
 		PreviewFetchRateUser: getEnvInt("PREVIEW_FETCH_RATE_PER_USER", 10),
+
+		AppEventRetention:     time.Duration(getEnvInt("APP_EVENT_RETENTION_DAYS", 7)) * 24 * time.Hour,
+		AppEventMaxDeliveries: getEnvInt("APP_EVENT_MAX_DELIVERIES", 10000),
 
 		LogDuration: time.Duration(getEnvInt("LOG_DURATION", 90)) * 24 * time.Hour,
 

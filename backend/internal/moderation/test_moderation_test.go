@@ -1075,3 +1075,27 @@ func TestSupervisorRetriesModelBootstrap(t *testing.T) {
 	}
 	t.Fatal("worker não iniciou após o bootstrap do modelo ser recuperado")
 }
+
+// TestProcessBlockedProducesAppTombstone cobre o caminho real do worker até a outbox.
+func TestProcessBlockedProducesAppTombstone(t *testing.T) {
+	f := newImageMessageFixture(t, "image/jpeg")
+	ctx := context.Background()
+	hash := randHex(32)
+	app, err := storage.CreateApp(ctx, "moderation-events", "remote", "Observer", f.user.ID, models.AppCapabilities{ReadMessages: true}, &hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.AddAppScope(ctx, app.ID, f.channel.ID, f.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeClassifier{result: Result{SFW: 0.01, Nudity: 0.99, Model: "fake-v1"}}
+	s := newTestService(t, testConfig(t, ModeBlock, ModeOff, 0.8, 0.8), fake)
+	s.process(Job{AttachmentID: f.attachment.ID})
+	if _, err := storage.DispatchAppEvents(ctx, 100, 100); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := storage.ListAppEventDeliveries(ctx, app.ID, 0, 100)
+	if err != nil || len(ds) != 1 || ds[0].Type != "message.deleted" || ds[0].MessageID == nil || *ds[0].MessageID != f.message.ID {
+		t.Fatalf("evento da moderação: %+v %v", ds, err)
+	}
+}

@@ -164,6 +164,9 @@ func createMessageInTx(ctx context.Context, tx *sql.Tx, channelID, authorID, web
 		}
 	}
 
+	if err := createMessageEventInTx(ctx, tx, "message.created", message); err != nil {
+		return models.Message{}, false, err
+	}
 	return message, true, nil
 }
 
@@ -397,6 +400,9 @@ func updateMessageInTx(ctx context.Context, tx *sql.Tx, id string, message model
 		return models.Message{}, mapStorageError(err)
 	}
 
+	if err := createMessageEventInTx(ctx, tx, "message.updated", updated); err != nil {
+		return models.Message{}, err
+	}
 	return updated, nil
 }
 
@@ -417,17 +423,12 @@ func DeleteMessage(ctx context.Context, id string) error {
 }
 
 func deleteMessageInTx(ctx context.Context, tx *sql.Tx, id string) error {
-	result, err := tx.ExecContext(ctx,
-		"DELETE FROM messages WHERE id = $1",
-		id,
-	)
-	if err != nil {
-		return fmt.Errorf("falha ao excluir mensagem: %w", err)
+	var channel string
+	if err := tx.QueryRowContext(ctx, "DELETE FROM messages WHERE id=$1 RETURNING channel_id", id).Scan(&channel); err != nil {
+		return mapStorageError(err)
 	}
-
-	if n, _ := result.RowsAffected(); n == 0 {
-		return ErrNotFound
+	if err := redactAppEventsInTx(ctx, tx, "message_id", id); err != nil {
+		return err
 	}
-
-	return nil
+	return CreateAppEventInTx(tx, ctx, "message.deleted", channel, &id, map[string]any{"channel_id": channel, "message_id": id})
 }

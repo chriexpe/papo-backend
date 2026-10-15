@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"time"
 
+	"papo/internal/appevents"
 	"papo/internal/config"
 	"papo/internal/handlers"
 	"papo/internal/middleware"
@@ -117,6 +118,10 @@ func main() {
 	defer stopPush()
 	push.Init(cfg, pushCtx)
 
+	// Eventos de apps têm ciclo de vida próprio e SQL cancelável no shutdown.
+	appEvents := appevents.Start(context.Background(), cfg.AppEventRetention, cfg.AppEventMaxDeliveries)
+	defer appEvents.Shutdown()
+
 	e := echo.New()
 
 	// IP do cliente (echo.Echo.IPExtractor): o fallback legacy do Echo confia
@@ -214,6 +219,8 @@ func main() {
 	if err := e.Shutdown(ctx); err != nil {
 		utils.Fatal("Falha ao desligar o servidor: " + err.Error())
 	}
+
+	appEvents.Shutdown()
 
 	// Encerra a moderação de imagens (workers da fila + processo Python).
 	moderation.Shutdown()

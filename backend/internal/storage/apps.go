@@ -140,6 +140,10 @@ func RevokeApp(ctx context.Context, id string) error {
 	if n, _ := r.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
+	// A revogação descarta o backlog; snapshots compartilhados são podados pelo worker.
+	if _, err = tx.ExecContext(ctx, "DELETE FROM app_delivery_state WHERE installation_id=$1", id); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, "DELETE FROM app_channel_scopes WHERE app_installation_id=$1", id); err != nil {
 		return err
 	}
