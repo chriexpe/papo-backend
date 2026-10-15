@@ -341,7 +341,6 @@ func ChangeChannelPositionHandler(baseURL string, c echo.Context) error {
 	return c.JSON(http.StatusOK, channel)
 }
 
-
 // DeleteChannelRoleHandler implementa DELETE /channels/:channel_id/role/:role_id.
 func DeleteChannelRoleHandler(baseURL string, c echo.Context) error {
 	userID, ok := c.Get(middleware.UserIDContextKey).(string)

@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"papo/internal/models"
 )
@@ -23,24 +25,76 @@ func scanWebhook(row rowScanner) (models.Webhook, error) {
 	return w, nil
 }
 
-// CreateWebhook insere um webhook em um canal. secretHash é o SHA-256 (hex) do
-// token de acesso; o token em si não é persistido.
+// MaxActiveWebhooksPerChannel limita a 50 os webhooks ativos de cada canal.
+const MaxActiveWebhooksPerChannel = 50
+
+// ErrWebhookLimitReached indica que o canal já atingiu o teto de webhooks ativos.
+var ErrWebhookLimitReached = errors.New("limite de 50 webhooks ativos por canal atingido")
+
+// CreateWebhook insere um webhook e persiste somente o hash do token.
+// O bloqueio do canal serializa contagem e inserção, inclusive entre processos.
 func CreateWebhook(ctx context.Context, channelID, name, creator, secretHash string) (models.Webhook, error) {
-	return scanWebhook(GetDB().QueryRowContext(ctx,
+	tx, err := GetDB().BeginTx(ctx, nil)
+	if err != nil {
+		return models.Webhook{}, err
+	}
+	defer tx.Rollback()
+	var id string
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM channels WHERE id = $1 FOR UPDATE", channelID).Scan(&id); err != nil {
+		return models.Webhook{}, mapStorageError(err)
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM webhooks WHERE channel_id = $1 AND revoked_at IS NULL", channelID).Scan(&count); err != nil {
+		return models.Webhook{}, err
+	}
+	if count >= MaxActiveWebhooksPerChannel {
+		return models.Webhook{}, ErrWebhookLimitReached
+	}
+	webhook, err := scanWebhook(tx.QueryRowContext(ctx,
 		"INSERT INTO webhooks (channel_id, name, created_by, secret_hash) VALUES ($1,$2,$3,$4) RETURNING "+webhookColumns,
 		channelID, name, creator, secretHash))
+	if err != nil {
+		return models.Webhook{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.Webhook{}, err
+	}
+	return webhook, nil
 }
 
-// ListWebhooks lista os webhooks ativos (revoked_at NULL) de todos os canais,
-// em ordem decrescente de criação.
-func ListWebhooks(ctx context.Context) ([]models.Webhook, error) {
-	rows, err := GetDB().QueryContext(ctx,
-		"SELECT "+webhookColumns+" FROM webhooks WHERE revoked_at IS NULL ORDER BY created_at DESC")
+// ListWebhooks aplica a ACL de leitura (como SearchMessages) aos webhooks, antes
+// de aplicar o limite. O cursor composto evita perdas em timestamps iguais.
+func ListWebhooks(ctx context.Context, actorID string, since *time.Time, lastID string, orderAsc bool, limit int) ([]models.Webhook, error) {
+	query := "SELECT " + webhookColumns + ` FROM webhooks WHERE revoked_at IS NULL AND channel_id IN (
+ SELECT c.id FROM channels c WHERE c.type <> 'dm' AND (
+  EXISTS (SELECT 1 FROM servers s WHERE s.owner_id = $1)
+  OR c.permissions IS NULL OR c.permissions = '{}'::jsonb
+  OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+   WHERE ur.user_id = $1 AND (c.permissions -> r.id::text ->> 'read_channel') = 'true')
+ ))`
+	args := []any{actorID}
+	op, order := "<", "DESC"
+	if orderAsc {
+		op, order = ">", "ASC"
+	}
+	if since != nil {
+		args = append(args, *since)
+		if lastID != "" {
+			query += " AND (created_at, id) " + op + " ($2, $3::uuid)"
+			args = append(args, lastID)
+		} else {
+			// since sem last_id preserva o polling de mensagens, em qualquer ordem.
+			query += " AND created_at > $2"
+		}
+	}
+	query += " ORDER BY created_at " + order + ", id " + order
+	args = append(args, limit)
+	query += fmt.Sprintf(" LIMIT $%d", len(args))
+	rows, err := GetDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
 	out := make([]models.Webhook, 0)
 	for rows.Next() {
 		w, err := scanWebhook(rows)
@@ -118,7 +172,7 @@ func RevokeWebhook(ctx context.Context, id string) error {
 	result, err := GetDB().ExecContext(ctx,
 		"UPDATE webhooks SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL", id)
 	if err != nil {
-		return fmt.Errorf("revoke webhook: %w", err)
+		return fmt.Errorf("falha ao revogar webhook: %w", err)
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
 		return ErrNotFound

@@ -33,7 +33,7 @@ func TestRequestedSearchFilters(t *testing.T) {
 	results, err := SearchMessages(testCtx(), SearchParams{
 		UserID: owner.ID, ChannelID: channel.ID,
 		MentionToken: fmt.Sprintf("@mention(<@%s>)", mentioned.ID),
-		HasLink: true, Limit: 100,
+		HasLink:      true, Limit: 100,
 	})
 	if err != nil {
 		t.Fatalf("SearchMessages: %v", err)
@@ -71,7 +71,6 @@ func TestDeleteChannelRolePermissionOnlyUnlinksChannel(t *testing.T) {
 		t.Fatalf("a role foi removida junto com o vínculo: %v", err)
 	}
 }
-
 
 func TestListUsersOrderedBothDirections(t *testing.T) {
 	wipeAppTables(t)

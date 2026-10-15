@@ -384,7 +384,9 @@ func (m *Manager) UserVoiceChannels(userID string) []string {
 	m.userMu.Lock()
 	defer m.userMu.Unlock()
 	channels := make([]string, 0, len(m.userRooms[userID]))
-	for channelID := range m.userRooms[userID] { channels = append(channels, channelID) }
+	for channelID := range m.userRooms[userID] {
+		channels = append(channels, channelID)
+	}
 	sort.Strings(channels)
 	return channels
 }

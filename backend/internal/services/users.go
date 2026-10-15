@@ -19,12 +19,12 @@ import (
 )
 
 var (
-	ErrUserNotReset = errors.New("flag reset_password ausente")
+	ErrUserNotReset              = errors.New("flag reset_password ausente")
 	ErrPasswordResetTokenInvalid = errors.New("token de reset inválido, expirado ou já utilizado")
 )
 
 const (
-	passwordResetExpiration = 24 * time.Hour
+	passwordResetExpiration      = 24 * time.Hour
 	passwordResetFrontendBaseURL = "https://papo.cyberasilo.online/passwordchange/"
 )
 
@@ -277,28 +277,50 @@ func ListUsersOrdered(ctx context.Context, since *time.Time, lastID, order strin
 // UserSummariesBatch retorna UserSummary na ordem da requisição,
 // pulando ids inexistentes e duplicados após a primeira ocorrência.
 func UserSummariesBatch(ctx context.Context, ids []string) ([]models.UserSummary, error) {
-	if len(ids) == 0 || len(ids) > userSummaryBatchLimit { return nil, ErrInvalidInput }
+	if len(ids) == 0 || len(ids) > userSummaryBatchLimit {
+		return nil, ErrInvalidInput
+	}
 	seen := make(map[string]struct{}, len(ids))
 	unique := make([]string, 0, len(ids))
 	for _, id := range ids {
-		if id == "" { return nil, ErrInvalidInput }
+		if id == "" {
+			return nil, ErrInvalidInput
+		}
 		parsed, err := uuid.Parse(id)
-		if err != nil { return nil, ErrInvalidInput }
+		if err != nil {
+			return nil, ErrInvalidInput
+		}
 		id = parsed.String()
-		if _, ok := seen[id]; ok { continue }
+		if _, ok := seen[id]; ok {
+			continue
+		}
 		seen[id] = struct{}{}
 		unique = append(unique, id)
 	}
 	summaries, err := storage.GetUserSummariesByIDs(ctx, unique)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	byID := make(map[string]models.UserSummary, len(summaries))
 	foundIDs := make([]string, 0, len(summaries))
-	for _, summary := range summaries { byID[summary.ID] = summary; foundIDs = append(foundIDs, summary.ID) }
+	for _, summary := range summaries {
+		byID[summary.ID] = summary
+		foundIDs = append(foundIDs, summary.ID)
+	}
 	rolesByUser, err := storage.GetRoleSummariesByUsers(ctx, foundIDs)
-	if err != nil { return nil, err }
-	for id, summary := range byID { summary.Roles = rolesByUser[id]; byID[id] = summary }
+	if err != nil {
+		return nil, err
+	}
+	for id, summary := range byID {
+		summary.Roles = rolesByUser[id]
+		byID[id] = summary
+	}
 	result := make([]models.UserSummary, 0, len(summaries))
-	for _, id := range unique { if summary, ok := byID[id]; ok { result = append(result, summary) } }
+	for _, id := range unique {
+		if summary, ok := byID[id]; ok {
+			result = append(result, summary)
+		}
+	}
 	return result, nil
 }
 

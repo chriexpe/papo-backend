@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"papo/internal/middleware"
 	"papo/internal/models"
@@ -66,14 +68,33 @@ func CreateWebhookHandler(baseURL string, c echo.Context) error {
 	return c.JSON(http.StatusCreated, createWebhookResponse{Webhook: webhook, Token: token})
 }
 
-// ListWebhooksHandler implementa GET /webhooks (JWT + manage_webhooks):
-// lista os webhooks ativos de todos os canais.
+// ListWebhooksHandler lista webhooks dos canais legíveis, com a paginação de
+// mensagens: since, last_id, order e limit; responde webhooks e has_more.
 func ListWebhooksHandler(baseURL string, c echo.Context) error {
-	items, err := services.ListWebhooks(c.Request().Context())
+	actor, _ := c.Get(middleware.UserIDContextKey).(string)
+	var since *time.Time
+	if value := c.QueryParam("since"); value != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			return utils.SendProblem(c, baseURL, http.StatusBadRequest,
+				"invalid-param", "Parâmetro inválido", "since deve ser um timestamp ISO 8601")
+		}
+		since = &parsed
+	}
+	limit := 0
+	if value := c.QueryParam("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > services.MaxWebhookListLimit {
+			return utils.SendProblem(c, baseURL, http.StatusBadRequest,
+				"invalid-param", "Parâmetro inválido", "limit deve ser um inteiro entre 1 e 100")
+		}
+		limit = parsed
+	}
+	items, err := services.ListWebhooks(c.Request().Context(), actor, since, c.QueryParam("last_id"), c.QueryParam("order"), limit)
 	if err != nil {
 		return webhookProblem(c, baseURL, err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"webhooks": items})
+	return c.JSON(http.StatusOK, items)
 }
 
 // UpdateWebhookHandler implementa PATCH /webhooks/:webhook_id (JWT +
@@ -183,7 +204,8 @@ func webhookProblem(c echo.Context, baseURL string, err error) error {
 		errors.Is(err, services.ErrDirectMessageBlocked):
 		return utils.SendProblem(c, baseURL, http.StatusForbidden,
 			"forbidden", "Acesso negado", "operação não permitida")
-	case errors.Is(err, services.ErrInvalidInput),
+	case errors.Is(err, services.ErrWebhookLimitReached),
+		errors.Is(err, services.ErrInvalidInput),
 		errors.Is(err, services.ErrInvalidEmbed),
 		errors.Is(err, services.ErrInvalidExternalAuthor),
 		errors.Is(err, services.ErrTooManyAttachments),

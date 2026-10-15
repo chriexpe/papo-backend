@@ -211,8 +211,12 @@ func DeleteChannelRolePermission(ctx context.Context, channelID, roleID string) 
 		 WHERE id = $1`,
 		channelID, roleID,
 	)
-	if err != nil { return fmt.Errorf("falha ao remover role das permissões do canal: %w", err) }
-	if n, _ := result.RowsAffected(); n == 0 { return ErrNotFound }
+	if err != nil {
+		return fmt.Errorf("falha ao remover role das permissões do canal: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
 	return nil
 }
 

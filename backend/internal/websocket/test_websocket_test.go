@@ -969,7 +969,6 @@ func TestHubMultipleConnectionsSameUser(t *testing.T) {
 	}
 }
 
-
 func TestHubAutomaticAwayIsEphemeralAndActivityRestoresOnline(t *testing.T) {
 	hub := newWSHub(t)
 	env := newWSTestServer(t, hub, nil)
@@ -978,7 +977,7 @@ func TestHubAutomaticAwayIsEphemeralAndActivityRestoresOnline(t *testing.T) {
 	readEvent(t, observer) // presence_sync
 
 	connA := env.dial(t, "user_a")
-	readEvent(t, connA)   // presence_sync
+	readEvent(t, connA)    // presence_sync
 	readEvent(t, observer) // user_a online
 
 	clientA := env.clientAt(t, 1)

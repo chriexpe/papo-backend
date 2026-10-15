@@ -37,7 +37,6 @@ type Display struct {
 	ShowAvatars    bool   `json:"showAvatars"`
 }
 
-
 func DefaultUserConfig() UserConfig {
 	return UserConfig{
 		Theme: "system",

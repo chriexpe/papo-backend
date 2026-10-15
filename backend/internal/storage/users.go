@@ -177,17 +177,25 @@ func GetUsersByIDs(ctx context.Context, ids []string) ([]models.User, error) {
 
 // GetUserSummariesByIDs busca UserSummary pelos ids informados.
 func GetUserSummariesByIDs(ctx context.Context, ids []string) ([]models.UserSummary, error) {
-	if len(ids) == 0 { return []models.UserSummary{}, nil }
+	if len(ids) == 0 {
+		return []models.UserSummary{}, nil
+	}
 	rows, err := GetDB().QueryContext(ctx, "SELECT "+userSummaryColumns+" FROM users WHERE id = ANY($1)", ids)
-	if err != nil { return nil, fmt.Errorf("falha ao buscar resumos de usuários por ids: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("falha ao buscar resumos de usuários por ids: %w", err)
+	}
 	defer rows.Close()
 	users := make([]models.UserSummary, 0, len(ids))
 	for rows.Next() {
 		user, err := scanUserSummary(rows)
-		if err != nil { return nil, fmt.Errorf("falha ao ler resumo de usuário: %w", err) }
+		if err != nil {
+			return nil, fmt.Errorf("falha ao ler resumo de usuário: %w", err)
+		}
 		users = append(users, user)
 	}
-	if err := rows.Err(); err != nil { return nil, fmt.Errorf("falha ao buscar resumos de usuários por ids: %w", err) }
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("falha ao buscar resumos de usuários por ids: %w", err)
+	}
 	return users, nil
 }
 
@@ -223,7 +231,9 @@ func ListUsersOrdered(ctx context.Context, since *time.Time, lastID string, orde
 	query := "SELECT " + userSummaryColumns + " FROM users"
 	args := []any{}
 	op, order := "<", "DESC"
-	if orderAsc { op, order = ">", "ASC" }
+	if orderAsc {
+		op, order = ">", "ASC"
+	}
 	if since != nil {
 		if lastID != "" {
 			query += " WHERE (created_at " + op + " $" + strconv.Itoa(len(args)+1) +

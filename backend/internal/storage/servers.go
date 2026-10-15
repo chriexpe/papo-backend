@@ -214,7 +214,6 @@ func UpdateServer(ctx context.Context, id string, server models.Server, password
 	return updated, nil
 }
 
-
 // UpdateServerAndRevokeAllConnections atualiza o servidor e revoga, na mesma
 // transação, todas as conexões de sessão ativas. É usado quando a senha do
 // servidor muda, garantindo que não exista uma janela em que a nova senha já

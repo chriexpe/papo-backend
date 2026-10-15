@@ -200,7 +200,6 @@ func TestDirectChainRealIPIgnoresForwardedHeaders(t *testing.T) {
 	}
 }
 
-
 func TestTrustedProxyIPExtractorUsesXForwardedForFromTrustedPeer(t *testing.T) {
 	extractor, err := TrustedProxyIPExtractor([]string{"127.0.0.1/32"})
 	if err != nil {

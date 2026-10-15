@@ -138,7 +138,9 @@ func ListAuditLogs(ctx context.Context, p AuditLogParams) ([]models.AuditLog, er
 		cursorTimeArg := arg(*lastCreatedAt)
 		lastIDArg := arg(p.LastID)
 		op := "<"
-		if p.OrderAsc { op = ">" }
+		if p.OrderAsc {
+			op = ">"
+		}
 		conds = append(conds, "(created_at "+op+" "+cursorTimeArg+
 			" OR (created_at = "+cursorTimeArg+" AND id "+op+" "+lastIDArg+"))")
 	}
@@ -149,7 +151,9 @@ func ListAuditLogs(ctx context.Context, p AuditLogParams) ([]models.AuditLog, er
 	}
 
 	order := "DESC"
-	if p.OrderAsc { order = "ASC" }
+	if p.OrderAsc {
+		order = "ASC"
+	}
 	query := "SELECT " + auditLogColumns + " FROM audit_logs" + where +
 		" ORDER BY created_at " + order + ", id " + order + " LIMIT " + arg(fetch)
 

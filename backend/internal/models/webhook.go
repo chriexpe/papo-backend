@@ -35,3 +35,9 @@ type ExternalAuthor struct {
 	AvatarURL  string `json:"avatar_url,omitempty"`
 	ProfileURL string `json:"profile_url,omitempty"`
 }
+
+// WebhookList é a página de webhooks visíveis ao usuário autenticado.
+type WebhookList struct {
+	Webhooks []Webhook `json:"webhooks"`
+	HasMore  bool      `json:"has_more"`
+}

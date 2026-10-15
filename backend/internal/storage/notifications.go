@@ -180,7 +180,9 @@ func ListUserNotificationsOrdered(ctx context.Context, userID string, since *tim
 		"WHERE n.user_id = $1"
 	args := []any{userID}
 	op, order := "<", "DESC"
-	if orderAsc { op, order = ">", "ASC" }
+	if orderAsc {
+		op, order = ">", "ASC"
+	}
 
 	if since != nil {
 		if lastID != "" {

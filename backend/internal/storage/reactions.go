@@ -207,7 +207,9 @@ func ListReactionsByMessageOrdered(ctx context.Context, messageID string, since 
 	query := "SELECT id, emoji_id, unicode, user_id, created_at FROM message_reactions WHERE message_id = $1"
 	args := []any{messageID}
 	op, order := "<", "DESC"
-	if orderAsc { op, order = ">", "ASC" }
+	if orderAsc {
+		op, order = ">", "ASC"
+	}
 
 	if since != nil {
 		if lastID != "" {

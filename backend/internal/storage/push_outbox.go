@@ -9,13 +9,13 @@ import (
 
 // PushJob é o job de entrega push na outbox (push_outbox).
 type PushJob struct {
-	ID            string    `json:"id"`
-	UserID        string    `json:"user_id"`
-	Payload       string    `json:"payload"`
-	NotificationID *string  `json:"notification_id"`
-	Attempts      int       `json:"attempts"`
-	NextAttemptAt time.Time `json:"next_attempt_at"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"`
+	Payload        string    `json:"payload"`
+	NotificationID *string   `json:"notification_id"`
+	Attempts       int       `json:"attempts"`
+	NextAttemptAt  time.Time `json:"next_attempt_at"`
+	CreatedAt      time.Time `json:"created_at"`
 	LastError      string    `json:"last_error"`
 }
 

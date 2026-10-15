@@ -51,14 +51,18 @@ func SearchMessages(ctx context.Context, req models.SearchRequest, since *time.T
 	channelID := ""
 	if req.ChannelID != "" {
 		parsed, err := uuid.Parse(req.ChannelID)
-		if err != nil { return models.SearchResponse{}, ErrInvalidInput }
+		if err != nil {
+			return models.SearchResponse{}, ErrInvalidInput
+		}
 		channelID = parsed.String()
 	}
 
 	mentionToken := ""
 	if req.Mention != "" {
 		parsed, err := uuid.Parse(req.Mention)
-		if err != nil { return models.SearchResponse{}, ErrInvalidInput }
+		if err != nil {
+			return models.SearchResponse{}, ErrInvalidInput
+		}
 		mentionToken = "@mention(<@" + parsed.String() + ">)"
 	}
 
