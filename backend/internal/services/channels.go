@@ -39,7 +39,21 @@ const maxChannels = 500
 // ListChannels lista os canais com permissões expandidas, a última mensagem
 // de cada um e o último read de userID em cada canal (README).
 func ListChannels(ctx context.Context, userID string) ([]models.ChannelSummary, error) {
-	return storage.ListChannelSummaries(ctx, userID)
+	channels, err := storage.ListChannelSummaries(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range channels {
+		views, err := ListChannelViews(ctx, userID, channels[i].ID)
+		if errors.Is(err, ErrPermissionDenied) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		channels[i].Views = views
+	}
+	return channels, nil
 }
 
 // CreateChannel cria um novo canal

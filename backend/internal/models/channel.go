@@ -56,6 +56,7 @@ type ChannelLastMessage struct {
 // notificação do usuário no canal (channel_user_settings; ausência de row
 // equivale ao padrão "only_mentions").
 type ChannelSummary struct {
+	Views                []ChannelAppView         `json:"views,omitempty"`
 	ID                   string                   `json:"id"`
 	Name                 string                   `json:"name"`
 	Type                 string                   `json:"type"`
