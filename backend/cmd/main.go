@@ -19,6 +19,7 @@ import (
 	"papo/internal/services"
 	"papo/internal/storage"
 	"papo/internal/utils"
+	"papo/internal/wasmhost"
 	"papo/internal/webrtc"
 	"papo/internal/websocket"
 
@@ -181,7 +182,7 @@ func main() {
 	// (POST /webhooks/:webhook_id/messages) são dispensados aqui e usam o
 	// próprio limite de upload (110MB) registrado na rota.
 	e.Use(middleware.BodyLimit(middleware.MaxJSONBodySize, func(c echo.Context) bool {
-		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
+		return c.Path() == "/apps/:app_id/artifact" || c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
 	}))
 
 	e.GET("/health", handlers.HealthHandler)
@@ -193,6 +194,13 @@ func main() {
 	handlers.RegisterDirectMessageRoutes(e, cfg)
 	handlers.RegisterMessageRoutes(e, cfg)
 	handlers.RegisterWebhookRoutes(e, cfg)
+	pluginHost, err := wasmhost.New(context.Background(), wasmhost.DefaultLimits())
+	if err != nil {
+		utils.Errorf("falha ao iniciar plugins: %v", err)
+		return
+	}
+	defer pluginHost.Close(context.Background())
+	handlers.RegisterPluginRoutes(e, cfg.BaseURL, pluginHost)
 	appGateway := handlers.RegisterAppRoutes(e, cfg)
 	defer appGateway.Shutdown()
 	handlers.RegisterAttachmentRoutes(e, cfg)

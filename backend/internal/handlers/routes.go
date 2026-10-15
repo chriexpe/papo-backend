@@ -4,6 +4,7 @@ import (
 	"papo/internal/appgateway"
 	"papo/internal/config"
 	"papo/internal/middleware"
+	"papo/internal/plugins"
 
 	"github.com/labstack/echo/v4"
 )
@@ -367,4 +368,11 @@ func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) *appgateway.Registry {
 	execution.PUT("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return EditAppMessageHandler(cfg.BaseURL, c) })
 	execution.DELETE("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return DeleteAppMessageHandler(cfg.BaseURL, c) })
 	return gateway
+}
+
+// RegisterPluginRoutes compartilha JWT e manage_apps com a gestão das instalações.
+func RegisterPluginRoutes(e *echo.Echo, baseURL string, host plugins.PluginHost) {
+	g := e.Group("/apps", middleware.JWTMiddleware, middleware.RequireManageApps())
+	g.PUT("/:app_id/artifact", func(c echo.Context) error { return UploadPluginHandler(baseURL, host, c) }, middleware.BodyLimit(plugins.MaxArtifact, nil))
+	g.POST("/:app_id/trigger", func(c echo.Context) error { return TriggerPluginHandler(baseURL, host, c) }, middleware.BodyLimit(plugins.MaxPayload, nil))
 }
