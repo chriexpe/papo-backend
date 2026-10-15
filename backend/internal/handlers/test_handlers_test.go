@@ -119,7 +119,7 @@ func newApp() *echo.Echo {
 	// Mesma política de main.go: limite global JSON, /messages e o upload de
 	// webhook com limite de upload próprio (registrado na rota).
 	e.Use(middleware.BodyLimit(middleware.MaxJSONBodySize, func(c echo.Context) bool {
-		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages"
+		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
 	}))
 
 	cfg := config.LoadConfig()
@@ -137,6 +137,7 @@ func newApp() *echo.Echo {
 	RegisterSearchRoutes(e, cfg)
 	RegisterWebSocketRoutes(e, cfg)
 	RegisterWebhookRoutes(e, cfg)
+	RegisterAppRoutes(e, cfg)
 	return e
 }
 

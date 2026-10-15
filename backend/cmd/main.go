@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"time"
 
+	"papo/internal/appevents"
 	"papo/internal/config"
 	"papo/internal/handlers"
 	"papo/internal/middleware"
@@ -117,6 +119,10 @@ func main() {
 	defer stopPush()
 	push.Init(cfg, pushCtx)
 
+	// Eventos de apps têm ciclo de vida próprio e SQL cancelável no shutdown.
+	appEvents := appevents.Start(context.Background(), cfg.AppEventRetention, cfg.AppEventMaxDeliveries)
+	defer appEvents.Shutdown()
+
 	e := echo.New()
 
 	// IP do cliente (echo.Echo.IPExtractor): o fallback legacy do Echo confia
@@ -175,7 +181,7 @@ func main() {
 	// (POST /webhooks/:webhook_id/messages) são dispensados aqui e usam o
 	// próprio limite de upload (110MB) registrado na rota.
 	e.Use(middleware.BodyLimit(middleware.MaxJSONBodySize, func(c echo.Context) bool {
-		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages"
+		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
 	}))
 
 	e.GET("/health", handlers.HealthHandler)
@@ -187,6 +193,8 @@ func main() {
 	handlers.RegisterDirectMessageRoutes(e, cfg)
 	handlers.RegisterMessageRoutes(e, cfg)
 	handlers.RegisterWebhookRoutes(e, cfg)
+	appGateway := handlers.RegisterAppRoutes(e, cfg)
+	defer appGateway.Shutdown()
 	handlers.RegisterAttachmentRoutes(e, cfg)
 	handlers.RegisterMediaRoutes(e, cfg)
 	handlers.RegisterEmbedRoutes(e, cfg)
@@ -198,7 +206,7 @@ func main() {
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)
 	go func() {
-		if err := e.Start(addr); err != nil {
+		if err := e.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			utils.Fatal("Falha ao iniciar o servidor: " + err.Error())
 		}
 	}()
@@ -210,9 +218,13 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Conexões promovidas a WebSocket não são encerradas por http.Server.Shutdown.
+	appGateway.Shutdown()
 	if err := e.Shutdown(ctx); err != nil {
 		utils.Fatal("Falha ao desligar o servidor: " + err.Error())
 	}
+
+	appEvents.Shutdown()
 
 	// Encerra a moderação de imagens (workers da fila + processo Python).
 	moderation.Shutdown()
