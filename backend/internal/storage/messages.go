@@ -14,7 +14,7 @@ import (
 // messageColumns são as colunas lidas por scanMessage. webhook_id,
 // external_author e external_message_id identificam mensagens de webhook
 // (NULL para mensagens humanas).
-const messageColumns = "id, channel_id, author_id, content, created_at, edited_at, reply_to, webhook_id, external_author, external_message_id"
+const messageColumns = "id, channel_id, author_id, content, created_at, edited_at, reply_to, webhook_id, external_author, external_message_id, app_installation_id"
 
 // scanMessage lê uma row de messages na ordem de messageColumns,
 // desserializando o JSONB external_author.
@@ -32,6 +32,7 @@ func scanMessage(row rowScanner) (models.Message, error) {
 		&message.WebhookID,
 		&extJSON,
 		&message.ExternalMessageID,
+		&message.AppInstallationID,
 	)
 	if err != nil {
 		return models.Message{}, err
@@ -67,11 +68,32 @@ func CreateMessage(ctx context.Context, channelID, authorID, content, replyTo st
 // retorno é (mensagem existente, inserted=false) — o chamador devolve a
 // mensagem anterior em vez de duplicar.
 func CreateMessageAs(ctx context.Context, channelID, authorID, webhookID string, external *models.ExternalAuthor, sourceID, content, replyTo string, attachmentIDs []string) (models.Message, bool, error) {
-	const insertMessage = `INSERT INTO messages(channel_id,author_id,webhook_id,external_author,external_message_id,content,reply_to)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
-		ON CONFLICT (webhook_id,external_message_id)
-		WHERE webhook_id IS NOT NULL AND external_message_id IS NOT NULL
-		DO NOTHING RETURNING ` + messageColumns
+	return createMessageWithApp(ctx, channelID, authorID, webhookID, "", external, sourceID, content, replyTo, attachmentIDs)
+}
+
+// CreateAppMessage persiste uma mensagem atribuída exclusivamente à instalação.
+func CreateAppMessage(ctx context.Context, channelID, appID string, external *models.ExternalAuthor, sourceID, content, replyTo string, attachmentIDs []string) (models.Message, bool, error) {
+	return createMessageWithApp(ctx, channelID, "", "", appID, external, sourceID, content, replyTo, attachmentIDs)
+}
+
+// createMessageWithApp conserva as transações existentes e escolhe a chave de cada máquina.
+func createMessageWithApp(ctx context.Context, channelID, authorID, webhookID, appID string, external *models.ExternalAuthor, sourceID, content, replyTo string, attachmentIDs []string) (models.Message, bool, error) {
+	conflict := "(webhook_id,external_message_id) WHERE webhook_id IS NOT NULL AND external_message_id IS NOT NULL"
+	if appID != "" {
+		conflict = "(app_installation_id,external_message_id) WHERE app_installation_id IS NOT NULL AND external_message_id IS NOT NULL"
+	}
+	insertMessage := `INSERT INTO messages(channel_id,author_id,webhook_id,external_author,external_message_id,content,reply_to,app_installation_id)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT ` + conflict + ` DO NOTHING RETURNING ` + messageColumns
+	var appArg any
+	if appID != "" {
+		appArg = appID
+	}
+	readExisting := func() (models.Message, error) {
+		if appID != "" {
+			return GetAppMessage(ctx, appID, sourceID)
+		}
+		return GetWebhookMessage(ctx, webhookID, sourceID)
+	}
 
 	// NULL explícito por coluna: humano preenche author_id, webhook preenche
 	// webhook_id/external_author/external_message_id.
@@ -106,10 +128,10 @@ func CreateMessageAs(ctx context.Context, channelID, authorID, webhookID string,
 
 	if len(attachmentIDs) == 0 {
 		message, err := scanMessage(GetDB().QueryRowContext(ctx, insertMessage,
-			channelID, authorArg, webhookArg, externalArg, sourceArg, contentArg, replyToArg))
-		if errors.Is(err, sql.ErrNoRows) && webhookID != "" && sourceID != "" {
+			channelID, authorArg, webhookArg, externalArg, sourceArg, contentArg, replyToArg, appArg))
+		if errors.Is(err, sql.ErrNoRows) && (webhookID != "" || appID != "") && sourceID != "" {
 			// Conflito na chave de idempotência: devolve a mensagem existente.
-			existing, readErr := GetWebhookMessage(ctx, webhookID, sourceID)
+			existing, readErr := readExisting()
 			return existing, false, readErr
 		}
 		if err != nil {
@@ -125,11 +147,11 @@ func CreateMessageAs(ctx context.Context, channelID, authorID, webhookID string,
 	defer tx.Rollback()
 
 	message, err := scanMessage(tx.QueryRowContext(ctx, insertMessage,
-		channelID, authorArg, webhookArg, externalArg, sourceArg, contentArg, replyToArg))
-	if errors.Is(err, sql.ErrNoRows) && webhookID != "" && sourceID != "" {
+		channelID, authorArg, webhookArg, externalArg, sourceArg, contentArg, replyToArg, appArg))
+	if errors.Is(err, sql.ErrNoRows) && (webhookID != "" || appID != "") && sourceID != "" {
 		// Conflito na chave de idempotência: devolve a mensagem existente.
 		_ = tx.Rollback()
-		existing, readErr := GetWebhookMessage(ctx, webhookID, sourceID)
+		existing, readErr := readExisting()
 		return existing, false, readErr
 	}
 	if err != nil {
@@ -240,7 +262,7 @@ func ListMessagesWithAttachmentsByChannelOrdered(ctx context.Context, channelID 
 	}
 	fetch := limit + 1
 
-	query := "SELECT p.id, p.channel_id, p.author_id, p.content, p.created_at, p.edited_at, p.reply_to, p.webhook_id, p.external_author, p.external_message_id, " +
+	query := "SELECT p.id, p.channel_id, p.author_id, p.content, p.created_at, p.edited_at, p.reply_to, p.webhook_id, p.external_author, p.external_message_id, p.app_installation_id, " +
 		"a.id, m.mime_type, a.original_file_name, m.size_bytes, a.created_at " +
 		"FROM (SELECT " + messageColumns + " FROM messages WHERE channel_id = $1"
 	args := []any{channelID}
@@ -299,6 +321,7 @@ func ListMessagesWithAttachmentsByChannelOrdered(ctx context.Context, channelID 
 			&message.WebhookID,
 			&extJSON,
 			&message.ExternalMessageID,
+			&message.AppInstallationID,
 			&attachmentID,
 			&mimeType,
 			&fileName,
