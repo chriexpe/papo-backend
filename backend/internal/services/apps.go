@@ -305,7 +305,7 @@ func authorizeApp(ctx context.Context, a models.AppInstallation, channelID strin
 	if err != nil {
 		return current, err
 	}
-	if current.Kind != "remote" {
+	if current.Kind != "remote" && current.Kind != "wasm" {
 		return current, ErrAppUnauthorized
 	}
 	if (read && !current.Capabilities.ReadMessages) || (!read && !current.Capabilities.SendMessages) {
