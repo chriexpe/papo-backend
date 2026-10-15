@@ -19,17 +19,17 @@ type Config struct {
 	DatabaseURL string
 
 	// Entrega: FCM direto (FCMRelayURL vazio) ou relay remoto (URL definido).
-	FCMRelayURL          string
-	FCMRelayToken        string
+	FCMRelayURL            string
+	FCMRelayToken          string
 	GoogleApplicationCreds string
 
 	// Worker.
-	PushWorkers          int
-	PushBatchSize        int
-	PushMaxAttempts      int
-	PushRequestTimeout   time.Duration
-	PushHealthPort       int
-	PushPreview          string
+	PushWorkers        int
+	PushBatchSize      int
+	PushMaxAttempts    int
+	PushRequestTimeout time.Duration
+	PushHealthPort     int
+	PushPreview        string
 }
 
 // Load carrega a configuração a partir das variáveis de ambiente.

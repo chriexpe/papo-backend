@@ -26,8 +26,8 @@ type Target struct {
 type Status string
 
 const (
-	StatusSent          Status = "sent"
-	StatusInvalidToken  Status = "invalid_token"
+	StatusSent           Status = "sent"
+	StatusInvalidToken   Status = "invalid_token"
 	StatusRetryableError Status = "retryable_error"
 	StatusPermanentError Status = "permanent_error"
 )
