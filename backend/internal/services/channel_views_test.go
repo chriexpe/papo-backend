@@ -103,7 +103,7 @@ func TestChannelViewDenials(t *testing.T) {
 		return err
 	}
 	for _, kind := range []string{"remote", "wasm", "view"} {
-		bad, _, err := CreateApp(testCtx(), u.ID, "bad", kind, "Bad", models.AppCapabilities{})
+		bad, _, err := CreateApp(testCtx(), u.ID, "bad", kind, "Bad", models.AppCapabilities{AttachViews: kind != "view"})
 		if err != nil {
 			t.Fatal(err)
 		}
