@@ -341,3 +341,21 @@ func RegisterWebhookRoutes(e *echo.Echo, cfg *config.Config) {
 		return DeleteWebhookMessageHandler(cfg.BaseURL, c)
 	})
 }
+
+// RegisterAppRoutes registra gestão humana e execução remota com ACL própria.
+func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) {
+	management := e.Group("/apps", middleware.JWTMiddleware, middleware.RequireManageApps())
+	management.POST("", func(c echo.Context) error { return CreateAppHandler(cfg.BaseURL, c) })
+	management.GET("", func(c echo.Context) error { return ListAppsHandler(cfg.BaseURL, c) })
+	management.PATCH("/:app_id", func(c echo.Context) error { return UpdateAppHandler(cfg.BaseURL, c) })
+	management.DELETE("/:app_id", func(c echo.Context) error { return DeleteAppHandler(cfg.BaseURL, c) })
+	management.POST("/:app_id/token", func(c echo.Context) error { return RotateAppTokenHandler(cfg.BaseURL, c) })
+	management.PUT("/:app_id/channels/:channel_id", func(c echo.Context) error { return AddAppScopeHandler(cfg.BaseURL, c) })
+	management.DELETE("/:app_id/channels/:channel_id", func(c echo.Context) error { return RemoveAppScopeHandler(cfg.BaseURL, c) })
+	e.GET("/apps/:app_id/avatar", func(c echo.Context) error { return GetAppAvatarHandler(cfg.BaseURL, c) })
+	execution := e.Group("/app", appAuthentication(cfg.BaseURL))
+	execution.POST("/channels/:channel_id/messages", func(c echo.Context) error { return ExecuteAppHandler(cfg.BaseURL, c) }, middleware.BodyLimit(middleware.MaxUploadBodySize, nil))
+	execution.GET("/channels/:channel_id/messages", func(c echo.Context) error { return ListAppMessagesHandler(cfg.BaseURL, c) })
+	execution.PUT("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return EditAppMessageHandler(cfg.BaseURL, c) })
+	execution.DELETE("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return DeleteAppMessageHandler(cfg.BaseURL, c) })
+}

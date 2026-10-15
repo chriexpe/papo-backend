@@ -183,12 +183,13 @@ type MessageOutbound struct {
 	AuthorID  string    `json:"author_id"`
 	// WebhookID/ExternalAuthor estão presentes somente em mensagens enviadas
 	// por webhook (author_id vazio nesse caso).
-	WebhookID      *string                    `json:"webhook_id,omitempty"`
-	ExternalAuthor *models.ExternalAuthor     `json:"external_author,omitempty"`
-	Content        string                     `json:"content"`
-	CreatedAt      time.Time                  `json:"created_at"`
-	ReplyTo        *string                    `json:"reply_to"`
-	Attachments    []models.MessageAttachment `json:"attachments,omitempty"`
+	AppInstallationID *string                    `json:"app_installation_id,omitempty"`
+	WebhookID         *string                    `json:"webhook_id,omitempty"`
+	ExternalAuthor    *models.ExternalAuthor     `json:"external_author,omitempty"`
+	Content           string                     `json:"content"`
+	CreatedAt         time.Time                  `json:"created_at"`
+	ReplyTo           *string                    `json:"reply_to"`
+	Attachments       []models.MessageAttachment `json:"attachments,omitempty"`
 }
 
 // MessageEditOutbound é o evento de edição de mensagem distribuído aos clientes.
