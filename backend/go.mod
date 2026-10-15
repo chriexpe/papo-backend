@@ -17,6 +17,7 @@ require (
 	github.com/pion/sdp/v3 v3.0.19
 	github.com/pion/webrtc/v4 v4.2.20
 	github.com/sirupsen/logrus v1.10.0
+	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/crypto v0.55.0
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.57.0
