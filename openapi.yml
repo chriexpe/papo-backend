@@ -3516,6 +3516,114 @@ paths:
       security:
       - appBearer: []
 
+  /apps/{app_id}/artifact:
+    put:
+      tags: [Apps]
+      summary: Envia ou substitui o reactor Wasm de uma instalação
+      description: |
+        Exige JWT e manage_apps, instalação ativa kind=wasm. Corpo binário até 2 MiB.
+        Valida papo-core-v1, memória até 16 MiB e imports papo_host_v1.call,
+        wasi_snapshot_preview1.fd_write e random_get. Não executa o guest no upload.
+        O SHA-256 dos bytes é artifact_digest; artifact_sha identifica a mídia HMAC
+        content-addressable. Upload validado reabilita uma instalação em quarentena.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AppId'
+      requestBody:
+        required: true
+        content:
+          application/wasm:
+            schema:
+              type: string
+              format: binary
+              maxLength: 2097152
+      responses:
+        '200':
+          description: Artefato validado e persistido
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [artifact_digest]
+                properties:
+                  artifact_digest:
+                    type: string
+                    pattern: '^[0-9a-f]{64}$'
+        '400':
+          description: Tipo, ABI, imports ou artefato inválidos
+        '401':
+          description: JWT ausente ou inválido
+        '403':
+          description: manage_apps necessário
+        '404':
+          description: Instalação inexistente ou revogada
+        '413':
+          description: Artefato acima de 2 MiB
+        '429':
+          description: Capacidade global de compilação ou cache ocupada
+  /apps/{app_id}/trigger:
+    post:
+      tags: [Apps]
+      summary: Invoca um plugin Wasm sob demanda
+      description: |
+        Exige JWT e manage_apps. JSON UTF-8 até 64 KiB; resposta é o envelope
+        não confiável do guest com ok booleano, result ou error. Um erro de host call
+        pode estar em uma resposta HTTP 200 com ok=false.
+        Uma invocação por instalação, até oito aguardando, quatro trabalhos globais,
+        prazo de um segundo incluindo espera, 16 MiB de memória, 64 KiB de saída
+        e 32 host calls. Três falhas consecutivas colocam a instalação em quarentena
+        até upload validado ou reinício do processo. Trap/timeout descarta a instância.
+        Efeitos anteriores ao erro permanecem; external_message_id só deduplica enquanto
+        a mensagem existir. KV exige private_storage e é limitado a 256 chaves,
+        1 MiB por instalação, chaves de 200 bytes e valores JSON de 16 KiB.
+        message.send usa CreateAppMessage, send_messages e o escopo atual do canal.
+        Não recebe callbacks de eventos nesta entrega.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AppId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              method: kv.put
+              key: counter
+              value: 42
+      responses:
+        '200':
+          description: Envelope JSON retornado pelo guest
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                  result: {}
+                  error:
+                    type: object
+        '400':
+          description: Tipo de instalação, JSON ou estado do artefato inválido
+        '401':
+          description: JWT ausente ou inválido
+        '403':
+          description: manage_apps necessário
+        '404':
+          description: Instalação inexistente ou revogada
+        '409':
+          description: Plugin em quarentena
+        '413':
+          description: Corpo acima de 64 KiB
+        '422':
+          description: Trap, timeout, cancelamento ou violação dos limites de execução
+        '429':
+          description: Fila, registro de instalações ou cache cheio
+
 components:
   securitySchemes:
     appBearer:
@@ -5558,6 +5666,10 @@ components:
     AppCapabilities:
       type: object
       properties:
+        private_storage:
+          type: boolean
+          default: false
+          description: Permite KV persistente privado no namespace da instalação Wasm.
         send_messages:
           type: boolean
           default: false
@@ -5575,6 +5687,13 @@ components:
         id:
           type: string
           format: uuid
+        artifact_sha:
+          type: string
+          description: Identificador HMAC da mídia do artefato (somente Wasm).
+        artifact_digest:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: SHA-256 dos bytes Wasm validados.
         app_key:
           type: string
         kind:
