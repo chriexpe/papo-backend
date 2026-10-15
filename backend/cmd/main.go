@@ -175,7 +175,7 @@ func main() {
 	// (POST /webhooks/:webhook_id/messages) são dispensados aqui e usam o
 	// próprio limite de upload (110MB) registrado na rota.
 	e.Use(middleware.BodyLimit(middleware.MaxJSONBodySize, func(c echo.Context) bool {
-		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages"
+		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
 	}))
 
 	e.GET("/health", handlers.HealthHandler)
@@ -187,6 +187,7 @@ func main() {
 	handlers.RegisterDirectMessageRoutes(e, cfg)
 	handlers.RegisterMessageRoutes(e, cfg)
 	handlers.RegisterWebhookRoutes(e, cfg)
+	handlers.RegisterAppRoutes(e, cfg)
 	handlers.RegisterAttachmentRoutes(e, cfg)
 	handlers.RegisterMediaRoutes(e, cfg)
 	handlers.RegisterEmbedRoutes(e, cfg)
