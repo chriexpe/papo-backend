@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"time"
@@ -192,7 +193,8 @@ func main() {
 	handlers.RegisterDirectMessageRoutes(e, cfg)
 	handlers.RegisterMessageRoutes(e, cfg)
 	handlers.RegisterWebhookRoutes(e, cfg)
-	handlers.RegisterAppRoutes(e, cfg)
+	appGateway := handlers.RegisterAppRoutes(e, cfg)
+	defer appGateway.Shutdown()
 	handlers.RegisterAttachmentRoutes(e, cfg)
 	handlers.RegisterMediaRoutes(e, cfg)
 	handlers.RegisterEmbedRoutes(e, cfg)
@@ -204,7 +206,7 @@ func main() {
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)
 	go func() {
-		if err := e.Start(addr); err != nil {
+		if err := e.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			utils.Fatal("Falha ao iniciar o servidor: " + err.Error())
 		}
 	}()
@@ -216,6 +218,8 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Conexões promovidas a WebSocket não são encerradas por http.Server.Shutdown.
+	appGateway.Shutdown()
 	if err := e.Shutdown(ctx); err != nil {
 		utils.Fatal("Falha ao desligar o servidor: " + err.Error())
 	}

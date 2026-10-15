@@ -8,7 +8,7 @@ info:
     - Autenticação via cookie HttpOnly `Auth` (JWT).
     - Erros seguem RFC 7807 (`application/problem+json`) e toda resposta
       inclui o header `X-Request-ID`.
-    Eventos duráveis de apps (produção e distribuição interna):
+    Eventos duráveis de apps:
     - As mutações e seus snapshots são confirmados na mesma transação.
     - São produzidos message.created, message.updated, message.deleted,
       reaction.added, reaction.removed e channel.deleted somente se houver
@@ -29,10 +29,10 @@ info:
       e backlog por instalação (APP_EVENT_MAX_DELIVERIES, padrão 10000).
       A poda mantém replay_floor para detectar lacunas de retenção; novas
       instalações não recebem fatos anteriores à sua criação.
-    - Esta entrega não expõe /app/gateway. O transporte WSS, hello/ready,
-      heartbeat, ack com epoch e replay at-least-once/resync_required serão
-      entregues em uma PR subsequente. Os schemas abaixo documentam os fatos
-      internos e não anunciam um endpoint disponível.
+    - GET /app/gateway promove WSS autenticado com Bearer explícito. O protocolo
+      é hello -> ready -> dispatch -> ack, com heartbeat e uma única época ativa
+      por instalação. Reentrega é at-least-once; consumidores deduplicam event_id.
+      Replay abaixo de replay_floor recebe resync_required e exige reconciliação REST.
   version: 1.0.0
 servers:
   - url: http://localhost:8080
@@ -3124,6 +3124,74 @@ paths:
       summary: Avatar persistente do app
       tags:
       - Apps
+  /app/gateway:
+    get:
+      tags: [Apps]
+      summary: Gateway WSS de eventos duráveis por instalação
+      security:
+        - appBearer: []
+      description: |
+        Upgrade WebSocket com `Authorization: Bearer <token>` remoto ativo.
+        Cookies, parâmetros de URL e subprotocolos não substituem Bearer. Usar
+        WSS em produção, normalmente via proxy TLS; WS é permitido no servidor
+        HTTP local para desenvolvimento. Este gateway não usa o hub humano /ws.
+
+        1. Servidor envia `{"op":"hello","version":1,"heartbeat_interval_ms":30000}`.
+        2. Cliente responde em até 10 s com `{"op":"hello"}` ou
+           `{"op":"hello","resume_after":42}`. O padrão é o último ack durável.
+           resume_after é um checkpoint declarado pelo cliente, entre 0 e last_seq;
+           ele não confirma entregas por si só. Instalações novas começam no presente.
+        3. Servidor incrementa uma época durável, substitui a conexão anterior e
+           envia `{"op":"ready","epoch":2,"cursor":42,"replay_floor":0,"last_seq":45}`.
+           A ativação ocorre no hello válido, e não apenas no upgrade HTTP.
+        4. Cada `dispatch` contém op, epoch e os campos de AppEventDelivery.
+           A ordem é a atribuição por instalação. Há lacunas quando a autorização
+           descarta fatos; elas não indicam perda de um fato autorizado.
+        5. Cliente persiste seus efeitos/checkpoint antes de enviar
+           `{"op":"ack","epoch":2,"delivery_seq":45}`. A confirmação é cumulativa:
+           todos os dispatches recebidos até essa sequência devem ter sido
+           processados. Não pode superar o maior checkpoint declarado/enviado na
+           conexão. Acks antigos/repetidos são idempotentes; época obsoleta é recusada.
+        6. Cliente envia `{"op":"heartbeat","epoch":2}` a cada 30 s; servidor
+           responde `{"op":"heartbeat_ack","epoch":2}`. Sem frames por 90 s,
+           a conexão termina. Frames de entrada têm limite de 4 KiB e 100/s
+           (burst 200). Frames malformados ou controles inválidos encerram o socket.
+
+        Uma nova conexão cerca os acks da antiga no PostgreSQL, inclusive entre
+        processos. Frames já em trânsito podem pertencer à época anterior; o
+        consumidor deve ignorá-los após substituição. Em crash após envio e antes
+        de ack, o mesmo event_id e delivery_seq são reenviados: deduplicar por
+        event_id. Um novo processo/reconexão não depende da memória do registry.
+
+        O buffer é limitado a 32 controles/sequências; não guarda snapshots.
+        O payload é relido e a credencial, a época, as capacidades e o escopo são
+        revalidados antes de enviar. Um consumidor lento é desconectado; seu
+        backlog não confirmado permanece durável até os limites de retenção.
+        Rotação e revogação encerram conexões autenticadas pelo token antigo.
+
+        Tombstones e remoção de conteúdo seguem AppEventTombstone. Exclusão de
+        mensagem substitui created/updated ainda sem ack por IDs e redacted:true.
+        Embeds/previews são obtidos por REST, fora do snapshot.
+
+        Retenção é limitada por idade (padrão 7 dias) e 10000 linhas por instalação,
+        configuráveis no servidor. Snapshots confirmados por todos os destinatários
+        são liberados para poda. Replay abaixo do piso, no hello ou durante o
+        consumo, recebe `{"op":"resync_required","epoch":3,"cursor":0,
+        "replay_floor":40,"last_seq":45}` e a conexão termina. Reconciliar via
+        GET /app/channels/:id/messages; depois reconectar usando o last_seq recebido
+        como checkpoint. Fatos atribuídos depois dele continuam disponíveis para replay.
+      responses:
+        '101':
+          description: |
+            Upgrade concluído. Frames JSON seguem AppGatewayServerFrame e
+            AppGatewayClientFrame; OpenAPI não representa o fluxo WSS como body HTTP.
+        '400':
+          description: Requisição não é um upgrade WebSocket válido.
+        '401':
+          description: Mesmo erro para Bearer ausente, errado, revogado ou rotacionado.
+        '429':
+          description: Limite de upgrades da instalação excedido.
+
   /app/channels/{channel_id}/messages:
     parameters:
     - name: channel_id
@@ -5564,10 +5632,9 @@ components:
     AppEventDelivery:
       type: object
       description: |
-        Envelope interno do backlog. delivery_seq é local à instalação e pode
-        conter lacunas por autorização/retencão. event_id identifica o fato entre
-        tentativas; nenhum UUID serve como cursor. Transporte e acknowledgments
-        ainda não estão disponíveis nesta versão da API.
+        Envelope durável do dispatch. delivery_seq é local à instalação e pode
+        conter lacunas por autorização/retenção. event_id identifica o fato entre
+        tentativas; nenhum UUID serve como cursor. O frame WSS acrescenta op e epoch.
       required: [event_id, type, channel_id, payload, created_at, delivery_seq]
       properties:
         event_id:
@@ -5589,6 +5656,83 @@ components:
           type: integer
           format: int64
           minimum: 1
+        payload:
+          anyOf:
+            - $ref: '#/components/schemas/AppEventSnapshot'
+            - $ref: '#/components/schemas/AppEventMessageUpdate'
+            - $ref: '#/components/schemas/AppEventReaction'
+            - $ref: '#/components/schemas/AppEventTombstone'
+
+    AppGatewayClientFrame:
+      type: object
+      description: hello inicia a conexão; ack/heartbeat exigem a epoch de ready.
+      required: [op]
+      properties:
+        op:
+          type: string
+          enum: [hello, ack, heartbeat]
+        resume_after:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Apenas em hello; ausente usa o último ack durável.
+        epoch:
+          type: integer
+          format: int64
+          minimum: 1
+        delivery_seq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Obrigatório em ack; maior prefixo já processado nesta época.
+    AppGatewayServerFrame:
+      type: object
+      description: |
+        Discriminador op. hello inclui version e heartbeat_interval_ms; ready e
+        resync_required incluem epoch/cursor/replay_floor/last_seq; heartbeat_ack
+        inclui epoch. dispatch acrescenta os campos de AppEventDelivery no mesmo
+        objeto (event_id, type, channel_id, message_id, payload, created_at, delivery_seq).
+      required: [op]
+      properties:
+        op:
+          type: string
+          enum: [hello, ready, dispatch, heartbeat_ack, resync_required]
+        version:
+          type: integer
+          enum: [1]
+        heartbeat_interval_ms:
+          type: integer
+          example: 30000
+        epoch:
+          type: integer
+          format: int64
+        cursor:
+          type: integer
+          format: int64
+        replay_floor:
+          type: integer
+          format: int64
+        last_seq:
+          type: integer
+          format: int64
+        event_id:
+          type: string
+          format: uuid
+        delivery_seq:
+          type: integer
+          format: int64
+        type:
+          type: string
+          enum: [message.created, message.updated, message.deleted, reaction.added, reaction.removed, channel.deleted]
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
         payload:
           anyOf:
             - $ref: '#/components/schemas/AppEventSnapshot'

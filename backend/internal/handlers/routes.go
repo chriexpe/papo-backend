@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"papo/internal/appgateway"
 	"papo/internal/config"
 	"papo/internal/middleware"
 
@@ -343,7 +344,8 @@ func RegisterWebhookRoutes(e *echo.Echo, cfg *config.Config) {
 }
 
 // RegisterAppRoutes registra gestão humana e execução remota com ACL própria.
-func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) {
+func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) *appgateway.Registry {
+	gateway := appgateway.NewRegistry()
 	management := e.Group("/apps", middleware.JWTMiddleware, middleware.RequireManageApps())
 	management.POST("", func(c echo.Context) error { return CreateAppHandler(cfg.BaseURL, c) })
 	management.GET("", func(c echo.Context) error { return ListAppsHandler(cfg.BaseURL, c) })
@@ -354,8 +356,10 @@ func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) {
 	management.DELETE("/:app_id/channels/:channel_id", func(c echo.Context) error { return RemoveAppScopeHandler(cfg.BaseURL, c) })
 	e.GET("/apps/:app_id/avatar", func(c echo.Context) error { return GetAppAvatarHandler(cfg.BaseURL, c) })
 	execution := e.Group("/app", appAuthentication(cfg.BaseURL))
+	execution.GET("/gateway", func(c echo.Context) error { return AppGatewayHandler(c, gateway) })
 	execution.POST("/channels/:channel_id/messages", func(c echo.Context) error { return ExecuteAppHandler(cfg.BaseURL, c) }, middleware.BodyLimit(middleware.MaxUploadBodySize, nil))
 	execution.GET("/channels/:channel_id/messages", func(c echo.Context) error { return ListAppMessagesHandler(cfg.BaseURL, c) })
 	execution.PUT("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return EditAppMessageHandler(cfg.BaseURL, c) })
 	execution.DELETE("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return DeleteAppMessageHandler(cfg.BaseURL, c) })
+	return gateway
 }
