@@ -4299,7 +4299,8 @@ components:
         views:
           type: array
           description: >
-            Campo aditivo de GET /channels, somente para leitores do canal; omitido
+            Campo aditivo dos payloads de canais (listagem e respostas de gestão),
+            somente para leitores do canal; omitido
             para não leitores ou lista vazia. Apenas instalações ativas com attach_views.
             Ordem por position, created_at e id. Não altera a visibilidade dos metadados existentes.
           items: {$ref: '#/components/schemas/ChannelAppView'}
