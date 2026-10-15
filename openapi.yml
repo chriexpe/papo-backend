@@ -2851,6 +2851,97 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /channels/{channel_id}/views:
+    parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      tags: [Apps]
+      summary: Lista views do canal
+      description: Exige manage_apps e read_channel. Responde array ordenado por position, created_at e id.
+      responses:
+        '200':
+          description: Views ativas com attach_views e escopo atual
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ChannelAppView'}
+        '400': {description: Identificador inválido}
+        '401': {description: Sessão ausente ou inválida}
+        '403': {description: Sem manage_apps ou leitura do canal}
+        '404': {description: Canal inexistente}
+    post:
+      tags: [Apps]
+      summary: Anexa uma view passiva ao canal
+      description: >
+        Exige manage_apps, read_channel e canal text/voice. A instalação deve ser
+        ativa, kind view, possuir attach_views e escopo no canal. Não recebe token.
+        Views são apagadas ao remover o escopo, revogar a instalação ou excluir o canal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/ChannelAppViewInput'}
+                - type: object
+                  required: [app_installation_id]
+                  properties:
+                    app_installation_id: {type: string, format: uuid}
+      responses:
+        '201':
+          description: View anexada
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelAppView'}
+        '400': {description: URL, posição ou identificador inválido}
+        '401': {description: Sessão ausente ou inválida}
+        '403': {description: Sem permissão, capacidade, tipo ou escopo apropriado}
+        '404': {description: Canal ou instalação inexistente/revogada}
+  /channels/{channel_id}/views/{view_id}:
+    parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+      - name: view_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    put:
+      tags: [Apps]
+      summary: Substitui URL e posição de uma view
+      description: >
+        Mesmas autorizações da criação. app_installation_id pode ser omitido;
+        quando presente deve identificar a instalação original. Não move views entre canais.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChannelAppViewInput'}
+      responses:
+        '200':
+          description: View atualizada
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelAppView'}
+        '400': {description: URL, posição ou instalação inválida}
+        '401': {description: Sessão ausente ou inválida}
+        '403': {description: Sem permissão, capacidade ou escopo apropriado}
+        '404': {description: Canal, instalação ou view inexistente}
+    delete:
+      tags: [Apps]
+      summary: Remove uma view do canal
+      description: Exige manage_apps e read_channel; permite limpeza mesmo sem attach_views atual.
+      responses:
+        '204': {description: View removida}
+        '400': {description: Canal inválido}
+        '401': {description: Sessão ausente ou inválida}
+        '403': {description: Sem manage_apps ou leitura do canal}
+        '404': {description: Canal ou view inexistente}
   /apps:
     post:
       tags:
@@ -4156,9 +4247,62 @@ components:
         role_count:
           type: integer
 
+    ChannelAppViewInput:
+      type: object
+      required: [url]
+      properties:
+        app_installation_id: {type: string, format: uuid}
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: >
+            HTTPS apenas, sem userinfo ou porta não padrão. Reutiliza validateEmbedURL;
+            rejeita localhost, nomes locais, IPs privados/reservados e DNS que resolva
+            para essas redes. Falha de DNS rejeita o cadastro. Host diferente do
+            BASE_URL configurado (ignora caixa, porta e ponto final).
+            O backend nunca baixa, serve ou faz proxy deste conteúdo.
+        position:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          default: 0
+    ChannelAppView:
+      type: object
+      description: |
+        Conteúdo web não confiável, mesmo aprovado por administrador. Contrato obrigatório do cliente (§9.1):
+        1. Cada view usa WebView própria, com perfil/diretório não persistente e exclusivo;
+           nunca compartilha cookies, armazenamento ou cache com contextos que acessaram a API Papo.
+        2. Nunca injeta sessão, JWT, cookies ou headers Papo, nem tokens na URL.
+        3. Nunca registra IPC, bridge JS, injeção de scripts ou callbacks nativos.
+        4. Nunca serve conteúdo sob a origem Papo. O servidor não oferece proxy.
+        5. Navegação restrita à origem da view (scheme, host e porta); demais destinos,
+           popups, downloads, file/custom schemes e permissões (câmera, microfone,
+           localização, clipboard) são negados ou encaminhados ao navegador externo.
+        6. Se o site recusar framing, estiver inacessível ou a plataforma não garantir
+           as regras anteriores, mostrar “Abrir no navegador”, sem enfraquecer o isolamento.
+        Mudanças são obtidas por nova consulta a GET /channels; não há evento novo de views.
+        Uma URL aprovada não garante segurança de redirects ou DNS futuros; o cliente
+        deve aplicar isolamento e restrição de origem durante toda a navegação.
+      required: [id, app_installation_id, channel_id, url, position, created_by, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        app_installation_id: {type: string, format: uuid}
+        channel_id: {type: string, format: uuid}
+        url: {type: string, format: uri, maxLength: 2048}
+        position: {type: integer, minimum: 0}
+        created_by: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
     Channel:
       type: object
       properties:
+        views:
+          type: array
+          description: >
+            Campo aditivo de GET /channels, somente para leitores do canal; omitido
+            para não leitores ou lista vazia. Apenas instalações ativas com attach_views.
+            Ordem por position, created_at e id. Não altera a visibilidade dos metadados existentes.
+          items: {$ref: '#/components/schemas/ChannelAppView'}
         id:
           type: string
           format: uuid
