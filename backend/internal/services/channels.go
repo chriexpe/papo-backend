@@ -111,7 +111,7 @@ func CreateChannel(ctx context.Context, actorID, name, channelType, topic string
 
 	// Reconsulta a visão summary para que a resposta da criação tenha a
 	// mesma forma da listagem (permissões expandidas e last_message).
-	return storage.GetChannelSummary(ctx, channel.ID)
+	return channelSummaryForActor(ctx, channel.ID, actorID)
 }
 
 // UpdateChannel renomeia um canal pelo id e, opcionalmente, atualiza o topic
@@ -175,7 +175,7 @@ func UpdateChannel(ctx context.Context, actorID, id, name string, topic *string)
 
 	// Reconsulta a visão summary para que a resposta da edição tenha a
 	// mesma forma da listagem (permissões expandidas e last_message).
-	return storage.GetChannelSummary(ctx, id)
+	return channelSummaryForActor(ctx, id, actorID)
 }
 
 // ChangeChannelPosition move um canal para newPosition e recalcula as
@@ -224,7 +224,7 @@ func ChangeChannelPosition(ctx context.Context, actorID, channelID string, oldPo
 
 	// Reconsulta a visão summary para que a resposta tenha a mesma forma da
 	// listagem (permissões expandidas e last_message).
-	return storage.GetChannelSummary(ctx, channel.ID)
+	return channelSummaryForActor(ctx, channel.ID, actorID)
 }
 
 // DeleteChannel exclui um canal pelo id (README: 204 when successful).
@@ -479,4 +479,21 @@ func DeleteChannelRolePermission(ctx context.Context, actorID, channelID, roleID
 		Metadata: map[string]any{"role_id": roleID, "removed": true},
 	})
 	return nil
+}
+
+// channelSummaryForActor inclui views nas respostas de gestão apenas quando o ator lê o canal.
+func channelSummaryForActor(ctx context.Context, channelID, actorID string) (models.ChannelSummary, error) {
+	summary, err := storage.GetChannelSummary(ctx, channelID)
+	if err != nil {
+		return summary, err
+	}
+	views, err := ListChannelViews(ctx, actorID, channelID)
+	if errors.Is(err, ErrPermissionDenied) {
+		return summary, nil
+	}
+	if err != nil {
+		return summary, err
+	}
+	summary.Views = views
+	return summary, nil
 }

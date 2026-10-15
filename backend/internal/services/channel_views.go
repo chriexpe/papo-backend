@@ -22,7 +22,7 @@ func validateChannelViewURL(ctx context.Context, raw, baseURL string) (string, e
 	if utf8.RuneCountInString(raw) > 2048 {
 		return "", ErrInvalidInput
 	}
-	normalized, err := validateEmbedURL(raw)
+	_, err := validateEmbedURL(raw)
 	if err != nil {
 		return "", ErrInvalidInput
 	}
@@ -42,10 +42,9 @@ func validateChannelViewURL(ctx context.Context, raw, baseURL string) (string, e
 		return "", ErrInvalidInput
 	}
 	// NormalizeURL remove os colchetes IPv6; preserva a autoridade válida neste contrato.
-	u, err := url.Parse(normalized)
-	if err != nil {
-		return "", ErrInvalidInput
-	}
+	u := original
+	u.Scheme = "https"
+	u.Fragment = ""
 	if strings.Contains(host, ":") {
 		u.Host = "[" + host + "]"
 	} else {
