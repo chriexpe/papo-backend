@@ -132,7 +132,7 @@ func GetAppAvatarHandler(baseURL string, c echo.Context) error {
 
 	media, filePath, err := services.GetAppAvatar(c.Request().Context(), appID)
 	switch {
-	case errors.Is(err, services.ErrAppNotFound),
+	case errors.Is(err, services.ErrChannelViewNotFound), errors.Is(err, services.ErrAppNotFound),
 		errors.Is(err, services.ErrAvatarNotFound),
 		errors.Is(err, services.ErrMediaNotFound):
 		return utils.SendProblem(c, baseURL, http.StatusNotFound,
@@ -196,7 +196,7 @@ func appProblem(c echo.Context, baseURL string, err error) error {
 	case errors.Is(err, services.ErrAppUnauthorized):
 		return utils.SendProblem(c, baseURL, http.StatusUnauthorized,
 			"unauthorized", "Não autorizado", "app inválido")
-	case errors.Is(err, services.ErrAppNotFound),
+	case errors.Is(err, services.ErrChannelViewNotFound), errors.Is(err, services.ErrAppNotFound),
 		errors.Is(err, services.ErrChannelNotFound),
 		errors.Is(err, services.ErrMessageNotFound):
 		return utils.SendProblem(c, baseURL, http.StatusNotFound,
