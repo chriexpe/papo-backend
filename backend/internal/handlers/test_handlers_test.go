@@ -30,9 +30,11 @@ import (
 	"papo/internal/config"
 	"papo/internal/middleware"
 	"papo/internal/models"
+	"papo/internal/plugins"
 	"papo/internal/services"
 	"papo/internal/storage"
 	"papo/internal/utils"
+	"papo/internal/wasmhost"
 	"papo/internal/websocket"
 
 	"github.com/google/uuid"
@@ -41,6 +43,8 @@ import (
 	"github.com/labstack/echo/v4"
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
 )
+
+var routePluginHost plugins.PluginHost
 
 // testJWTSecret fixa o segredo JWT dos testes. Os handlers recebem o cfg
 // passado em Register*Routes e o middleware chama config.LoadConfig()
@@ -102,6 +106,12 @@ func runRoutesTests(m *testing.M) int {
 		return 1
 	}
 
+	routePluginHost, err = wasmhost.New(context.Background(), wasmhost.DefaultLimits())
+	if err != nil {
+		fmt.Println(err)
+		return 1
+	}
+	defer routePluginHost.Close(context.Background())
 	code := m.Run()
 
 	storage.CloseDB()
@@ -119,7 +129,7 @@ func newApp() *echo.Echo {
 	// Mesma política de main.go: limite global JSON, /messages e o upload de
 	// webhook com limite de upload próprio (registrado na rota).
 	e.Use(middleware.BodyLimit(middleware.MaxJSONBodySize, func(c echo.Context) bool {
-		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
+		return c.Path() == "/apps/:app_id/artifact" || c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
 	}))
 
 	cfg := config.LoadConfig()
@@ -138,6 +148,7 @@ func newApp() *echo.Echo {
 	RegisterWebSocketRoutes(e, cfg)
 	RegisterWebhookRoutes(e, cfg)
 	RegisterAppRoutes(e, cfg)
+	RegisterPluginRoutes(e, cfg.BaseURL, routePluginHost)
 	return e
 }
 
@@ -4416,6 +4427,12 @@ func runHandlersTests(m *testing.M) int {
 		return 1
 	}
 
+	routePluginHost, err = wasmhost.New(context.Background(), wasmhost.DefaultLimits())
+	if err != nil {
+		fmt.Println(err)
+		return 1
+	}
+	defer routePluginHost.Close(context.Background())
 	code := m.Run()
 
 	storage.CloseDB()
