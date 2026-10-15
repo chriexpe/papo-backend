@@ -33,8 +33,12 @@ listagem de gestão e também exige `manage_apps`.
 sem mover a view para outra instalação/canal. `DELETE` no mesmo caminho remove
 a view. Remover o escopo, revogar a instalação ou excluir o canal apaga as views
 por cascata. Retirar `attach_views` esconde as views enquanto a capacidade estiver
-desabilitada; o gestor pode removê-las mesmo assim. Clientes devem atualizar a
-listagem de canais para refletir essas mudanças; não há novo evento WebSocket.
+desabilitada; o gestor pode removê-las mesmo assim. Após anexar, editar ou remover uma view, remover seu escopo ou revogar a
+instalação, os leitores atuais recebem o evento existente `channel_update`, com
+`channel_id`, `name`, `position`, `topic` e `views`. A lista `views` substitui
+integralmente a lista local; `[]` limpa a última aba. Outros updates sem o campo
+`views` preservam a lista local. Após desconexão, consultar `GET /channels` para
+reconciliar o estado. Não há novo tipo de evento WebSocket.
 
 O frontend companheiro deve apresentar `Chat | Mapa` com WebView exclusiva,
 perfil não persistente, sem credenciais Papo, bridge, scripts injetados ou

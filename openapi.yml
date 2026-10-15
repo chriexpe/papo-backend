@@ -2811,7 +2811,7 @@ paths:
         | `message_embeds_update` | outbound | `{ type: "message_embeds_update", channel_id, message_id, embeds }` (embeds: lista ATUAL de embeds da mensagem, mesma forma do campo `embeds` de `GET /channels/{channel_id}/messages`; metadados apenas, sem `image_data` — a mídia é buscada sob demanda por `GET /embeds/{embed_id}` e `GET /embeds/{embed_id}/video`. Um evento por mensagem, distribuído aos leitores do canal após o crawl em background (criação/edição), após a substituição de embeds na edição (lista vazia quando todos foram removidos) ou quando um embed compartilhado é refetchado por expiração de cache) |
         | `new_notification` | unicast  | `{ type: "new_notification", id, user_id, message_id, message_content }` (id: row de notificação ou UUID efêmero quando a configuração all gera evento sem row; user_id: autor da mensagem; message_content: truncado a 512 caracteres) |
         | `channel_create` | outbound  | `{ type: "channel_create", channel_id, name, channel_type, position, topic? }` (topic: null para canais category) |
-        | `channel_update` | outbound  | `{ type: "channel_update", channel_id, name, position, topic? }`                               |
+        | `channel_update` | outbound  | `{ type: "channel_update", channel_id, name, position, topic?, views? }`                               |
         | `channel_delete` | outbound  | `{ type: "channel_delete", channel_id }`                                               |
         | `typing`         | inbound   | `{ type: "typing", channel_id }`                                                        |
         | `typing`         | outbound  | `{ type: "typing", channel_id, user_id, is_typing }`                                    |
@@ -4281,7 +4281,12 @@ components:
            localização, clipboard) são negados ou encaminhados ao navegador externo.
         6. Se o site recusar framing, estiver inacessível ou a plataforma não garantir
            as regras anteriores, mostrar “Abrir no navegador”, sem enfraquecer o isolamento.
-        Mudanças são obtidas por nova consulta a GET /channels; não há evento novo de views.
+        Anexar, editar ou remover uma view, remover seu escopo ou revogar a instalação
+        envia o evento existente channel_update somente aos leitores atuais de cada canal
+        afetado, após a confirmação da escrita. O campo views contém a lista completa
+        atualizada; [] remove a última aba. Ausência do campo em outros channel_update
+        não altera a lista local de views. GET /channels continua sendo a fonte de
+        reconciliação após desconexão. Não existe tipo novo de evento.
         Uma URL aprovada não garante segurança de redirects ou DNS futuros; o cliente
         deve aplicar isolamento e restrição de origem durante toda a navegação.
       required: [id, app_installation_id, channel_id, url, position, created_by, created_at]
