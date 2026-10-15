@@ -11,13 +11,13 @@ import (
 )
 
 // appColumns exclui a credencial das respostas públicas.
-const appColumns = "id, app_key, kind, name, display_name, avatar_media, capabilities, created_by, created_at, revoked_at"
+const appColumns = "id, app_key, kind, name, display_name, avatar_media, capabilities, created_by, created_at, revoked_at, artifact_sha, artifact_digest"
 
 // scanApp lê a instalação e decodifica suas capacidades.
 func scanApp(row rowScanner, secret ...*string) (models.AppInstallation, error) {
 	var a models.AppInstallation
 	var caps []byte
-	targets := []any{&a.ID, &a.AppKey, &a.Kind, &a.Name, &a.DisplayName, &a.AvatarMedia, &caps, &a.CreatedBy, &a.CreatedAt, &a.RevokedAt}
+	targets := []any{&a.ID, &a.AppKey, &a.Kind, &a.Name, &a.DisplayName, &a.AvatarMedia, &caps, &a.CreatedBy, &a.CreatedAt, &a.RevokedAt, &a.ArtifactSHA, &a.ArtifactDigest}
 	if len(secret) > 0 {
 		targets = append(targets, secret[0])
 	}
