@@ -274,11 +274,14 @@ type ChannelCreateOutbound struct {
 // ChannelUpdateOutbound é o evento de atualização de canal distribuído aos clientes.
 // Topic é null para canais category (ou sem tópico).
 type ChannelUpdateOutbound struct {
-	Type      EventType `json:"type"`
-	ChannelID string    `json:"channel_id"`
-	Name      string    `json:"name"`
-	Position  int       `json:"position"`
-	Topic     *string   `json:"topic"`
+	// Views presente substitui a lista inteira; [] remove a última aba.
+	// O campo só é preenchido em broadcasts autorizados por read_channel.
+	Views     *[]models.ChannelAppView `json:"views,omitempty"`
+	Type      EventType                `json:"type"`
+	ChannelID string                   `json:"channel_id"`
+	Name      string                   `json:"name"`
+	Position  int                      `json:"position"`
+	Topic     *string                  `json:"topic"`
 }
 
 // ChannelDeleteOutbound é o evento de exclusão de canal distribuído aos clientes.

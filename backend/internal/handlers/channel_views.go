@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"papo/internal/middleware"
 	"papo/internal/services"
+	"papo/internal/utils"
+	"papo/internal/websocket"
 )
 
 // channelViewRequest define URL/posição e a instalação exigida na criação.
@@ -35,6 +37,7 @@ func SaveChannelViewHandler(baseURL string, c echo.Context) error {
 	if err != nil {
 		return appProblem(c, baseURL, err)
 	}
+	broadcastChannelViewsUpdate(c, view.ChannelID)
 	status := http.StatusOK
 	if c.Param("view_id") == "" {
 		status = http.StatusCreated
@@ -48,5 +51,21 @@ func DeleteChannelViewHandler(baseURL string, c echo.Context) error {
 	if err := services.DeleteChannelView(c.Request().Context(), actor, c.Param("channel_id"), c.Param("view_id")); err != nil {
 		return appProblem(c, baseURL, err)
 	}
+	broadcastChannelViewsUpdate(c, c.Param("channel_id"))
 	return c.NoContent(http.StatusNoContent)
+}
+
+// broadcastChannelViewsUpdate publica o estado confirmado apenas aos leitores atuais.
+// Falhas de consulta/autorização são best-effort e nunca desfazem a mutação.
+func broadcastChannelViewsUpdate(c echo.Context, channelID string) {
+	ctx := c.Request().Context()
+	channel, err := services.ChannelViewState(ctx, channelID)
+	if err != nil {
+		utils.Errorf("websocket: falha ao consultar canal %s para atualizar views: %v", channelID, err)
+		return
+	}
+	broadcastChannelEvent(c, channelID, websocket.ChannelUpdateOutbound{
+		Type: websocket.EventTypeChannelUpdate, ChannelID: channel.ID, Name: channel.Name,
+		Position: channel.Position, Topic: channel.Topic, Views: &channel.Views,
+	})
 }

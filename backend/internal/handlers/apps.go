@@ -183,8 +183,12 @@ func GetAppAvatarHandler(baseURL string, c echo.Context) error {
 // mantêm a atribuição.
 func DeleteAppHandler(baseURL string, c echo.Context) error {
 	actor, _ := c.Get(middleware.UserIDContextKey).(string)
-	if err := services.RevokeApp(c.Request().Context(), actor, c.Param("app_id")); err != nil {
+	channels, err := services.RevokeAppWithViewChannels(c.Request().Context(), actor, c.Param("app_id"))
+	if err != nil {
 		return appProblem(c, baseURL, err)
+	}
+	for _, channel := range channels {
+		broadcastChannelViewsUpdate(c, channel)
 	}
 	return c.NoContent(http.StatusNoContent)
 }
@@ -381,6 +385,7 @@ func RemoveAppScopeHandler(baseURL string, c echo.Context) error {
 	if err := services.RemoveAppScope(c.Request().Context(), actor, c.Param("app_id"), c.Param("channel_id")); err != nil {
 		return appProblem(c, baseURL, err)
 	}
+	broadcastChannelViewsUpdate(c, c.Param("channel_id"))
 	return c.NoContent(http.StatusNoContent)
 }
 
