@@ -115,9 +115,9 @@ func newPeer(m *Manager, room *Room, userID, clientID string) *Peer {
 		fanouts:          make(map[string]*fanout),
 		pendingVideoSubs: make(map[string]pendingVideoSubscription),
 		midRole:          make(map[string]trackRole),
-		activeMidRole: make(map[string]trackRole),
-		renegQueue:    make(chan func() error, 64),
-		renegStop:     make(chan struct{}),
+		activeMidRole:    make(map[string]trackRole),
+		renegQueue:       make(chan func() error, 64),
+		renegStop:        make(chan struct{}),
 	}
 	go p.renegWorker()
 	return p

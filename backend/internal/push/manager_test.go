@@ -241,9 +241,9 @@ func TestRunReadyAndShutdown(t *testing.T) {
 	os.Setenv("FAKE_EXIT_AFTER", "")
 
 	cfg := &config.Config{
-		UseFCMRelay:      true,
-		FCMRelayBinary:   worker,
-		PushHealthPort:   port,
+		UseFCMRelay:        true,
+		FCMRelayBinary:     worker,
+		PushHealthPort:     port,
 		FCMRelayRestartMax: 10,
 	}
 	m := newTestManager(cfg)
@@ -273,10 +273,10 @@ func TestRunRestartBackoff(t *testing.T) {
 	os.Setenv("FAKE_EXIT_AFTER", "1") // worker morre após 1s
 
 	cfg := &config.Config{
-		UseFCMRelay:         true,
-		FCMRelayBinary:      worker,
-		PushHealthPort:      port,
-		FCMRelayRestartMax:  10,
+		UseFCMRelay:        true,
+		FCMRelayBinary:     worker,
+		PushHealthPort:     port,
+		FCMRelayRestartMax: 10,
 	}
 	m := newTestManager(cfg)
 	m.Start()
@@ -361,5 +361,3 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) bool {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
-
-

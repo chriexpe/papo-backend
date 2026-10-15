@@ -41,7 +41,6 @@ func testManager(t *testing.T, cfg *config.Config) *Manager {
 	}
 }
 
-
 func TestSFUIceServersExcludeTURN(t *testing.T) {
 	m := testManager(t, &config.Config{
 		STUNURLs: []string{"stun:stun.l.google.com:19302"},
@@ -1131,7 +1130,6 @@ func TestPeerConnectionWithICEUDPMux(t *testing.T) {
 	connectPCs(t, clientPC, serverPC)
 }
 
-
 func TestReleaseAllFromPublishesAudioRoutes(t *testing.T) {
 	events := make(chan any, 1)
 	m := testManager(t, &config.Config{VoiceAudioSlots: 1})
@@ -1191,7 +1189,6 @@ func TestReleaseAllFromPublishesAudioRoutes(t *testing.T) {
 		t.Fatal("voice_audio_routes não foi enviado")
 	}
 }
-
 
 func TestSetMutedEvictsActiveSpeakerImmediately(t *testing.T) {
 	events := make(chan any, 4)

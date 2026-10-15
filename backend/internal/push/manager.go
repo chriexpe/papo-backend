@@ -39,13 +39,13 @@ var (
 
 // Manager inicia e supervisiona o papo-push.
 type Manager struct {
-	cfg      *config.Config
-	ctx      context.Context
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	state    State
-	stopCh   chan struct{}
-	stopOnce sync.Once
+	cfg       *config.Config
+	ctx       context.Context
+	mu        sync.Mutex
+	cmd       *exec.Cmd
+	state     State
+	stopCh    chan struct{}
+	stopOnce  sync.Once
 	lastStart time.Time
 }
 

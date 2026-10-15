@@ -86,7 +86,9 @@ func ListEmojisOrdered(ctx context.Context, since *time.Time, lastID string, ord
 	args := []any{}
 	where := ""
 	op, order := "<", "DESC"
-	if orderAsc { op, order = ">", "ASC" }
+	if orderAsc {
+		op, order = ">", "ASC"
+	}
 	if since != nil {
 		var cond string
 		if lastID != "" {
