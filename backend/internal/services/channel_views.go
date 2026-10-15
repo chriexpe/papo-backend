@@ -161,3 +161,14 @@ func DeleteChannelView(ctx context.Context, actor, channel, id string) error {
 	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppViewDelete, EntityType: EntityApp, EntityID: &v.AppInstallationID, Metadata: map[string]any{"channel_id": channel, "view_id": id}})
 	return nil
 }
+
+// ChannelViewState monta o estado confirmado para broadcast; o chamador deve
+// autorizar os destinatários com ChannelReaders antes de distribuir o payload.
+func ChannelViewState(ctx context.Context, channelID string) (models.ChannelSummary, error) {
+	channel, err := storage.GetChannelSummary(ctx, channelID)
+	if err != nil {
+		return channel, err
+	}
+	channel.Views, err = storage.ListChannelViews(ctx, channelID)
+	return channel, err
+}

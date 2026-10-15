@@ -128,26 +128,58 @@ func RotateAppToken(ctx context.Context, id, hash string) error {
 
 // RevokeApp revoga a credencial e remove escopos na mesma transação.
 func RevokeApp(ctx context.Context, id string) error {
+	_, err := RevokeAppWithViewChannels(ctx, id)
+	return err
+}
+
+// RevokeAppWithViewChannels captura os canais afetados sob o lock da instalação,
+// antes de apagar views e escopos; devolve os IDs somente depois do commit.
+func RevokeAppWithViewChannels(ctx context.Context, id string) ([]string, error) {
 	tx, err := GetDB().BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 	r, err := tx.ExecContext(ctx, "UPDATE app_installations SET revoked_at=NOW() WHERE id=$1 AND revoked_at IS NULL", id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if n, _ := r.RowsAffected(); n == 0 {
-		return ErrNotFound
+		return nil, ErrNotFound
+	}
+	rows, err := tx.QueryContext(ctx, "DELETE FROM channel_app_views WHERE app_installation_id=$1 RETURNING channel_id", id)
+	if err != nil {
+		return nil, err
+	}
+	channels := make([]string, 0)
+	seen := make(map[string]bool)
+	for rows.Next() {
+		var channel string
+		if err := rows.Scan(&channel); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if !seen[channel] {
+			channels = append(channels, channel)
+			seen[channel] = true
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
 	}
 	// A revogação descarta o backlog; snapshots compartilhados são podados pelo worker.
 	if _, err = tx.ExecContext(ctx, "DELETE FROM app_delivery_state WHERE installation_id=$1", id); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, "DELETE FROM app_channel_scopes WHERE app_installation_id=$1", id); err != nil {
-		return err
+		return nil, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return channels, nil
 }
 
 // AddAppScope impede adicionar escopo após a revogação, inclusive em concorrência.
