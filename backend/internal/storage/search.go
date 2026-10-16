@@ -140,7 +140,7 @@ func SearchMessages(ctx context.Context, p SearchParams) ([]models.SearchResult,
 	}
 
 	if p.ChannelID == "" {
-		conds = append(conds, "(c.type <> 'dm' AND ("+
+		conds = append(conds, "(c.type IN ('text','voice') AND ("+
 			"EXISTS (SELECT 1 FROM servers s WHERE s.owner_id = "+userID+") "+
 			"OR c.permissions IS NULL "+
 			"OR c.permissions = '{}'::jsonb "+
@@ -153,7 +153,7 @@ func SearchMessages(ctx context.Context, p SearchParams) ([]models.SearchResult,
 			"))")
 	} else {
 		conds = append(conds,
-			"("+"(c.type <> 'dm' AND ("+
+			"("+"(c.type IN ('text','voice') AND ("+
 				"EXISTS (SELECT 1 FROM servers s WHERE s.owner_id = "+userID+") "+
 				"OR c.permissions IS NULL "+
 				"OR c.permissions = '{}'::jsonb "+

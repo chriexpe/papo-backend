@@ -14,9 +14,9 @@ import (
 // O worker autentica com FCM_RELAY_TOKEN (Bearer). O relay é o único responsável
 // por falar com o FCM; não conhece usuários nem o PostgreSQL.
 type RelayDelivery struct {
-	url    string
-	token  string
-	client *http.Client
+	url      string
+	token    string
+	client   *http.Client
 }
 
 type relayTarget struct {
@@ -25,7 +25,7 @@ type relayTarget struct {
 }
 
 type relayRequest struct {
-	Targets      []relayTarget     `json:"targets"`
+	Targets      []relayTarget   `json:"targets"`
 	Notification map[string]string `json:"notification"`
 	Data         map[string]string `json:"data"`
 }

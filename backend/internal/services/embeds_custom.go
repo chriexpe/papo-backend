@@ -22,22 +22,23 @@ var ErrInvalidEmbed = errors.New("embed customizado inválido")
 // embedColorRe aceita somente #RRGGBB.
 var embedColorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
-// EmbedInput é um embed customizado enviado na criação/edição de mensagem
-// (campo JSON "embeds"). O cliente não controla source_type, fetch_method nem
-// cache_key: o service fixa source_type='custom' e fetch_method='manual', e
-// nunca sobrescreve um embed gerado pelo crawler.
+// EmbedInput é um card customizado ou referência a superfície app no campo embeds.
+// source_type=app exige remetente app e superfície declarada; URLs executáveis,
+// fetch_method e cache_key são sempre derivados pelo serviço.
 type EmbedInput struct {
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	URL         string            `json:"url"`
-	Color       string            `json:"color"`
-	SiteName    string            `json:"site_name"`
-	Author      *EmbedAuthorInput `json:"author"`
-	Footer      *EmbedFooterInput `json:"footer"`
-	Thumbnail   *EmbedMediaInput  `json:"thumbnail"`
-	Image       *EmbedMediaInput  `json:"image"`
-	Video       *EmbedMediaInput  `json:"video"`
-	Fields      []EmbedFieldInput `json:"fields"`
+	SourceType   string            `json:"source_type,omitempty"`
+	AppSurfaceID string            `json:"app_surface_id,omitempty"`
+	Title        string            `json:"title"`
+	Description  string            `json:"description"`
+	URL          string            `json:"url"`
+	Color        string            `json:"color"`
+	SiteName     string            `json:"site_name"`
+	Author       *EmbedAuthorInput `json:"author"`
+	Footer       *EmbedFooterInput `json:"footer"`
+	Thumbnail    *EmbedMediaInput  `json:"thumbnail"`
+	Image        *EmbedMediaInput  `json:"image"`
+	Video        *EmbedMediaInput  `json:"video"`
+	Fields       []EmbedFieldInput `json:"fields"`
 }
 
 // EmbedAuthorInput é o autor declarado do embed customizado. IconURL é a imagem
@@ -100,6 +101,9 @@ func validateCustomEmbeds(inputs []EmbedInput) error {
 }
 
 func validateCustomEmbed(in EmbedInput) error {
+	if in.SourceType != "" && in.SourceType != "custom" || in.AppSurfaceID != "" {
+		return ErrInvalidEmbed
+	}
 	if utf8.RuneCountInString(in.Title) > embedTitleMax {
 		return fmt.Errorf("título excede %d caracteres", embedTitleMax)
 	}

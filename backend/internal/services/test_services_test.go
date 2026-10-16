@@ -24,7 +24,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -302,13 +301,8 @@ func newRandomPassword() string {
 	return "Pw!" + randHex(4)
 }
 
-// testIPSequence evita colisões com usuários banidos de testes anteriores.
-var testIPSequence atomic.Uint32
-
-// newRandomIP reserva um IP exclusivo para cada chamada neste processo de teste.
 func newRandomIP() string {
-	n := testIPSequence.Add(1)
-	return fmt.Sprintf("10.%d.%d.%d", (n>>16)&255, (n>>8)&255, n&255)
+	return fmt.Sprintf("10.0.%d.%d", randInt(1, 254), randInt(1, 254))
 }
 
 func randInt(min, max int) int {

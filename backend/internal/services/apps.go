@@ -228,16 +228,24 @@ func RotateAppToken(ctx context.Context, actor, id string) (string, error) {
 
 // RevokeApp desativa a instalação sem apagar suas mensagens.
 func RevokeApp(ctx context.Context, actor, id string) error {
+	_, err := RevokeAppWithChannelChanges(ctx, actor, id)
+	return err
+}
+
+// RevokeAppWithChannelChanges revoga e retorna os snapshots dos canais app removidos.
+func RevokeAppWithChannelChanges(ctx context.Context, actor, id string) ([]AppChannelChange, error) {
 	if _, err := activeApp(ctx, id); err != nil {
-		return err
+		return nil, err
 	}
-	if err := storage.RevokeApp(ctx, id); errors.Is(err, storage.ErrNotFound) {
-		return ErrAppNotFound
-	} else if err != nil {
-		return err
+	channels, err := storage.RevokeAppWithChannelChanges(ctx, id)
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, ErrAppNotFound
+	}
+	if err != nil {
+		return nil, err
 	}
 	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppRevoke, EntityType: EntityApp, EntityID: &id})
-	return nil
+	return channels, nil
 }
 
 // AddAppScope exige leitura humana do canal; a linha criada torna-se a ACL de máquina.

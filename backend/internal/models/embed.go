@@ -14,15 +14,20 @@ import "time"
 // → tabela media); os bytes são servidos por GET /embeds/:embed_id (imagem) e
 // GET /embeds/:embed_id/video (relay de vídeo). Campos ausentes são omitidos.
 type Embed struct {
-	ID          string  `json:"id"`
-	SourceType  string  `json:"source_type"`
-	FetchMethod string  `json:"fetch_method"`
-	Provider    *string `json:"provider,omitempty"`
-	SiteName    *string `json:"site_name,omitempty"`
-	URL         *string `json:"url,omitempty"`
-	Title       *string `json:"title,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Color       *string `json:"color,omitempty"`
+	AppInstallationID *string     `json:"app_installation_id,omitempty"`
+	AppSurfaceID      *string     `json:"app_surface_id,omitempty"`
+	FrameWidth        *int        `json:"frame_width,omitempty"`
+	FrameHeight       *int        `json:"frame_height,omitempty"`
+	App               *AppChannel `json:"app,omitempty"`
+	ID                string      `json:"id"`
+	SourceType        string      `json:"source_type"`
+	FetchMethod       string      `json:"fetch_method"`
+	Provider          *string     `json:"provider,omitempty"`
+	SiteName          *string     `json:"site_name,omitempty"`
+	URL               *string     `json:"url,omitempty"`
+	Title             *string     `json:"title,omitempty"`
+	Description       *string     `json:"description,omitempty"`
+	Color             *string     `json:"color,omitempty"`
 
 	Author    *EmbedAuthor `json:"author,omitempty"`
 	Thumbnail *EmbedMedia  `json:"thumbnail,omitempty"`

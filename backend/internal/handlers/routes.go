@@ -346,11 +346,7 @@ func RegisterWebhookRoutes(e *echo.Echo, cfg *config.Config) {
 
 // RegisterAppRoutes registra gestão humana e execução remota com ACL própria.
 func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) *appgateway.Registry {
-	views := e.Group("/channels/:channel_id/views", middleware.JWTMiddleware, middleware.RequireManageApps())
-	views.GET("", func(c echo.Context) error { return ListChannelViewsHandler(cfg.BaseURL, c) })
-	views.POST("", func(c echo.Context) error { return SaveChannelViewHandler(cfg.BaseURL, c) })
-	views.PUT("/:view_id", func(c echo.Context) error { return SaveChannelViewHandler(cfg.BaseURL, c) })
-	views.DELETE("/:view_id", func(c echo.Context) error { return DeleteChannelViewHandler(cfg.BaseURL, c) })
+	e.GET("/apps/:app_id/ui/*", func(c echo.Context) error { return AppUIHandler(cfg.BaseURL, c) })
 	gateway := appgateway.NewRegistry()
 	management := e.Group("/apps", middleware.JWTMiddleware, middleware.RequireManageApps())
 	management.POST("", func(c echo.Context) error { return CreateAppHandler(cfg.BaseURL, c) })

@@ -19,6 +19,7 @@ type ChannelPermission struct {
 // Topic é o tópico do canal (máx 512 caracteres), válido apenas para canais
 // de texto; canais category têm Topic NULL.
 type Channel struct {
+	App         *AppChannel                  `json:"app,omitempty"`
 	ID          string                       `db:"id" json:"id"`
 	Name        string                       `db:"name" json:"name"`
 	Permissions map[string]ChannelPermission `db:"permissions" json:"permissions"`
@@ -56,7 +57,7 @@ type ChannelLastMessage struct {
 // notificação do usuário no canal (channel_user_settings; ausência de row
 // equivale ao padrão "only_mentions").
 type ChannelSummary struct {
-	Views                []ChannelAppView         `json:"views,omitempty"`
+	App                  *AppChannel              `json:"app,omitempty"`
 	ID                   string                   `json:"id"`
 	Name                 string                   `json:"name"`
 	Type                 string                   `json:"type"`

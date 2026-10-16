@@ -7,7 +7,7 @@ type AppCapabilities struct {
 	PrivateStorage bool `json:"private_storage"`
 	SendMessages   bool `json:"send_messages"`
 	ReadMessages   bool `json:"read_messages"`
-	AttachViews    bool `json:"attach_views"`
+	PostAppEmbeds  bool `json:"post_app_embeds"`
 }
 
 // AppInstallation representa uma identidade de máquina pertencente ao servidor.
