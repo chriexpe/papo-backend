@@ -6,15 +6,6 @@ import (
 	"papo/internal/storage"
 )
 
-// appSurfacePayload resolve a URL bundled sob o caminho público permitido pelo contrato.
-func appSurfacePayload(id string, s AppSurfaceDeclaration) *models.AppChannel {
-	entry := s.Entry
-	if s.Source == "bundled" {
-		entry = "/apps/" + id + "/" + entry
-	}
-	return &models.AppChannel{AppInstallationID: id, SurfaceID: s.ID, Source: s.Source, Entry: entry, AvatarURL: "/apps/" + id + "/avatar", Available: true}
-}
-
 // declaredEmbed aceita exclusivamente superfície embed da própria instalação e origem aprovada.
 func declaredEmbed(ctx context.Context, id, surfaceID string) (AppSurfaceDeclaration, error) {
 	b, err := ResolvePluginSurfaceBundle(ctx, id)
@@ -56,13 +47,10 @@ func validateMessageEmbeds(ctx context.Context, appID string, inputs []EmbedInpu
 		if !a.Capabilities.PostAppEmbeds || !a.Capabilities.SendMessages {
 			return ErrPermissionDenied
 		}
-		if in.URL != "" || in.Video != nil || in.Author != nil || in.AppSurfaceID == "" {
+		if in.URL != "" || in.Description != "" || in.Color != "" || in.SiteName != "" || in.Video != nil || in.Author != nil || in.Footer != nil || in.Image != nil || in.Thumbnail != nil || len(in.Fields) > 0 || in.AppSurfaceID == "" {
 			return ErrInvalidEmbed
 		}
-		copy := in
-		copy.SourceType = ""
-		copy.AppSurfaceID = ""
-		customs = append(customs, copy)
+		customs = append(customs, EmbedInput{Title: in.Title})
 		if _, err := declaredEmbed(ctx, appID, in.AppSurfaceID); err != nil {
 			return err
 		}
@@ -86,17 +74,8 @@ func createMessageEmbeds(ctx context.Context, owner, appID string, inputs []Embe
 		if err != nil {
 			return nil, err
 		}
-		copy := in
-		copy.SourceType = ""
-		copy.AppSurfaceID = ""
-		prepared, fields := buildCustomEmbed(copy)
-		prepared.SourceType = "app"
-		prepared.AppInstallationID = &appID
-		prepared.AppSurfaceID = &s.ID
-		prepared.FrameWidth = &s.FrameWidth
-		prepared.FrameHeight = &s.FrameHeight
-		prepared.Fields = fields
-		resolveCustomEmbedMedia(ctx, owner, &prepared)
+		prepared := models.Embed{SourceType: "app", FetchMethod: "manual", Title: nullableText(in.Title), AppInstallationID: &appID, AppSurfaceID: &s.ID,
+			AppWidth: &s.Size.Width, AppHeight: &s.Size.Height, AppLoad: &s.Load, AppDisplay: &s.Display, AppPoster: nullableText(s.Poster)}
 		e, err := storage.CreateAppEmbed(ctx, prepared)
 		if err != nil {
 			return nil, err
@@ -114,12 +93,39 @@ func decorateAppEmbed(ctx context.Context, e *models.Embed) {
 	}
 	e.URL = nil
 	e.EmbedURL = nil
-	e.App = &models.AppChannel{AppInstallationID: *e.AppInstallationID, SurfaceID: *e.AppSurfaceID, AvatarURL: "/apps/" + *e.AppInstallationID + "/avatar", Available: false}
+	e.Entry = ""
+	e.Poster = ""
+	e.Surface = &models.AppSurfaceReference{AppInstallationID: *e.AppInstallationID, ID: *e.AppSurfaceID}
+	if e.AppWidth != nil && e.AppHeight != nil {
+		e.Size = &models.AppSurfaceSize{Width: *e.AppWidth, Height: *e.AppHeight}
+	}
+	if e.AppLoad != nil {
+		e.Load = *e.AppLoad
+	}
+	if e.AppDisplay != nil {
+		e.Display = *e.AppDisplay
+	}
+	if e.Size == nil || validateAppFramePolicy(*e.Size, e.Load, e.Display) != nil {
+		return
+	}
 	s, err := declaredEmbed(ctx, *e.AppInstallationID, *e.AppSurfaceID)
 	if err != nil {
 		return
 	}
-	e.App = appSurfacePayload(*e.AppInstallationID, s)
+	if e.AppPoster != nil {
+		b, err := ResolvePluginSurfaceBundle(ctx, *e.AppInstallationID)
+		if err != nil {
+			return
+		}
+		if err := validateAppPoster(b, *e.AppPoster); err != nil {
+			return
+		}
+		e.Poster = "/apps/" + *e.AppInstallationID + "/" + *e.AppPoster
+	}
+	e.Entry = s.Entry
+	if s.Source == "bundled" {
+		e.Entry = "/apps/" + *e.AppInstallationID + "/" + s.Entry
+	}
 }
 
 // CreatePluginMessage recebe identidade do contexto interno da PR 5, nunca de campos do usuário.

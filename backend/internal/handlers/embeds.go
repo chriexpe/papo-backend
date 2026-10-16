@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -23,6 +24,19 @@ type embedResponse struct {
 	models.Embed
 	ImageData       *string `json:"image_data"`
 	AuthorImageData *string `json:"author_image_data"`
+}
+
+// MarshalJSON preserva os blobs dos cards nativos sem ampliar o contrato dos frames.
+func (r embedResponse) MarshalJSON() ([]byte, error) {
+	if r.SourceType == "app" {
+		return json.Marshal(r.Embed)
+	}
+	type nativeEmbed models.Embed
+	return json.Marshal(struct {
+		nativeEmbed
+		ImageData       *string `json:"image_data"`
+		AuthorImageData *string `json:"author_image_data"`
+	}{nativeEmbed(r.Embed), r.ImageData, r.AuthorImageData})
 }
 
 // GetEmbedHandler implementa GET /embeds/:embed_id.
