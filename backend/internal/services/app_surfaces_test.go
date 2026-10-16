@@ -43,7 +43,7 @@ func newSurfaceFixture(t *testing.T) (models.AppInstallation, models.User, fixtu
 	}
 	source := fixtureSurfaceSource{a.ID: {Directory: dir, Digest: "fixture-v1", Enabled: true, Surfaces: []AppSurfaceDeclaration{
 		{ID: "channel", Kind: "channel", DefaultName: "app_" + randHex(4), Source: "bundled", Entry: "ui/index.html"},
-		{ID: "result", Kind: "embed", Source: "bundled", Entry: "ui/result.html", FrameWidth: 480, FrameHeight: 320},
+		{ID: "result", Kind: "embed", Source: "bundled", Entry: "ui/result.html", Size: models.AppSurfaceSize{Width: 480, Height: 320}},
 	}}}
 	SetPluginSurfaceSource(source)
 	t.Cleanup(func() { SetPluginSurfaceSource(nil) })
@@ -192,7 +192,7 @@ func TestAppSurfaceValidation(t *testing.T) {
 	bad := []AppSurfaceDeclaration{
 		{ID: "x", Kind: "channel", DefaultName: "x", Source: "bundled", Entry: "ui/../plugin.wasm"},
 		{ID: "x", Kind: "channel", DefaultName: "x", Source: "remote", Entry: "https://8.8.8.8/map"},
-		{ID: "x", Kind: "embed", Source: "bundled", Entry: "ui/result.html", FrameWidth: 99999},
+		{ID: "x", Kind: "embed", Source: "bundled", Entry: "ui/result.html", Size: models.AppSurfaceSize{Width: 99999, Height: 320}},
 		{ID: "x", Kind: "tab", Source: "bundled", Entry: "ui/index.html"},
 	}
 	for _, s := range bad {
@@ -237,10 +237,10 @@ func TestAppEmbedsLifecycle(t *testing.T) {
 	}
 	input := EmbedInput{SourceType: "app", AppSurfaceID: "result", Title: "Resultado"}
 	m, created, err := CreatePluginMessage(testCtx(), a.ID, ch.ID, "", "", "", nil, []EmbedInput{input})
-	if err != nil || !created || len(m.Embeds) != 1 || m.Embeds[0].SourceType != "app" || !m.Embeds[0].App.Available {
+	if err != nil || !created || len(m.Embeds) != 1 || m.Embeds[0].SourceType != "app" || m.Embeds[0].Entry == "" {
 		t.Fatalf("embed: %+v %v", m, err)
 	}
-	if m.Embeds[0].App.Entry != "/apps/"+a.ID+"/ui/result.html" {
+	if m.Embeds[0].Entry != "/apps/"+a.ID+"/ui/result.html" {
 		t.Fatal(m.Embeds[0])
 	}
 	if _, err := CreateMessage(testCtx(), ch.ID, u.ID, "", "", nil, []EmbedInput{input}); !errors.Is(err, ErrInvalidEmbed) {
@@ -276,7 +276,7 @@ func TestAppEmbedsLifecycle(t *testing.T) {
 		if msg.ID == m.ID {
 			found = true
 			e := msg.Embeds[0]
-			if e.App == nil || e.App.Available || e.App.Entry != "" || e.URL != nil || e.EmbedURL != nil {
+			if e.Surface == nil || e.Entry != "" || e.Poster != "" || e.URL != nil || e.EmbedURL != nil {
 				t.Fatal("embed ativo", e)
 			}
 		}
@@ -290,7 +290,7 @@ func TestAppEmbedsLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, err := ListMessageEmbeds(testCtx(), []string{m.ID})
-	if err != nil || items[m.ID][0].App.Available {
+	if err != nil || items[m.ID][0].Entry != "" {
 		t.Fatal(items, err)
 	}
 }
