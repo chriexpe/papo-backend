@@ -9,7 +9,7 @@ import (
 func TestAppFrameStorageChecks(t *testing.T) {
 	wipeAppTables(t)
 	u := newTestUser(t)
-	a, err := CreateApp(testCtx(), "frames", "wasm", "Frames", u.ID, models.AppCapabilities{}, nil)
+	a, err := CreateApp(testCtx(), "frames", "plugin", "Frames", u.ID, models.AppCapabilities{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

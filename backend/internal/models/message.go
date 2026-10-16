@@ -7,13 +7,14 @@ import "time"
 // a mensagem referenciada pode ser excluída e o valor permanece como
 // apontador pendente (o frontend exibe "mensagem não disponível").
 type Message struct {
-	ID        string     `db:"id" json:"id"`
-	ChannelID string     `db:"channel_id" json:"channel_id"`
-	AuthorID  *string    `db:"author_id" json:"author_id"`
-	Content   *string    `db:"content" json:"content"`
-	CreatedAt time.Time  `db:"created_at" json:"created_at"`
-	EditedAt  *time.Time `db:"edited_at" json:"edited_at"`
-	ReplyTo   *string    `db:"reply_to" json:"reply_to"`
+	Components [][]AppButton `json:"components,omitempty"`
+	ID         string        `db:"id" json:"id"`
+	ChannelID  string        `db:"channel_id" json:"channel_id"`
+	AuthorID   *string       `db:"author_id" json:"author_id"`
+	Content    *string       `db:"content" json:"content"`
+	CreatedAt  time.Time     `db:"created_at" json:"created_at"`
+	EditedAt   *time.Time    `db:"edited_at" json:"edited_at"`
+	ReplyTo    *string       `db:"reply_to" json:"reply_to"`
 	// WebhookID/ExternalAuthor identificam mensagens de webhook (NULL em
 	// mensagens humanas). ExternalMessageID é a chave de idempotência do
 	// envio e jamais é serializada para clientes.

@@ -139,7 +139,8 @@ func ReconcileAppChannels(ctx context.Context, id string, surfaces []models.AppS
 func AppSurfaceChannelIDs(ctx context.Context, installationID string) ([]string, error) {
 	rows, err := GetDB().QueryContext(ctx, `SELECT channel_id FROM app_channels WHERE app_installation_id=$1
  UNION SELECT m.channel_id FROM embeds e JOIN message_embeds me ON me.embed_id=e.id
- JOIN messages m ON m.id=me.message_id WHERE e.app_installation_id=$1`, installationID)
+ JOIN messages m ON m.id=me.message_id WHERE e.app_installation_id=$1
+ UNION SELECT channel_id FROM messages WHERE app_installation_id=$1 AND components<>'[]'::jsonb`, installationID)
 	if err != nil {
 		return nil, err
 	}

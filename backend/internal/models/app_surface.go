@@ -15,12 +15,13 @@ type AppSurfaceDeclaration struct {
 
 // AppChannel é a superfície que ocupa o canal inteiro, sem conversa.
 type AppChannel struct {
-	AppInstallationID string `json:"app_installation_id"`
-	SurfaceID         string `json:"surface_id"`
-	Source            string `json:"source,omitempty"`
-	Entry             string `json:"entry,omitempty"`
-	AvatarURL         string `json:"avatar_url"`
-	Available         bool   `json:"available"`
+	UserActions       []AppUserAction `json:"user_actions,omitempty"`
+	AppInstallationID string          `json:"app_installation_id"`
+	SurfaceID         string          `json:"surface_id"`
+	Source            string          `json:"source,omitempty"`
+	Entry             string          `json:"entry,omitempty"`
+	AvatarURL         string          `json:"avatar_url"`
+	Available         bool            `json:"available"`
 }
 
 // AppChannelChange contém snapshots para publicar eventos somente depois do commit.

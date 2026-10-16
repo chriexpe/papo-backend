@@ -7,6 +7,7 @@ import (
 
 // AppCapabilities limita as operações da instalação aos canais autorizados.
 type AppCapabilities struct {
+	SendInvites    bool `json:"send_invites"`
 	PrivateStorage bool `json:"private_storage"`
 	SendMessages   bool `json:"send_messages"`
 	ReadMessages   bool `json:"read_messages"`
