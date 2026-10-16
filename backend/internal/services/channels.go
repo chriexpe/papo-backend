@@ -517,6 +517,9 @@ func ValidateChannelTypeChange(ctx context.Context, id, wanted string) error {
 	if err != nil {
 		return err
 	}
+	if wanted == ch.Type {
+		return nil
+	}
 	if ch.Type == "app" || wanted == "app" {
 		return ErrAppChannelManaged
 	}

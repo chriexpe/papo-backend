@@ -319,6 +319,9 @@ func TestAppChannelManualActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	ch := changes[0].After
+	if rec := do(t, e, http.MethodPut, "/channels/"+ch.ID, []byte(`{"name":"app-same-type","type":"app"}`), authCookie(owner)); rec.Code != 200 {
+		t.Fatal("renomear preservando tipo", rec.Code, rec.Body.String())
+	}
 	for _, request := range []struct{ method, path, body string }{{http.MethodDelete, "/channels/" + ch.ID, ""}, {http.MethodPut, "/channels/" + ch.ID, `{"name":"app","type":"text"}`}} {
 		rec := do(t, e, request.method, request.path, []byte(request.body), authCookie(owner))
 		if rec.Code != 400 || !strings.Contains(rec.Body.String(), "desative o app") {

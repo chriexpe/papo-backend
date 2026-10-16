@@ -218,6 +218,9 @@ func TestAppSurfaceValidation(t *testing.T) {
 			t.Fatal(raw)
 		}
 	}
+	if _, err := validateRemoteSurfaceURL(testCtx(), "https://[2606:4700:4700:0:0:0:0:1111]/", "https://[2606:4700:4700::1111]/"); err == nil {
+		t.Fatal("mesmo host IPv6 aceito por grafia alternativa")
+	}
 	for _, raw := range []string{"https://8.8.8.8/map", "https://[2606:4700:4700::1111]/"} {
 		if _, err := validateRemoteSurfaceURL(testCtx(), raw, "https://papo.com/"); err != nil {
 			t.Fatal(raw, err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/google/uuid"
+	"net"
 	"net/url"
 	"papo/internal/config"
 	"papo/internal/models"
@@ -94,7 +95,14 @@ func validateRemoteSurfaceURL(ctx context.Context, raw, baseURL string) (string,
 		return "", ErrInvalidInput
 	}
 	host := strings.TrimSuffix(strings.ToLower(original.Hostname()), ".")
-	if original.Scheme != "https" || strings.EqualFold(host, strings.TrimSuffix(base.Hostname(), ".")) {
+	serverHost := strings.TrimSuffix(strings.ToLower(base.Hostname()), ".")
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	if ip := net.ParseIP(serverHost); ip != nil {
+		serverHost = ip.String()
+	}
+	if original.Scheme != "https" || host == serverHost {
 		return "", ErrInvalidInput
 	}
 	if err := utils.ValidatePublicHost(ctx, host); err != nil {
