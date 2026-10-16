@@ -2,100 +2,68 @@ package services
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
-	"os"
+	"time"
 	"unicode/utf8"
 
 	"papo/internal/models"
+	"papo/internal/pluginbundle"
 	"papo/internal/plugins"
 	"papo/internal/storage"
+	"papo/internal/utils"
 )
 
-// PluginMessagePublisher publica somente mensagens novas pelo fluxo comum do REST.
-type PluginMessagePublisher func(models.MessageWithAttachment, string)
-
-// UploadPlugin valida antes de armazenar; SHA-256 público é separado do HMAC da mídia.
-func UploadPlugin(ctx context.Context, host plugins.PluginHost, actor, id string, data []byte) (string, error) {
-	a, err := activeApp(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	if a.Kind != "wasm" {
-		return "", ErrInvalidInput
-	}
-	if err = host.Validate(ctx, data); err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(data)
-	text := hex.EncodeToString(digest[:])
-	sha, _, err := StoreMediaFromBytes(ctx, data, "application/wasm")
-	if err != nil {
-		return "", err
-	}
-	if err = storage.SetAppArtifact(ctx, id, sha, text); err != nil {
-		return "", err
-	}
-	host.Reset(id)
-	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppUpdate, EntityType: EntityApp, EntityID: &id, Metadata: map[string]any{"artifact_digest": text}})
-	return text, nil
-}
-
-// InvokePlugin carrega uma instalação ativa e verifica a integridade antes de executar.
-func InvokePlugin(ctx context.Context, host plugins.PluginHost, id string, input []byte, publish PluginMessagePublisher) ([]byte, error) {
-	a, err := activeApp(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if a.Kind != "wasm" || a.ArtifactSHA == nil || a.ArtifactDigest == nil {
-		return nil, ErrInvalidInput
-	}
-	f, err := os.Open(MediaBlobPath(*a.ArtifactSHA))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, plugins.MaxArtifact+1))
-	if err != nil {
-		return nil, err
-	}
-	sum := sha256.Sum256(data)
-	if len(data) > plugins.MaxArtifact || hex.EncodeToString(sum[:]) != *a.ArtifactDigest {
-		return nil, plugins.ErrInvalidArtifact
-	}
-	return host.Invoke(ctx, id, data, input, func(callCtx context.Context, request []byte) ([]byte, error) {
-		return pluginCall(callCtx, id, request, publish)
-	})
-}
-
-// pluginRequest não aceita identidade do remetente nem namespace fornecido pelo guest.
+// pluginRequest não aceita identidade nem namespace fornecido pelo guest.
 type pluginRequest struct {
 	Method            string          `json:"method"`
 	Key               string          `json:"key"`
 	Value             json.RawMessage `json:"value"`
+	Path              string          `json:"path"`
+	Offset            int64           `json:"offset"`
+	Length            int64           `json:"length"`
 	ChannelID         string          `json:"channel_id"`
+	MessageID         string          `json:"message_id"`
 	Content           string          `json:"content"`
 	ExternalMessageID string          `json:"external_message_id"`
+	Embeds            []EmbedInput    `json:"embeds"`
 }
 
-// pluginCall recarrega a autorização em cada chamada, inclusive após efeitos anteriores.
-func pluginCall(ctx context.Context, id string, data []byte, publish PluginMessagePublisher) ([]byte, error) {
+// hostCall recarrega estado, grants e digest antes de cada efeito e leitura de asset.
+func (m *PluginManager) hostCall(ctx context.Context, id string, data []byte) ([]byte, error) {
 	var req pluginRequest
-	if err := json.Unmarshal(data, &req); err != nil {
+	if json.Unmarshal(data, &req) != nil {
 		return pluginResponse(nil, ErrInvalidInput)
 	}
-	a, err := activeApp(ctx, id)
-	if err != nil {
-		return pluginResponse(nil, err)
+	a, e := activeApp(ctx, id)
+	if e != nil {
+		return pluginResponse(nil, e)
 	}
-	if a.Kind != "wasm" {
+	if a.Kind != "plugin" || a.PluginState != "enabled" || (a.LifecyclePending && ctx.Value(pluginTransitionKey{}) != a.ID) {
 		return pluginResponse(nil, ErrPermissionDenied)
+	}
+	b, e := m.bundle(ctx, a.AppKey, false)
+	if e != nil || a.PluginDigest == nil || b.Digest != *a.PluginDigest {
+		if !m.Config.HotReload && !errors.Is(e, plugins.ErrBusy) {
+			_ = m.quarantine(ctx, a)
+		}
+		return pluginResponse(nil, ErrPermissionDenied)
+	}
+	for _, p := range permissionList(a) {
+		if !m.Config.PermissionAllowed(p) {
+			return pluginResponse(nil, ErrPermissionDenied)
+		}
 	}
 	var result any
 	switch req.Method {
+	case "asset.read":
+		var content []byte
+		content, e = pluginbundle.ReadAsset(b.Directory, req.Path, req.Offset, req.Length, m.Config)
+		if e == nil {
+			result = map[string]any{"data": content, "offset": req.Offset, "length": len(content)}
+		} else {
+			e = ErrInvalidInput
+		}
 	case "kv.get", "kv.put", "kv.delete":
 		if !a.Capabilities.PrivateStorage {
 			return pluginResponse(nil, ErrPermissionDenied)
@@ -104,30 +72,68 @@ func pluginCall(ctx context.Context, id string, data []byte, publish PluginMessa
 			return pluginResponse(nil, ErrInvalidInput)
 		}
 		if req.Method == "kv.get" {
-			result, err = storage.GetAppStorage(ctx, id, req.Key)
+			result, e = storage.GetAppStorage(ctx, id, req.Key)
 		} else {
 			if req.Method == "kv.put" && (len(req.Value) > 16384 || !json.Valid(req.Value)) {
 				return pluginResponse(nil, ErrInvalidInput)
 			}
-			result, err = storage.MutateAppStorage(ctx, id, req.Key, req.Value, req.Method == "kv.delete")
+			result, e = storage.MutateAppStorage(ctx, id, req.Key, req.Value, req.Method == "kv.delete")
 		}
 	case "message.send":
-		var m models.MessageWithAttachment
-		var created bool
-		m, created, err = CreateAppMessage(ctx, a, req.ChannelID, req.ExternalMessageID, req.Content, "", nil, nil)
-		if err == nil {
-			result = m
-			if created && publish != nil {
-				publish(m, a.CreatedBy)
+		if len(req.Embeds) > 1 {
+			return pluginResponse(nil, ErrInvalidEmbed)
+		}
+		for _, embed := range req.Embeds {
+			if embed.SourceType != "app" {
+				return pluginResponse(nil, ErrInvalidEmbed)
 			}
 		}
+		var msg models.MessageWithAttachment
+		var created bool
+		msg, created, e = CreatePluginMessage(ctx, id, req.ChannelID, req.ExternalMessageID, req.Content, "", nil, req.Embeds)
+		if e == nil {
+			result = msg
+			if created && m.Effects.Created != nil {
+				m.Effects.Created(ctx, msg, a.CreatedBy)
+			}
+		}
+	case "message.edit":
+		if len(req.Embeds) > 1 {
+			return pluginResponse(nil, ErrInvalidEmbed)
+		}
+		for _, embed := range req.Embeds {
+			if embed.SourceType != "app" {
+				return pluginResponse(nil, ErrInvalidEmbed)
+			}
+		}
+		var msg models.MessageWithAttachment
+		msg, e = EditAppMessage(ctx, a, req.ChannelID, req.MessageID, req.Content, req.Embeds)
+		if e == nil {
+			result = msg
+			if m.Effects.Edited != nil {
+				m.Effects.Edited(ctx, msg, a.CreatedBy)
+			}
+		}
+	case "message.delete":
+		var channel string
+		channel, e = DeleteAppMessage(ctx, a, req.ChannelID, req.MessageID)
+		if e == nil && m.Effects.Deleted != nil {
+			m.Effects.Deleted(ctx, channel, req.MessageID)
+		}
+	case "log":
+		if len(req.Content) > 4096 {
+			return pluginResponse(nil, ErrInvalidInput)
+		}
+		utils.Infof("plugin=%s %s", a.AppKey, req.Content)
+	case "time.now":
+		result = time.Now().UTC().Format(time.RFC3339Nano)
 	default:
-		err = ErrInvalidInput
+		e = ErrInvalidInput
 	}
-	return pluginResponse(result, err)
+	return pluginResponse(result, e)
 }
 
-// pluginResponse usa códigos pequenos sem revelar detalhes internos do banco ou runtime.
+// pluginResponse mantém erros de autorização dentro do protocolo do guest.
 func pluginResponse(result any, err error) ([]byte, error) {
 	if err == nil {
 		return json.Marshal(map[string]any{"ok": true, "result": result})
@@ -136,7 +142,7 @@ func pluginResponse(result any, err error) ([]byte, error) {
 	switch {
 	case errors.Is(err, ErrPermissionDenied), errors.Is(err, ErrAppNotFound), errors.Is(err, ErrAppUnauthorized):
 		code = "forbidden"
-	case errors.Is(err, ErrInvalidInput):
+	case errors.Is(err, ErrInvalidInput), errors.Is(err, ErrInvalidEmbed):
 		code = "invalid_param"
 	case errors.Is(err, storage.ErrNotFound):
 		code = "not_found"

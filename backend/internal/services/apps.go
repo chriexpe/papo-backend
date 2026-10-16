@@ -52,7 +52,7 @@ func newAppToken() (string, string, error) {
 
 // CreateApp instala uma identidade do servidor; somente remote recebe token uma vez.
 func CreateApp(ctx context.Context, actor, key, kind, name string, caps models.AppCapabilities) (models.AppInstallation, string, error) {
-	if !validAppName(name, 80) || !validAppName(key, 200) || (kind != "remote" && kind != "view" && kind != "wasm") {
+	if !validAppName(name, 80) || !validAppName(key, 200) || (kind != "remote" && kind != "plugin") {
 		return models.AppInstallation{}, "", ErrInvalidInput
 	}
 	var hash *string
@@ -313,7 +313,7 @@ func authorizeApp(ctx context.Context, a models.AppInstallation, channelID strin
 	if err != nil {
 		return current, err
 	}
-	if current.Kind != "remote" && current.Kind != "wasm" {
+	if current.Kind != "remote" && current.Kind != "plugin" {
 		return current, ErrAppUnauthorized
 	}
 	if (read && !current.Capabilities.ReadMessages) || (!read && !current.Capabilities.SendMessages) {
