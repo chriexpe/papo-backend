@@ -88,6 +88,9 @@ func (m *PluginManager) Interact(ctx context.Context, user string, in Interactio
 	if e := CanReadChannel(ctx, in.ChannelID, user); e != nil {
 		return "", e
 	}
+	if e := m.refreshHumanPlugin(ctx, in.InstallationID); e != nil {
+		return "", e
+	}
 	b, e := ResolvePluginSurfaceBundle(ctx, in.InstallationID)
 	if e != nil {
 		return "", e
@@ -292,6 +295,9 @@ func (m *PluginManager) validateUIToken(ctx context.Context, id, secret, kind st
 	if e != nil {
 		return t, ErrAppSession
 	}
+	if e = m.refreshHumanPlugin(ctx, id); e != nil {
+		return t, ErrAppSession
+	}
 	b, e := ResolvePluginSurfaceBundle(ctx, id)
 	if e != nil || b.Digest != t.Digest {
 		_ = storage.RevokeUserAppUI(ctx, t.UserID, id)
@@ -374,7 +380,7 @@ func (m *PluginManager) AppRPC(ctx context.Context, id, secret, method string, p
 		return nil, e
 	}
 	if e = storage.TouchAppSession(ctx, t.ID, 30*time.Minute); e != nil {
-		return nil, e
+		return nil, ErrAppSession
 	}
 	RecordAudit(ctx, AuditEntry{ActorID: t.UserID, Action: ActionAppUICall, EntityType: EntityApp, EntityID: &id, Metadata: map[string]any{"method": method}})
 	return out, nil
@@ -478,4 +484,37 @@ func SetPluginInviteMute(ctx context.Context, user, id string, muted bool) error
 	}
 	RecordAudit(ctx, AuditEntry{ActorID: user, Action: ActionAppInviteMute, EntityType: EntityApp, EntityID: &id})
 	return nil
+}
+
+// refreshHumanPlugin aplica hot reload na fronteira humana; novas versões revogam as sessões antigas.
+func (m *PluginManager) refreshHumanPlugin(ctx context.Context, id string) error {
+	a, e := activeApp(ctx, id)
+	if e != nil {
+		return e
+	}
+	if a.Kind != "plugin" || a.PluginState != "enabled" || a.LifecyclePending {
+		return ErrPermissionDenied
+	}
+	b, e := m.bundle(ctx, a.AppKey, false)
+	if e == nil && a.PluginDigest != nil && b.Digest == *a.PluginDigest {
+		return nil
+	}
+	unlock, e := m.lock(ctx, a.AppKey)
+	if e != nil {
+		return e
+	}
+	defer unlock()
+	a, e = activeApp(ctx, id)
+	if e != nil {
+		return e
+	}
+	b, e = m.bundle(ctx, a.AppKey, false)
+	if e == nil && a.PluginDigest != nil && b.Digest == *a.PluginDigest {
+		return nil
+	}
+	if !m.Config.HotReload || e != nil {
+		_ = m.quarantine(ctx, a)
+		return ErrPluginConsent
+	}
+	return m.reloadLocked(ctx, a)
 }

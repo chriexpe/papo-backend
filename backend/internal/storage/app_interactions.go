@@ -54,7 +54,14 @@ func ConsumeAppTicket(ctx context.Context, id string) (bool, error) {
 
 // TouchAppSession estende a inatividade sem ultrapassar o máximo absoluto.
 func TouchAppSession(ctx context.Context, id string, idle time.Duration) error {
-	_, e := GetDB().ExecContext(ctx, `UPDATE app_ui_tokens SET expires_at=LEAST(absolute_expires_at,now()+$2::interval) WHERE id=$1 AND expires_at>now() AND NOT consumed`, id, idle.String())
+	r, e := GetDB().ExecContext(ctx, `UPDATE app_ui_tokens t SET expires_at=LEAST(t.absolute_expires_at,now()+$2::interval) FROM app_installations a WHERE t.id=$1 AND t.installation_id=a.id AND t.generation=a.ui_generation AND a.state='enabled' AND a.revoked_at IS NULL AND NOT a.lifecycle_pending AND t.expires_at>now() AND t.absolute_expires_at>now() AND NOT t.consumed`, id, idle.String())
+	if e != nil {
+		return e
+	}
+	n, e := r.RowsAffected()
+	if e == nil && n != 1 {
+		return ErrNotFound
+	}
 	return e
 }
 

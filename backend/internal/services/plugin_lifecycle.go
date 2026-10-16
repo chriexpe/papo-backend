@@ -284,6 +284,9 @@ func (m *PluginManager) invoke(ctx context.Context, a models.AppInstallation, b 
 			return nil, ErrPermissionDenied
 		}
 	}
+	if event != "on_interaction" && event != "on_ui_call" {
+		ctx = context.WithValue(ctx, appHumanKey{}, false)
+	}
 	envelope := jsonValue(map[string]any{"type": event, "settings": json.RawMessage(a.PluginSettings), "input": input})
 	out, e := m.Host.Invoke(plugins.WithMemoryLimit(ctx, a.MaxMemoryMB), a.ID, b.Module, envelope, func(c context.Context, data []byte) ([]byte, error) { return m.hostCall(c, a.ID, data) })
 	if e == nil && event != "on_trigger" {

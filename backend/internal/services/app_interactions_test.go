@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -392,5 +394,80 @@ func TestAppCleanupWorkerTicks(t *testing.T) {
 			t.Fatal("worker não limpou token expirado")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// lifecycleInvite tenta reutilizar contexto de uma fronteira humana no callback de lifecycle.
+type lifecycleInvite struct {
+	plugins.PluginHost
+	output string
+}
+
+func (h *lifecycleInvite) Invoke(ctx context.Context, _ string, _ []byte, _ []byte, call plugins.Call) ([]byte, error) {
+	out, e := call(ctx, []byte(`{"method":"invite.send","to_user_id":"00000000-0000-0000-0000-000000000001","text":"não deve enviar","data":{}}`))
+	h.output = string(out)
+	if e != nil {
+		return nil, e
+	}
+	return []byte(`{"ok":true}`), nil
+}
+
+// TestAppLifecycleCannotInheritHuman previne convites em on_enable durante hot reload humano.
+func TestAppLifecycleCannotInheritHuman(t *testing.T) {
+	m, u, _, a, channel, _ := interactionFixture(t)
+	b, e := m.bundle(testCtx(), a.AppKey, false)
+	if e != nil {
+		t.Fatal(e)
+	}
+	spy := &lifecycleInvite{PluginHost: m.Host}
+	m.Host = spy
+	ctx := context.WithValue(testCtx(), appHumanKey{}, appHuman{u.ID, channel})
+	if _, e = m.invoke(ctx, a, b, "on_enable", nil); e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(spy.output, `"ok":false`) {
+		t.Fatal("lifecycle herdou humano", spy.output)
+	}
+}
+
+// TestAppHumanHotReload aplica versão nova na fronteira RPC e exige novo ticket para a UI.
+func TestAppHumanHotReload(t *testing.T) {
+	m, u, _, a, channel, _ := interactionFixture(t)
+	m.Config.HotReload = true
+	token := launchSession(t, m, u.ID, a.ID, channel)
+	path := filepath.Join(m.Config.Directory, "reference", "ui", "data.json")
+	if e := os.WriteFile(path, []byte(`{"message":"versão atualizada"}`), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); !errors.Is(e, ErrAppSession) {
+		t.Fatal("sessão do digest antigo aceita", e)
+	}
+	token = launchSession(t, m, u.ID, a.ID, channel)
+	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); e != nil {
+		t.Fatal("hot reload não aplicado", e)
+	}
+}
+
+// TestAppTicketConcurrentReplay permite exatamente uma troca concorrente do mesmo segredo.
+func TestAppTicketConcurrentReplay(t *testing.T) {
+	m, u, _, a, channel, _ := interactionFixture(t)
+	ticket, e := m.LaunchAppUI(testCtx(), u.ID, a.ID, LaunchInput{SurfaceID: "home", ChannelID: channel})
+	if e != nil {
+		t.Fatal(e)
+	}
+	out := make(chan error, 8)
+	for range 8 {
+		go func() { _, e := m.ExchangeAppTicket(context.Background(), a.ID, ticket["ticket"].(string)); out <- e }()
+	}
+	success := 0
+	for range 8 {
+		if e := <-out; e == nil {
+			success++
+		} else if !errors.Is(e, ErrAppSession) {
+			t.Fatal(e)
+		}
+	}
+	if success != 1 {
+		t.Fatal("trocas aceitas", success)
 	}
 }
