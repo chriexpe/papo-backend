@@ -242,9 +242,18 @@ func CanTypeChannel(ctx context.Context, channelID, userID string) error {
 	return CanReadChannel(ctx, channelID, userID)
 }
 
-// PluginUICSP valida as origens aprovadas antes de compor o header de sandbox opaco.
-func PluginUICSP(ctx context.Context, b PluginSurfaceBundle) (string, error) {
-	origins := make([]string, 0, len(b.ApprovedOrigins))
+// PluginUICSP inclui a origem configurada dos assets e valida as origens remotas aprovadas.
+func PluginUICSP(ctx context.Context, b PluginSurfaceBundle, baseURL string) (string, error) {
+	configured := config.LoadConfig().AppsOrigin
+	appsOrigin := configured != ""
+	if configured == "" {
+		configured = baseURL
+	}
+	served, err := url.Parse(configured)
+	if err != nil || (served.Scheme != "http" && served.Scheme != "https") || served.Hostname() == "" || served.User != nil || served.Opaque != "" || served.RawQuery != "" || served.Fragment != "" || (appsOrigin && served.Path != "" && served.Path != "/") || strings.ContainsAny(served.Host, "\\;\"'<> \t\r\n") {
+		return "", ErrInvalidInput
+	}
+	origins := []string{served.Scheme + "://" + served.Host}
 	for _, raw := range b.ApprovedOrigins {
 		normalized, err := validateRemoteSurfaceURL(ctx, raw, config.LoadConfig().BaseURL)
 		if err != nil {
