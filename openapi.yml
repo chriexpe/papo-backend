@@ -3063,7 +3063,7 @@ paths:
       tags:
       - Apps
       summary: Rotaciona token remoto
-      description: Exige manage_apps. Somente remote; view/wasm retornam 400. O token antigo deixa de autenticar imediatamente.
+      description: Exige manage_apps. Somente remote; plugin retorna 400. O token antigo deixa de autenticar imediatamente.
         O novo segredo aparece apenas nesta resposta.
       responses:
         '200':
@@ -3472,120 +3472,270 @@ paths:
       security:
       - appBearer: []
 
-  /apps/{app_id}/artifact:
-    put:
-      tags: [Apps]
-      summary: Envia ou substitui o reactor Wasm de uma instalação
-      description: |
-        Exige JWT e manage_apps, instalação ativa kind=wasm. Corpo binário até 2 MiB.
-        Valida papo-core-v1, memória até 16 MiB e imports papo_host_v1.call,
-        wasi_snapshot_preview1.fd_write e random_get. Não executa o guest no upload.
-        O SHA-256 dos bytes é artifact_digest; artifact_sha identifica a mídia HMAC
-        content-addressable. Upload validado reabilita uma instalação em quarentena.
+
+  /plugins:
+    get:
+      tags:
+      - Apps
+      summary: Lista plugins descobertos e erros de validação
       security:
-        - cookieAuth: []
-      parameters:
-        - $ref: '#/components/parameters/AppId'
-      requestBody:
-        required: true
-        content:
-          application/wasm:
-            schema:
-              type: string
-              format: binary
-              maxLength: 2097152
+      - cookieAuth: []
       responses:
         '200':
-          description: Artefato validado e persistido
+          description: Operação concluída.
           content:
             application/json:
               schema:
-                type: object
-                required: [artifact_digest]
-                properties:
-                  artifact_digest:
-                    type: string
-                    pattern: '^[0-9a-f]{64}$'
+                $ref: '#/components/schemas/PluginCatalog'
         '400':
-          description: Tipo, ABI, imports ou artefato inválidos
+          description: Erro RFC 7807; sem concessão implícita de grants.
         '401':
-          description: JWT ausente ou inválido
+          description: Erro RFC 7807; sem concessão implícita de grants.
         '403':
-          description: manage_apps necessário
+          description: Erro RFC 7807; sem concessão implícita de grants.
         '404':
-          description: Instalação inexistente ou revogada
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
         '413':
-          description: Artefato acima de 2 MiB
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
         '429':
-          description: Capacidade global de compilação ou cache ocupada
-  /apps/{app_id}/trigger:
+          description: Erro RFC 7807; sem concessão implícita de grants.
+  /plugins/rescan:
     post:
-      tags: [Apps]
-      summary: Invoca um plugin Wasm sob demanda
-      description: |
-        Exige JWT e manage_apps. JSON UTF-8 até 64 KiB; resposta é o envelope
-        não confiável do guest com ok booleano, result ou error. Um erro de host call
-        pode estar em uma resposta HTTP 200 com ok=false.
-        Uma invocação por instalação, até oito aguardando, quatro trabalhos globais,
-        prazo de um segundo incluindo espera, 16 MiB de memória, 64 KiB de saída
-        e 32 host calls. Três falhas consecutivas colocam a instalação em quarentena
-        até upload validado ou reinício do processo. Trap/timeout descarta a instância.
-        Efeitos anteriores ao erro permanecem; external_message_id só deduplica enquanto
-        a mensagem existir. KV exige private_storage e é limitado a 256 chaves,
-        1 MiB por instalação, chaves de 200 bytes e valores JSON de 16 KiB.
-        message.send usa CreateAppMessage, send_messages e o escopo atual do canal.
-        Não recebe callbacks de eventos nesta entrega.
+      tags:
+      - Apps
+      summary: Descobre pastas e pacotes sem instanciar módulos
       security:
-        - cookieAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginCatalog'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+  /plugins/{id}/preview:
+    post:
+      tags:
+      - Apps
+      summary: Gera consentimento assinado sem habilitar o plugin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginPreview'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
       parameters:
-        - $ref: '#/components/parameters/AppId'
+      - &id001
+        $ref: '#/components/parameters/PluginId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PluginOptions'
+      description: Preview vincula ator, digest de toda a pasta, revisão, settings, grants, origens, canais, escopos
+        e memória. Setting channel entra como escopo visível a aprovar; exige read_channel. Consentimento expira em
+        15 minutos.
+  /plugins/{id}/enable:
+    post:
+      tags:
+      - Apps
+      summary: Aprova consentimento e habilita ou reaprova plugin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInstallation'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+      parameters:
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PluginOptions'
+      description: Envie a mesma seleção do preview junto de consent e expires_at. Alteração de digest, revisão, política
+        ou seleção exige novo preview (409). Persiste grants/settings/scopes, chama os hooks da PR 18 e on_enable.
+        Falhas fazem cleanup; efeitos já confirmados não são revertidos.
+  /plugins/{id}:
+    patch:
+      tags:
+      - Apps
+      summary: Atualiza settings e memória de plugin habilitado
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInstallation'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+      parameters:
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PluginPatch'
+      description: Preserva grants existentes. Settings são parciais. Se mudar escopos ou origens, exige novo preview
+        para a seleção efetiva e seus consent/expires_at. Outras mudanças de settings e redução/ajuste de memória
+        dentro do pedido aprovado não precisam de novo consentimento.
+  /plugins/{id}/disable:
+    post:
+      tags:
+      - Apps
+      summary: Executa on_disable e remove grants, backlog e canais app
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: Plugin desabilitado; canais, escopos e grants removidos.
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+      parameters:
+      - *id001
+      description: Callback limitado por deadline. Mesmo se falhar (422), cleanup desativa o plugin, revoga grants/scopes/backlog
+        e remove canais. Embeds históricos ficam inertes.
+  /plugins/{id}/trigger:
+    post:
+      tags:
+      - Apps
+      summary: Invoca on_trigger; on_event não está disponível nesta rodada
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginResult'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+      parameters:
+      - *id001
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-            example:
-              method: kv.put
-              key: counter
-              value: 42
-      responses:
-        '200':
-          description: Envelope JSON retornado pelo guest
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [ok]
-                properties:
-                  ok:
-                    type: boolean
-                  result: {}
-                  error:
-                    type: object
-        '400':
-          description: Tipo de instalação, JSON ou estado do artefato inválido
-        '401':
-          description: JWT ausente ou inválido
-        '403':
-          description: manage_apps necessário
-        '404':
-          description: Instalação inexistente ou revogada
-        '409':
-          description: Plugin em quarentena
-        '413':
-          description: Corpo acima de 64 KiB
-        '422':
-          description: Trap, timeout, cancelamento ou violação dos limites de execução
-        '429':
-          description: Fila, registro de instalações ou cache cheio
+              description: Entrada JSON do plugin, até 64 KiB.
+      description: Até um inline embed por message.send, apenas superfície embed própria. Três falhas consecutivas
+        colocam em quarentena persistente. Digest novo exige reaprovação; com hot reload sem expansão de permissões/origens/escopos,
+        aplica na fronteira de invocação. Host responses podem retornar HTTP 200 com ok=false.
 
 components:
   securitySchemes:
     appBearer:
       type: http
       scheme: bearer
-      description: Token remoto de app; cookies e JWT de usuários não são aceitos. View/wasm não possuem token.
+      description: Token remoto de app; cookies e JWT de usuários não são aceitos. Plugins não possuem token.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -3593,6 +3743,13 @@ components:
       description: JWT em cookie HttpOnly (Path=/, Secure, SameSite=Strict)
 
   parameters:
+    PluginId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z0-9][a-z0-9._-]{0,99}$'
     AppId:
       name: app_id
       in: path
@@ -5639,7 +5796,7 @@ components:
         private_storage:
           type: boolean
           default: false
-          description: Permite KV persistente privado no namespace da instalação Wasm.
+          description: Permite KV persistente privado no namespace da instalação plugin.
         send_messages:
           type: boolean
           default: false
@@ -5657,21 +5814,43 @@ components:
         id:
           type: string
           format: uuid
-        artifact_sha:
-          type: string
-          description: Identificador HMAC da mídia do artefato (somente Wasm).
-        artifact_digest:
+        plugin_digest:
           type: string
           pattern: '^[0-9a-f]{64}$'
-          description: SHA-256 dos bytes Wasm validados.
+        version:
+          type: string
+        state:
+          type: string
+          enum: [enabled, disabled, quarantined, removed]
+          description: Estado operacional de instalações plugin.
+        settings:
+          type: object
+        approved_origins:
+          type: array
+          items: {type: string}
+        approved_permissions:
+          type: array
+          items: {type: string}
+        explicit_scopes:
+          type: array
+          items: {type: string, format: uuid}
+        max_memory_mb:
+          type: integer
+          minimum: 1
+          maximum: 256
+        revision:
+          type: integer
+          format: int64
+        transition_pending:
+          type: boolean
+          description: Transição incompleta; UI e invocações externas ficam indisponíveis.
         app_key:
           type: string
         kind:
           type: string
           enum:
           - remote
-          - view
-          - wasm
+          - plugin
         name:
           type: string
         display_name:
@@ -5721,8 +5900,7 @@ components:
           type: string
           enum:
           - remote
-          - view
-          - wasm
+
         name:
           type: string
           minLength: 1
@@ -5973,3 +6151,86 @@ components:
             - $ref: '#/components/schemas/AppEventMessageUpdate'
             - $ref: '#/components/schemas/AppEventReaction'
             - $ref: '#/components/schemas/AppEventTombstone'
+
+    PluginOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        settings: {type: object, additionalProperties: true}
+        permissions:
+          type: array
+          items: {type: string, enum: [send_messages, read_messages, post_app_embeds, private_storage]}
+        scopes:
+          type: array
+          items: {type: string, format: uuid}
+        max_memory_mb: {type: integer, minimum: 1, maximum: 256}
+        consent: {type: string, minLength: 64, maxLength: 64}
+        expires_at: {type: integer, format: int64}
+    PluginPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        settings: {type: object, additionalProperties: true}
+        max_memory_mb: {type: integer, minimum: 1, maximum: 256}
+        consent: {type: string, minLength: 64, maxLength: 64}
+        expires_at: {type: integer, format: int64}
+    PluginPreview:
+      type: object
+      required: [id, digest, version, name, settings, requested_permissions, permissions, blocked_permissions, scopes, explicit_scopes, origins, surfaces, max_memory_mb, revision, state, expires_at, consent]
+      properties:
+        id: {type: string}
+        digest: {type: string, pattern: '^[0-9a-f]{64}$'}
+        version: {type: string}
+        name: {type: string}
+        settings: {type: object}
+        requested_permissions: {type: array, items: {type: string}}
+        permissions: {type: array, items: {type: string}}
+        blocked_permissions: {type: array, items: {type: string}}
+        scopes: {type: array, items: {type: string, format: uuid}}
+        explicit_scopes: {type: array, items: {type: string, format: uuid}}
+        origins: {type: array, items: {type: string}}
+        surfaces:
+          type: array
+          items:
+            type: object
+            required: [id, kind, source, entry]
+            properties:
+              id: {type: string}
+              kind: {type: string, enum: [channel, embed]}
+              source: {type: string, enum: [bundled, remote]}
+              entry: {type: string}
+              default_name: {type: string}
+              frame_width: {type: integer}
+              frame_height: {type: integer}
+        max_memory_mb: {type: integer}
+        revision: {type: integer, format: int64}
+        state: {type: string, enum: [discovered, enabled, disabled, quarantined, removed]}
+        expires_at: {type: integer, format: int64}
+        consent: {type: string}
+    PluginCatalog:
+      type: object
+      properties:
+        plugins:
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: {type: string}
+              digest: {type: string}
+              error: {type: string}
+              manifest:
+                type: object
+                description: Metadados plugin.toml v1 validados sem executar código. Schema completo em docs/wasm-plugins.md.
+              installation:
+                $ref: '#/components/schemas/AppInstallation'
+    PluginResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: {type: boolean}
+        result: {}
+        error:
+          type: object
+          properties:
+            code: {type: string}

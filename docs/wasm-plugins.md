@@ -1,115 +1,270 @@
-# Plugins Wasm — papo-core-v1
+# Plugins de pasta — plano v7
 
-A entrega usa `feat/channel-views` (PR #18, `2810c6b`) sobre `origin/apps-platform`.
-A branch de integração ainda não contém PR 3: execução somente sob demanda,
-sem callbacks, segundo a condição do plano. Nenhuma segunda estrutura de eventos.
+Esta correção é empilhada sobre a #18 corrigida (`a4e80e1`, merge `584fa53`).
+A #19 usa a mesma branch, com commits novos e sem reescrever histórico.
+A migration **021** vem depois da 019 de superfícies e da 020 já publicada.
+Ela converte `view`/`wasm` em `plugin`, preservando identidade e mensagens;
+instalações legadas ficam desabilitadas, sem grants/backlog, até consentimento novo.
+`remote` continua separado, com token. Os campos de artefato antigos são legados;
+plugins novos usam exclusivamente a pasta e `plugin_digest`.
 
-## Artefato e autorização
-
-Crie uma instalação `kind: wasm` (sem token), conceda `private_storage` para KV,
-`send_messages` para envio e adicione os canais permitidos. JWT + `manage_apps`
-protege `PUT /apps/:app_id/artifact` (bytes `application/wasm`) e
-`POST /apps/:app_id/trigger` (JSON). O guest não escolhe sua identidade.
-Cada host call recarrega instalação/capacidades; mensagens usam `CreateAppMessage`
-e a mesma função `authorizeApp` do REST, incluindo tipo de canal e escopo atual.
-KV tem namespace implícito e exclusivo da instalação, sem escopo de canal.
-
-O upload compila e valida sem instanciar nem executar. Rejeita start section,
-imports de memória/tabela/global, `_start`, falta de memória/exports e assinaturas
-incompatíveis. SHA-256 dos bytes fica em `artifact_digest`; `artifact_sha` referencia
-a mídia existente pelo HMAC-SHA-256, seguindo seu armazenamento atômico/deduplicado.
-Antes de executar, o servidor relê o blob com limite e confere o SHA-256.
-O GC reconhece artefatos e avatares das instalações. Não existe download público de Wasm.
-
-## Contrato binário
-
-Core Wasm; offsets/tamanhos unsigned i32; nenhuma referência ao endereço do host:
+## Pasta e ferramentas
 
 ```text
-memory: memória exportada
-_initialize() -> ()
-alloc(len: i32) -> ptr: i32
-free(ptr: i32) -> ()
-invoke(ptr: i32, len: i32) -> i64
-  ptr_out = retorno >> 32; len_out = retorno & 0xffffffff
-papo_host_v1.call(req_ptr:i32, req_len:i32, out_ptr:i32, out_cap:i32) -> len:i32
+plugins/<id>/
+  plugin.wasm       obrigatório; ausência significa que a pasta não é plugin
+  plugin.toml       manifest v1 obrigatório
+  icon.png          opcional; ou icon.webp, copiado para media no enable
+  ui/               superfícies públicas estáticas
+  templates/        assets privados de runtime
+  locales/          assets privados de runtime
 ```
 
-`_initialize` roda uma vez na nova instância. Não há estado persistente em globals.
-`alloc` devolve buffer de tamanho solicitado e ponteiro não zero. O host copia
-entrada e saída; o guest transfere ownership dos dois buffers para `free(ptr)`.
-Entrada e saída não devem se sobrepor; saída pode reutilizar exatamente a entrada.
-Buffers são válidos até free. Todos os caminhos fecham a instância, inclusive
-falha de alloc, offsets inválidos, trap, timeout ou free defeituoso. Não se tenta
-reentrar em uma instância fechada para liberar memória.
+A pasta é somente leitura para o guest; estado fica em `app_storage`.
+`PLUGINS_DIR` é uma pasta/volume confiável do operador, não é um diretório para
+uploads arbitrários de usuários. Descoberta acontece no startup e no rescan;
+`PLUGINS_HOT_RELOAD=true` adiciona polling a cada segundo (padrão false).
+Nenhum módulo é instanciado para validar/descobrir. Remoção de um plugin já ativo
+é uma transição de lifecycle e tenta on_disable somente se ainda houver os bytes aprovados.
 
-Entrada/saída são JSON UTF-8, sem NUL terminador. A saída exige `ok` booleano.
-A importação lê um request JSON, devolve um envelope e escreve somente em um
-scratch buffer pertencente ao guest. Retorna tamanho necessário sem escrever
-quando out_cap é insuficiente; a operação **já pode ter produzido efeitos**.
-Não repita automaticamente uma escrita; reserve 64 KiB ou use chave idempotente.
-Respostas acima de 64 KiB e chamadas acima do teto encerram aquela instância.
+```bash
+TINYGO=/caminho/tinygo/bin/tinygo examples/plugins/build.sh
+cd backend
+go run ./cmd/papo-plugin check ../examples/plugins/reference
+go run ./cmd/papo-plugin check ../examples/plugins/bluemap
+go run ./cmd/papo-plugin pack ../examples/plugins/reference /tmp/reference.papoplugin
+```
 
-Tabelas de funções: no máximo uma, funcref, máximo explícito de 4096 entradas;
-contagens de tipos/funções/globals/segmentos até 4096 antes da compilação.
+Check, pack e discovery compartilham exatamente o validador. Pacotes contêm uma
+única pasta `<id>/`, e o nome é `<id>.papoplugin`. Extração usa staging, limites
+antes/durante a leitura, validação completa e rename. Não sobrescreve uma pasta
+existente: depois de extraído, a pasta é canônica; para upgrade por pacote, o operador
+substitui explicitamente a pasta anterior, com o plugin desabilitado.
+Pack valida o ZIP produzido novamente e compara seu digest antes de publicar.
+Arquivos locais `.go`/`go.mod` podem acompanhar os exemplos; nunca são executados.
 
-Imports permitidos, com assinaturas verificadas: apenas `papo_host_v1.call`,
-`wasi_snapshot_preview1.fd_write(i32,i32,i32,i32)->i32` (panic/runtime TinyGo;
-stdout/stderr descartados) e `random_get(i32,i32)->i32` (runtime TinyGo e entropia).
-O módulo WASI padrão é instanciado, mas qualquer outro import é rejeitado.
-Sem args/env configurados, preopens, stdin, filesystem ou rede para o guest.
+## Manifest v1
 
-## Host calls
+```toml
+manifest_version = 1
+id = "reference"
+name = "Plugin de referência"
+version = "1.0.0"
+min_papo_api = 1
+# remote_origins = ["https://maps.example.org"] # campo da raiz, antes das tabelas
+
+[permissions]
+request = ["send_messages", "post_app_embeds", "private_storage"]
+
+[runtime]
+max_memory_mb = 16
+
+[[settings]]
+key = "target_channel"
+type = "channel"
+required = true
+
+[[surfaces]]
+id = "home"
+kind = "channel"
+default_name = "plugin-reference"
+entry = "ui/index.html"
+
+[[surfaces]]
+id = "result"
+kind = "embed"
+entry = "ui/result.html"
+frame = { width = 480, height = 320 }
+```
+
+IDs usam `[a-z0-9][a-z0-9._-]{0,99}` e coincidem com a pasta. Versão SemVer;
+API mínima suportada: 1. Campos desconhecidos e IDs duplicados são recusados.
+Settings aceitam `string`, `boolean`, `integer`, `https_url`, `channel`, com
+`required` e `default`. Um setting `channel` vira **escopo visível no preview** e
+só é concedido pelo enable aprovado. Não concede capacidade send/read sozinho.
+
+Cada superfície escolhe exatamente uma fonte: `entry` dentro de `ui/`,
+`entry_url` HTTPS de origem declarada, ou `entry_url_setting` referindo um setting
+`https_url`. Origens desses settings entram explicitamente no consentimento.
+As regras de URL/DNS/host são as da #18; não há proxy remoto. Canal exige
+`default_name`; embed tem frame padrão 480×320 e máximo 1920×1080.
+
+## Configuração
+
+Limites em bytes, todos lidos no startup; valores inválidos impedem inicialização:
+
+| Env | Padrão |
+|---|---:|
+| `PLUGINS_DIR` | `./plugins` |
+| `PLUGINS_HOT_RELOAD` | `false` |
+| `PLUGINS_MAX_WASM_BYTES` | 16777216 (16 MiB) |
+| `PLUGINS_MAX_FOLDER_BYTES` | 67108864 (64 MiB) |
+| `PLUGINS_MAX_FILES` | 512 |
+| `PLUGINS_MAX_MANIFEST_BYTES` | 65536 |
+| `PLUGINS_MAX_ASSET_BYTES` | 4194304 |
+| `PLUGINS_MAX_ICON_BYTES` | 2097152 |
+| `PLUGINS_ASSET_READ_BYTES` | 32768, pode reduzir; nunca ultrapassa 32 KiB |
+| `PLUGINS_DEFAULT_MEMORY_MB` | 16 |
+| `PLUGINS_MAX_MEMORY_MB` | 64 (teto absoluto do adaptador: 256) |
+| `PLUGINS_ALLOWED_PERMISSIONS` | send_messages,read_messages,post_app_embeds,private_storage |
+| `PLUGINS_BLOCKED_PERMISSIONS` | vazio |
+
+Allowlist ausente usa os quatro nomes conhecidos; allowlist explicitamente vazia
+nega tudo. Blocked sempre prevalece. O consentimento pode restringir ainda mais.
+O override de memória não excede o pedido no manifest nem o teto global.
+
+Rejeitam-se links, arquivos especiais, traversal, caminhos não canônicos/absolutos,
+colisões de nomes ignorando caixa e extensões de UI fora do allowlist da #18.
+Entradas de diretório também são limitadas (até `2*PLUGINS_MAX_FILES+1`). Ícones
+precisam decodificar como PNG/WebP, dimensão até 4096². O digest SHA-256 usa arquivos
+ordenados, comprimento/caminho, comprimento/conteúdo; inclui manifest, ícone, UI,
+templates, locales e todos os demais arquivos. É reconferido na fronteira de
+invocação, antes de compilar e nas leituras de host/UI.
+
+## Endpoints e consentimento
+
+Todas as rotas `/plugins` exigem JWT + `manage_apps`:
+
+| Método | Rota | Efeito |
+|---|---|---|
+| GET | `/plugins` | Catálogo, erros e instalação/estado |
+| POST | `/plugins/rescan` | Descoberta e reconciliação |
+| POST | `/plugins/:id/preview` | Consentimento, sem efeitos de guest |
+| POST | `/plugins/:id/enable` | Aprova e habilita/reaprova |
+| PATCH | `/plugins/:id` | Settings/memória de plugin habilitado |
+| POST | `/plugins/:id/disable` | Callback limitado e remoção de grants/canais |
+| POST | `/plugins/:id/trigger` | Invoca on_trigger com o JSON de entrada |
+
+Preview recebe `settings`, `permissions` opcional (subconjunto do pedido),
+`scopes` explícitos opcionais e `max_memory_mb`. Retorna todos os grants efetivos,
+permissões bloqueadas, escopos explícitos + derivados dos settings, origens,
+superfícies/canais, digest, estado, revisão, `consent` e `expires_at`.
+
+Enable recebe a **mesma seleção** e os campos `consent`/`expires_at` do preview.
+O HMAC vincula ator e payload completo; expira em 15 minutos e invalida em restart.
+Mudança de arquivo, política, revisão, settings, escopo ou origem rejeita aprovação
+antiga (409). A leitura humana de cada canal é verificada novamente no enable.
+Grants/settings/escopos são persistidos em uma transação; depois os hooks da #18
+reconciliam canais e executa-se on_enable. Falha de callback/hook remove grants e
+canais em cleanup com contexto próprio, mesmo que a requisição tenha sido cancelada.
+Efeitos de mensagem já confirmados não são revertidos.
+
+PATCH aceita apenas settings/memória; preserva os grants atuais. Mudança de escopos
+ou origens exige gerar preview para a seleção nova e reenviar consent/expires_at.
+Para grants previamente reduzidos, use esse mesmo subconjunto em `permissions` no
+preview; PATCH preserva-o automaticamente. Trocar só URL no mesmo origin não amplia
+autoridade e não requer consentimento novo. Renomear/reordenar canais app continua
+nas rotas normais de gestão de canais; reconciliação conserva ID/nome/posição/ACL
+quando `surface_id` persiste.
+
+Sem hot reload, qualquer digest novo em plugin habilitado põe em quarentena até
+reaprovação. Com hot reload, sem expansão do pedido de permissões/origens/escopos,
+a troca é automática na próxima fronteira de invocação; expansão exige consentimento.
+Novos bytes nunca são executados pelo on_disable da versão antiga. Quarentena
+persiste no banco, conserva canais (indisponíveis) e impede novas invocações.
+Disable/remove revoga grants, apaga backlog/escopos/canais e deixa embeds históricos
+inertes. Falha de on_disable é reportada, mas não interrompe esse cleanup.
+
+As rotas antigas de upload e trigger `/apps/:id/artifact` e `/apps/:id/trigger`
+foram removidas. POST `/apps` instala somente remote; mutações de grants/escopos
+legadas rejeitam plugins para não contornar consentimento.
+
+## Runtime, ABI e host API
+
+`PluginHost` continua independente do wazero nos serviços. Wazero v1.12.0,
+TinyGo 0.43.0, core Wasm; contrato em `papo-plugin.wit`, sem Component Model.
+
+```text
+_initialize() -> ()
+alloc(len:i32) -> ptr:i32
+free(ptr:i32) -> ()
+invoke(ptr:i32,len:i32) -> packed:i64  # ptr_out=packed>>32; len_out=packed&0xffffffff
+papo_host_v1.call(req_ptr:i32,req_len:i32,out_ptr:i32,out_cap:i32) -> len:i32
+```
+
+Instância nova a cada callback, com `_initialize` uma vez. Host copia e libera os
+buffers de entrada/saída; falha/timeout fecha a instância. Não tenta free depois de
+fechamento. Scratch da importação pertence ao guest. Se capacity for insuficiente,
+retorna tamanho necessário sem escrever; **efeitos já podem ter ocorrido**: nunca
+repetir automaticamente uma escrita. Entrada/saída JSON UTF-8, resposta com `ok` booleano.
+
+Envelope: `{"type":"on_enable|on_disable|on_trigger","settings":{...},"input":...}`.
+Somente esses três callbacks nesta rodada; **on_event é um commit posterior**.
+O dispatcher entrega somente a integrações remote enquanto isso, sem outro schema.
+
+Host calls (identidade sempre implícita, checks atuais de capacidade e escopo):
 
 ```json
+{"method":"asset.read","path":"templates/message.txt","offset":0,"length":32768}
 {"method":"kv.put","key":"counter","value":42}
 {"method":"kv.get","key":"counter"}
 {"method":"kv.delete","key":"counter"}
-{"method":"message.send","channel_id":"UUID","content":"Olá","external_message_id":"op-1"}
+{"method":"message.send","channel_id":"UUID","content":"Olá","embeds":[{"source_type":"app","app_surface_id":"result","title":"Resultado"}]}
+{"method":"message.edit","channel_id":"UUID","message_id":"UUID","content":"Editado"}
+{"method":"message.delete","channel_id":"UUID","message_id":"UUID"}
+{"method":"log","content":"diagnóstico"}
+{"method":"time.now"}
 ```
 
-Sucesso: `{"ok":true,"result":...}`. KV retorna `value` e `revision`; get ausente
-retorna `not_found`, delete ausente é idempotente. Revisão incrementa em update;
-após delete + put começa novamente em 1. Erros: `forbidden`, `invalid_param`,
-`not_found`, `quota_exceeded`, `internal`. Não se expõem detalhes do SQL.
-O exemplo encaminha cada entrada como um host call; outros guests podem compor chamadas.
+Asset retorna `result.data` em base64, `offset` e `length`; leituras parciais permitem
+arquivos maiores até o teto de asset. KV exige `private_storage`: 256 chaves,
+1 MiB agregado de chave + JSON normalizado, chave de 1–200 bytes, valor até 16 KiB,
+revisão incrementada em update (delete + put reinicia em 1). SQL serializa a quota.
+`message.send` usa `CreatePluginMessage` da #18, mesmo armazenamento/publicação de
+mensagens, capacidade send e escopo atual; até um embed da própria superfície
+`embed` com `post_app_embeds`. Humanos/webhooks e superfícies alheias são recusados.
+Edit/delete só atingem mensagens próprias. Não há `external_author` arbitrário.
 
-## Limites e efeitos parciais
+Whitelist WASI: fd_write (stdout/stderr descartados), random_get (entropia), args_get
++ args_sizes_get (JSON/runtime TinyGo, argumentos vazios) e clock_time_get com a
+assinatura exata **mas implementação que sempre retorna ENOSYS**, sem relógio.
+Hora real só por `time.now`. Sem env, preopens, filesystem ou sockets WASI.
+Start section, imports não funcionais, `_start` e ABI incompatível são rejeitados.
+Tabelas funcref têm máximo explícito até 4096; tipos/funções/globals/segmentos até 4096.
 
-- Upload: 2 MiB; memória linear: 256 páginas (16 MiB).
-- Input, output, request/response de host call: 64 KiB; 32 calls por invocação.
-- Uma invocação por instalação; oito aguardando; quatro trabalhos globais.
-- Prazo de 1 segundo incluindo espera e host calls; `WithCloseOnContextDone(true)`.
-- Compilação serializada, admissão global e espera cancelável. Cache LRU por digest,
-  orçamento global de 64 MiB em unidades estimadas `max(1 MiB, 16 * bytes do módulo)`.
-  No máximo 64 módulos mínimos retidos. Handles ativos não sofrem eviction.
-  O wazero não expõe o tamanho do código compilado: **não é um teto de RSS**.
-- No máximo 1024 instalações com execução/falhas retidas. Saudáveis ociosas saem
-  do registro; três falhas consecutivas abrem o circuito. Upload validado reseta;
-  reiniciar o processo também limpa a quarentena (estado operacional em memória).
-- KV: até 256 chaves, 1 MiB agregado de chave + JSONB normalizado; chave de
-  1–200 bytes, valor de até 16 KiB antes/depois de normalização. A quota serializa
-  no lock SQL da instalação e funciona entre processos. Dados sobrevivem ao restart.
+Uma execução por instalação, oito aguardando, quatro trabalhos globais, deadline
+Wasm de 1 s com `WithCloseOnContextDone`. A fila do manager também tem até oito
+aguardando e deadline de trigger de 2 s incluindo validação/transições. Payloads de
+64 KiB, 32 host calls. Três falhas consecutivas abrem o circuito e o manager persiste
+quarentena no banco. Reaprovação é explícita. Compilação serializada e cancelável;
+cache LRU por módulo **e memória aprovada**, orçamento global estimado de 128 MiB
+(`max(1 MiB,4*bytes)`), sem eviction de handles ativos. Não é teto de RSS.
 
-Falhas preservam efeitos já confirmados: não existe transação para o invoke inteiro.
-Propaga-se contexto para SQL e serviços; host calls Go devem cooperar com cancelamento.
-A chave de mensagem deduplica somente enquanto a mensagem existe, como REST/webhooks.
-O guest é código não confiável no processo do backend; esta interface não oferece
-isolamento do sistema operacional. `PluginHost` preserva a fronteira para worker futuro.
+Wasm embutido não oferece isolamento de SO. Host calls Go devem cooperar com
+contexto; efeitos anteriores a trap/timeout permanecem confirmados. Idempotência
+de mensagem só dura enquanto ela existir, como REST. Uma transição fica marcada como pendente no SQL e só é publicada ao terminar;
+UI/trigger externos falham fechado enquanto isso. No rescan após término abrupto,
+transição pendente entra em quarentena e exige reaprovação. Não se promete
+atomicidade entre SQL, filesystem e efeitos já confirmados do guest.
 
-## Build e teste
+## Exemplos e CI
 
-TinyGo **0.43.0** (LLVM 22.1.4), wazero **v1.12.0**. Reactor:
+`examples/plugins/reference` inclui SDK TinyGo, canal bundled, embed bundled, ícone
+e template lido por asset.read; trigger `{}` publica o embed no setting autorizado.
+Para exercitar KV/negações pelo exemplo: trigger `{"request":{"method":"kv.get","key":"counter"}}`.
+`examples/plugins/bluemap` tem reactor mínimo (~12 KiB), ícone e setting `map_url`
+para a superfície remota. Nenhuma lógica de mapa é executada no backend.
+
+CI instala TinyGo fixado com checksum e compila ambos e o fixture adversarial;
+triggers e Codecov permanecem iguais. Go tests executam os binários versionados
+quando TinyGo não está instalado. Warning de triples wasip1/wasi conhecido do spike;
+os binários são testados de verdade com wazero e servidor HTTP.
+
+## Smoke HTTP reproduzível
+
+Use um banco **novo e descartável**, com todas as migrations, e um binário compilado:
 
 ```bash
-TINYGO=/caminho/tinygo/bin/tinygo examples/wasm-reference/build.sh
 cd backend
-go test -count=1 -race ./internal/wasmhost ./internal/plugins
-TEST_DATABASE_URL='postgres://papo:papo123@127.0.0.1:5432/papo_test?sslmode=disable' go test -count=1 ./...
+go build -o /tmp/papo-plugin-server ./cmd
+cd ..
+goose -dir migrations postgres "$SMOKE_DATABASE_URL" up
+python3 examples/plugins/smoke.py --server /tmp/papo-plugin-server --database-url "$SMOKE_DATABASE_URL"
 ```
 
-O script também compila o fixture adversarial (fontes em `testdata/adversarial`).
-Os binários pequenos são versionados para permitir os testes Go sem toolchain TinyGo.
-O CI instala a versão fixada com SHA-256 verificado e recompila antes do build/test;
-os triggers e o passo Codecov existentes são preservados. O warning TinyGo de
-triples wasip1/wasi também apareceu no spike; o teste real valida o artefato gerado.
+O script inicia o servidor em uma pasta temporária, copia os dois exemplos, faz
+rescan/preview/enable, verifica os canais em GET /channels, dispara o reference,
+confere o embed, executa curl público e imprime os headers. Reinicia o processo,
+confere KV, desabilita ambos, verifica que os canais sumiram e que a UI retorna
+404. Encerra o servidor e remove apenas a pasta temporária criada pelo smoke.
+O banco fica disponível para inspeção e deve ser removido pelo chamador.
