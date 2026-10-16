@@ -676,13 +676,17 @@ paths:
   /users/{user_id}/avatar:
     get:
       tags: [Users]
-      summary: Serve a imagem do avatar do usuário (público, sem autenticação; consumido pelo bot bridge)
+      summary: Serve avatar público sem credenciais, inclusive em páginas sandbox de plugins
       security: []
       parameters:
         - $ref: '#/components/parameters/UserId'
       responses:
         '200':
           description: Bytes do avatar (Content-Type do MIME registrado; Cache-Control public, max-age=3600)
+          headers:
+            Cross-Origin-Resource-Policy: {schema: {type: string, enum: [cross-origin]}}
+            Access-Control-Allow-Origin: {schema: {type: string, enum: ['*']}}
+            X-Content-Type-Options: {schema: {type: string, enum: [nosniff]}}
           content:
             image/png:
               schema:
