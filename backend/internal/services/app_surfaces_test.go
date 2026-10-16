@@ -28,7 +28,7 @@ func (s fixtureSurfaceSource) Resolve(_ context.Context, id string) (PluginSurfa
 func newSurfaceFixture(t *testing.T) (models.AppInstallation, models.User, fixtureSurfaceSource) {
 	t.Helper()
 	u := newWebhookTestUser(t)
-	a, token, err := CreateApp(testCtx(), u.ID, "surfaces", "wasm", "Superfícies", models.AppCapabilities{SendMessages: true, PostAppEmbeds: true})
+	a, token, err := CreateApp(testCtx(), u.ID, "surfaces", "plugin", "Superfícies", models.AppCapabilities{SendMessages: true, PostAppEmbeds: true})
 	if err != nil || token != "" {
 		t.Fatalf("instalação: %v", err)
 	}

@@ -234,3 +234,18 @@ func withSection(t *testing.T, data []byte, id byte, replacement []byte) []byte 
 	}
 	return out
 }
+
+// TestPerPluginMemory mantém cache e limite separados por configuração aprovada.
+func TestPerPluginMemory(t *testing.T) {
+	h := newHost(t, DefaultLimits())
+	b := withSection(t, fixture(t), 5, []byte{1, 0, 32})
+	if e := h.Validate(plugins.WithMemoryLimit(context.Background(), 1), b); e == nil {
+		t.Fatal("memória inicial acima de 1 MiB aceita")
+	}
+	if e := h.Validate(plugins.WithMemoryLimit(context.Background(), 2), b); e != nil {
+		t.Fatal(e)
+	}
+	if e := h.Validate(plugins.WithMemoryLimit(context.Background(), 1), b); e == nil {
+		t.Fatal("cache de 2 MiB ignorou o teto de 1 MiB")
+	}
+}

@@ -9,14 +9,28 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	"papo/internal/config"
 	"papo/internal/models"
+	"papo/internal/services"
 	"papo/internal/storage"
+	"papo/internal/utils"
 	"papo/internal/websocket"
 )
 
 // createAppViaRoute instala um app e verifica que o segredo só existe no modo remoto.
 func createAppViaRoute(t *testing.T, e *echo.Echo, cookie, kind string) (models.AppInstallation, string) {
 	t.Helper()
+	if kind == "plugin" {
+		id, e := utils.ValidateToken(cookie, config.LoadConfig().JWTSecret)
+		if e != nil {
+			t.Fatal(e)
+		}
+		a, token, e := services.CreateApp(context.Background(), id, "fixture-"+randHex(4), kind, "Bot", models.AppCapabilities{SendMessages: true, ReadMessages: true})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return a, token
+	}
 	body, _ := json.Marshal(map[string]any{"app_key": "teste", "kind": kind, "name": "Bot", "capabilities": models.AppCapabilities{SendMessages: true, ReadMessages: true}})
 	rec := do(t, e, http.MethodPost, "/apps", body, authCookie(cookie))
 	if rec.Code != 201 {
@@ -86,7 +100,7 @@ func TestAppAuthenticationRoutes(t *testing.T) {
 		rec := do(t, e, method, target, nil, authCookie(owner))
 		assertProblem(t, rec, 401, "unauthorized", "Não autorizado", "app inválido")
 	}
-	for _, kind := range []string{"view", "wasm"} {
+	for _, kind := range []string{"plugin"} {
 		local, secret := createAppViaRoute(t, e, owner, kind)
 		if secret != "" {
 			t.Fatal("segredo local")

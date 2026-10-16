@@ -3,121 +3,136 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"papo/internal/models"
-	"papo/internal/plugins"
+	"papo/internal/services"
 	"papo/internal/storage"
 )
 
-// TestPluginRoutes exercita artefato real, autenticação, limites e isolamento de erros.
+// TestPluginRoutes cobre consentimento real, auth, UI e remoção pelo roteador de produção.
 func TestPluginRoutes(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PLUGINS_DIR", dir)
+	for _, id := range []string{"reference", "bluemap"} {
+		src := filepath.Join("../../../examples/plugins", id)
+		e := filepath.WalkDir(src, func(name string, d fs.DirEntry, e error) error {
+			if e != nil {
+				return e
+			}
+			rel, _ := filepath.Rel(src, name)
+			dst := filepath.Join(dir, id, rel)
+			if d.IsDir() {
+				return os.MkdirAll(dst, 0700)
+			}
+			data, e := os.ReadFile(name)
+			if e != nil {
+				return e
+			}
+			return os.WriteFile(dst, data, 0600)
+		})
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
 	cleanServers(context.Background())
 	e := newApp()
 	owner := webhookTestServer(t, e)
-	app, _ := createAppViaRoute(t, e, owner, "wasm")
-	path := "/apps/" + app.ID
-	guest, err := os.ReadFile("../../../examples/wasm-reference/plugin.wasm")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, unprivileged := registerAndLogin(t, e)
-	for _, method := range []string{http.MethodPut, http.MethodPost} {
-		endpoint := path + "/artifact"
-		if method == http.MethodPost {
-			endpoint = path + "/trigger"
-		}
-		for _, cookie := range []string{"", unprivileged} {
-			rec := do(t, e, method, endpoint, guest, authCookie(cookie))
+	_, other := registerAndLogin(t, e)
+	channel := createChannelFor(t, "plugin_"+randHex(4))
+	endpoints := map[string]string{"/plugins": "GET", "/plugins/rescan": "POST", "/plugins/reference/preview": "POST", "/plugins/reference/enable": "POST", "/plugins/reference/disable": "POST", "/plugins/reference/trigger": "POST", "/plugins/reference": "PATCH"}
+	for endpoint, method := range endpoints {
+		for _, cookie := range []string{"", other} {
 			want := 403
 			if cookie == "" {
 				want = 401
 			}
-			if rec.Code != want {
-				t.Fatalf("auth %d: %s", rec.Code, rec.Body.String())
+			if rec := do(t, e, method, endpoint, []byte(`{}`), authCookie(cookie)); rec.Code != want {
+				t.Fatalf("auth %s: %d %s", endpoint, rec.Code, rec.Body.String())
 			}
 		}
 	}
-	for _, kind := range []string{"remote", "view"} {
-		other, _ := createAppViaRoute(t, e, owner, kind)
-		if rec := do(t, e, http.MethodPut, "/apps/"+other.ID+"/artifact", guest, authCookie(owner)); rec.Code != 400 {
-			t.Fatalf("tipo %s: %d", kind, rec.Code)
-		}
-	}
-	if rec := do(t, e, http.MethodPost, path+"/trigger", []byte(`{}`), authCookie(owner)); rec.Code != 400 {
-		t.Fatalf("sem artefato: %d", rec.Code)
-	}
-	for _, bad := range [][]byte{[]byte("invalid"), make([]byte, plugins.MaxArtifact+1)} {
-		rec := do(t, e, http.MethodPut, path+"/artifact", bad, authCookie(owner))
-		if rec.Code != 400 && rec.Code != 413 {
-			t.Fatalf("upload inválido: %d %s", rec.Code, rec.Body.String())
-		}
-	}
-	if rec := do(t, e, http.MethodPut, path+"/artifact", guest, authCookie(owner)); rec.Code != 200 {
+	if rec := do(t, e, "POST", "/plugins/rescan", []byte(`{}`), authCookie(owner)); rec.Code != 200 {
 		t.Fatal(rec.Body.String())
 	}
-	if rec := do(t, e, http.MethodPatch, path, []byte(`{"capabilities":{"private_storage":true,"send_messages":true}}`), authCookie(owner)); rec.Code != 200 {
-		t.Fatal(rec.Body.String())
-	}
-	for _, input := range []string{`{"method":"kv.put","key":"x","value":42}`, `{"method":"kv.get","key":"x"}`} {
-		rec := do(t, e, http.MethodPost, path+"/trigger", []byte(input), authCookie(owner))
-		if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"ok":true`) {
-			t.Fatalf("trigger %d %s", rec.Code, rec.Body.String())
+	var installed []models.AppInstallation
+	for _, id := range []string{"bluemap", "reference"} {
+		settings := map[string]any{"map_url": "https://8.8.8.8/map"}
+		if id == "reference" {
+			settings = map[string]any{"target_channel": channel.ID}
+		}
+		opts := services.PluginOptions{Settings: settings}
+		body, _ := json.Marshal(opts)
+		rec := do(t, e, "POST", "/plugins/"+id+"/preview", body, authCookie(owner))
+		if rec.Code != 200 {
+			t.Fatalf("preview %d %s", rec.Code, rec.Body.String())
+		}
+		var preview services.PluginPreview
+		if err := json.Unmarshal(rec.Body.Bytes(), &preview); err != nil {
+			t.Fatal(err)
+		}
+		opts.Consent = preview.Consent
+		opts.ExpiresAt = preview.ExpiresAt
+		body, _ = json.Marshal(opts)
+		rec = do(t, e, "POST", "/plugins/"+id+"/enable", body, authCookie(owner))
+		if rec.Code != 200 {
+			t.Fatalf("enable %d %s", rec.Code, rec.Body.String())
+		}
+		var a models.AppInstallation
+		if err := json.Unmarshal(rec.Body.Bytes(), &a); err != nil {
+			t.Fatal(err)
+		}
+		installed = append(installed, a)
+		// APIs antigas não podem ampliar grants/escopos por fora do consentimento.
+		if rec := do(t, e, "PATCH", "/apps/"+a.ID, []byte(`{"capabilities":{"read_messages":true}}`), authCookie(owner)); rec.Code != 403 {
+			t.Fatal("bypass do consentimento", rec.Code)
+		}
+		if rec := do(t, e, "PUT", "/apps/"+a.ID+"/channels/"+channel.ID, nil, authCookie(owner)); rec.Code != 403 {
+			t.Fatal("bypass de escopo", rec.Code)
 		}
 	}
-	channel := createChannelFor(t, "wasm_"+randHex(4))
-	scopeAppViaRoute(t, e, owner, app.ID, channel.ID)
-	input := fmt.Sprintf(`{"method":"message.send","channel_id":%q,"content":"Wasm","external_message_id":"wasm-route"}`, channel.ID)
-	rec := do(t, e, http.MethodPost, path+"/trigger", []byte(input), authCookie(owner))
+	var count int
+	if err := storage.GetDB().QueryRow("SELECT count(*) FROM app_channels WHERE app_installation_id IN ($1,$2)", installed[0].ID, installed[1].ID).Scan(&count); err != nil || count != 2 {
+		t.Fatal("canais app ausentes", count, err)
+	}
+	rec := do(t, e, "POST", "/plugins/reference/trigger", []byte(`{}`), authCookie(owner))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"source_type":"app"`) {
+		t.Fatalf("trigger %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, e, "GET", "/apps/"+installed[1].ID+"/ui/index.html", nil, nil)
 	if rec.Code != 200 {
-		t.Fatal(rec.Body.String())
+		t.Fatalf("UI %d %s", rec.Code, rec.Body.String())
 	}
-	var result struct {
-		OK     bool                         `json:"ok"`
-		Result models.MessageWithAttachment `json:"result"`
-	}
-	if err = json.Unmarshal(rec.Body.Bytes(), &result); err != nil || !result.OK || result.Result.AppInstallationID == nil || *result.Result.AppInstallationID != app.ID {
-		t.Fatalf("message %s %v", rec.Body.String(), err)
-	}
-	if referenced, err := storage.MediaIsReferenced(context.Background(), *mustPluginApp(t, app.ID).ArtifactSHA); err != nil || !referenced {
-		t.Fatalf("GC não preserva artefato: %v", err)
-	}
-	evil, err := os.ReadFile("../wasmhost/testdata/adversarial.wasm")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec := do(t, e, http.MethodPut, path+"/artifact", evil, authCookie(owner)); rec.Code != 200 {
-		t.Fatal(rec.Body.String())
-	}
-	for i := 0; i < 3; i++ {
-		rec = do(t, e, http.MethodPost, path+"/trigger", []byte(`{"op":"trap"}`), authCookie(owner))
-		if rec.Code != 422 {
-			t.Fatalf("trap %d %s", rec.Code, rec.Body.String())
+	for name, want := range map[string]string{"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "same-origin"} {
+		if rec.Header().Get(name) != want {
+			t.Fatal(name, rec.Header())
 		}
 	}
-	rec = do(t, e, http.MethodPost, path+"/trigger", []byte(`{}`), authCookie(owner))
-	if rec.Code != 409 {
-		t.Fatalf("quarantine %d", rec.Code)
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "sandbox allow-scripts allow-forms") || strings.Contains(csp, "allow-same-origin") {
+		t.Fatal(csp)
 	}
-	if rec := do(t, e, http.MethodPut, path+"/artifact", guest, authCookie(owner)); rec.Code != 200 {
-		t.Fatal(rec.Body.String())
+	for _, id := range []string{"reference", "bluemap"} {
+		rec = do(t, e, "POST", "/plugins/"+id+"/disable", nil, authCookie(owner))
+		if rec.Code != 204 {
+			t.Fatal(rec.Body.String())
+		}
 	}
-	rec = do(t, e, http.MethodPost, path+"/trigger", []byte(`{"method":"kv.get","key":"x"}`), authCookie(owner))
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"value":42`) {
-		t.Fatalf("recovery %d %s", rec.Code, rec.Body.String())
+	if err := storage.GetDB().QueryRow("SELECT count(*) FROM app_channels WHERE app_installation_id IN ($1,$2)", installed[0].ID, installed[1].ID).Scan(&count); err != nil || count != 0 {
+		t.Fatal("canais sobrevivem disable", count, err)
 	}
-}
-
-// mustPluginApp consulta metadados após upload, sem reutilizar a resposta de instalação.
-func mustPluginApp(t *testing.T, id string) models.AppInstallation {
-	t.Helper()
-	a, e := storage.GetApp(context.Background(), id)
-	if e != nil {
-		t.Fatal(e)
+	rec = do(t, e, "GET", "/apps/"+installed[1].ID+"/ui/index.html", nil, nil)
+	if rec.Code != 404 || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("UI desabilitada disponível", rec.Code)
 	}
-	return a
+	if rec := do(t, e, "PUT", "/apps/"+installed[1].ID+"/artifact", []byte("wasm"), authCookie(owner)); rec.Code != 404 && rec.Code != 405 {
+		t.Fatal("upload legado disponível", rec.Code)
+	}
+	if rec := do(t, e, http.MethodPost, "/apps", []byte(`{"app_key":"bypass","kind":"plugin","name":"bypass"}`), authCookie(owner)); rec.Code != 400 {
+		t.Fatal("plugin criado fora do lifecycle", rec.Code)
+	}
 }

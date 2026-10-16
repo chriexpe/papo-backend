@@ -34,7 +34,7 @@ func (s handlerSurfaceSource) Resolve(_ context.Context, id string) (services.Pl
 // newHandlerSurfaces cria uma instalação e assets estáticos de teste, sem token.
 func newHandlerSurfaces(t *testing.T, ownerID string) (models.AppInstallation, handlerSurfaceSource) {
 	t.Helper()
-	a, _, err := services.CreateApp(context.Background(), ownerID, "fixture", "wasm", "App", models.AppCapabilities{SendMessages: true, PostAppEmbeds: true})
+	a, _, err := services.CreateApp(context.Background(), ownerID, "fixture", "plugin", "App", models.AppCapabilities{SendMessages: true, PostAppEmbeds: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,9 +284,15 @@ func TestAppChannelEvents(t *testing.T) {
 				BroadcastAppChannelChanges(context.Background(), changes)
 				kind = websocket.EventTypeChannelDelete
 			case "revoke":
-				if rec := do(t, e, http.MethodDelete, "/apps/"+a.ID, nil, authCookie(manager)); rec.Code != 204 {
-					t.Fatal(rec.Code, rec.Body.String())
+				// O endpoint legado agora rejeita plugins; o hook continua preservando snapshots de revoke.
+				if rec := do(t, e, http.MethodDelete, "/apps/"+a.ID, nil, authCookie(manager)); rec.Code != 403 {
+					t.Fatal(rec.Code)
 				}
+				changes, err = services.RevokeAppWithChannelChanges(context.Background(), ownerID, a.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				BroadcastAppChannelChanges(context.Background(), changes)
 				kind = websocket.EventTypeChannelDelete
 			}
 			for _, conn := range []*ws.Conn{readerConn, ownerConn} {

@@ -5,7 +5,10 @@ package main
 #include <stdlib.h>
 */
 import "C"
-import "unsafe"
+import (
+	"strings"
+	"unsafe"
+)
 
 //go:wasmimport papo_host_v1 call
 func hostCall(p, n, out, capacity uint32) uint32
@@ -21,21 +24,21 @@ func alloc(n uint32) uint32 { return uint32(uintptr(C.malloc(C.ulong(n)))) }
 //export invoke
 func invoke(p, n uint32) uint64 {
 	request := string(unsafe.Slice((*byte)(unsafe.Pointer(uintptr(p))), n))
-	switch request {
-	case `{"op":"trap"}`:
+	switch {
+	case strings.Contains(request, `"op":"trap"`):
 		panic("trap")
-	case `{"op":"loop"}`:
+	case strings.Contains(request, `"op":"loop"`):
 		for {
 		}
-	case `{"op":"oversize"}`:
+	case strings.Contains(request, `"op":"oversize"`):
 		return uint64(131072)
-	case `{"op":"pointer"}`:
+	case strings.Contains(request, `"op":"pointer"`):
 		return uint64(0xfffffff0)<<32 | 64
-	case `{"op":"calls"}`:
+	case strings.Contains(request, `"op":"calls"`):
 		for i := 0; i < 33; i++ {
 			hostCall(p, n, pointer(scratch[:]), uint32(len(scratch)))
 		}
-	case `{"op":"memory"}`:
+	case strings.Contains(request, `"op":"memory"`):
 		_ = make([]byte, 32<<20)
 	}
 	size := hostCall(p, n, pointer(scratch[:]), uint32(len(scratch)))
