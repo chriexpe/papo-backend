@@ -209,6 +209,9 @@ func main() {
 	if err != nil {
 		utils.Fatal(err.Error())
 	}
+	if _, err = config.AppStorageDefaults(); err != nil {
+		utils.Fatal(err.Error())
+	}
 	services.SetPluginSurfaceSource(pluginManager)
 	pluginCtx, stopPlugins := context.WithCancel(context.Background())
 	defer stopPlugins()

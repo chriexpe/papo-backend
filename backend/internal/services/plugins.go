@@ -15,6 +15,7 @@ import (
 
 // pluginRequest não aceita identidade nem namespace fornecido pelo guest.
 type pluginRequest struct {
+	IDs               []string              `json:"ids"`
 	Components        *[][]models.AppButton `json:"components"`
 	ToUserID          string                `json:"to_user_id"`
 	Text              string                `json:"text"`
@@ -59,6 +60,8 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, data []byte) ([
 	}
 	var result any
 	switch req.Method {
+	case "users.resolve":
+		result, e = m.ResolveUsers(ctx, a.ID, req.IDs)
 	case "asset.read":
 		var content []byte
 		content, e = pluginbundle.ReadAsset(b.Directory, req.Path, req.Offset, req.Length, m.Config)
@@ -77,7 +80,7 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, data []byte) ([
 		if req.Method == "kv.get" {
 			result, e = storage.GetAppStorage(ctx, id, req.Key)
 		} else {
-			if req.Method == "kv.put" && (len(req.Value) > 16384 || !json.Valid(req.Value)) {
+			if req.Method == "kv.put" && (!json.Valid(req.Value)) {
 				return pluginResponse(nil, ErrInvalidInput)
 			}
 			result, e = storage.MutateAppStorage(ctx, id, req.Key, req.Value, req.Method == "kv.delete")
@@ -190,6 +193,8 @@ func pluginResponse(result any, err error) ([]byte, error) {
 		code = "invalid_param"
 	case errors.Is(err, storage.ErrNotFound):
 		code = "not_found"
+	case errors.Is(err, ErrAppRateLimit):
+		code = "rate_limited"
 	case errors.Is(err, storage.ErrAppStorageQuota):
 		code = "quota_exceeded"
 	}

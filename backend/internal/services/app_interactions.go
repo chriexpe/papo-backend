@@ -77,7 +77,27 @@ func appSecret(prefix string) (string, error) {
 func (m *PluginManager) HumanCall(parent context.Context, id, event string, input json.RawMessage, h appHuman) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.WithValue(parent, appHumanKey{}, h), time.Duration(appInt("PLUGINS_INTERACTION_TIMEOUT_MS", 3000))*time.Millisecond)
 	defer cancel()
-	return m.callEvent(ctx, id, event, input)
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(input, &payload) != nil {
+		return nil, ErrInvalidInput
+	}
+	profile, e := callerProfile(ctx, h.UserID)
+	if e != nil {
+		return nil, e
+	}
+	payload["user"] = jsonValue(profile)
+	if event == "on_interaction" {
+		var action InteractionInput
+		_ = json.Unmarshal(input, &action)
+		if action.Kind == "user_action" {
+			target, e := callerProfile(ctx, action.TargetUserID)
+			if e != nil {
+				return nil, e
+			}
+			payload["target_user"] = jsonValue(target)
+		}
+	}
+	return m.callEvent(ctx, id, event, jsonValue(payload))
 }
 
 // Interact verifica o botão/ação persistido antes de entregar a identidade humana.

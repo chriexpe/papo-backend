@@ -21,33 +21,36 @@ import (
 
 // PluginOptions é a seleção administrativa usada tanto no preview quanto na aprovação.
 type PluginOptions struct {
-	Settings    map[string]any `json:"settings"`
-	Permissions *[]string      `json:"permissions,omitempty"`
-	Scopes      []string       `json:"scopes,omitempty"`
-	MaxMemoryMB int            `json:"max_memory_mb,omitempty"`
-	Consent     string         `json:"consent,omitempty"`
-	ExpiresAt   int64          `json:"expires_at,omitempty"`
+	StorageQuota *models.AppStorageQuotaOverride `json:"storage_quota,omitempty"`
+	Settings     map[string]any                  `json:"settings"`
+	Permissions  *[]string                       `json:"permissions,omitempty"`
+	Scopes       []string                        `json:"scopes,omitempty"`
+	MaxMemoryMB  int                             `json:"max_memory_mb,omitempty"`
+	Consent      string                          `json:"consent,omitempty"`
+	ExpiresAt    int64                           `json:"expires_at,omitempty"`
 }
 
 // PluginPreview inclui tudo que será concedido e a revisão que invalida aprovações antigas.
 type PluginPreview struct {
-	ID                   string                  `json:"id"`
-	Digest               string                  `json:"digest"`
-	Version              string                  `json:"version"`
-	Name                 string                  `json:"name"`
-	Settings             map[string]any          `json:"settings"`
-	RequestedPermissions []string                `json:"requested_permissions"`
-	Permissions          []string                `json:"permissions"`
-	BlockedPermissions   []string                `json:"blocked_permissions"`
-	Scopes               []string                `json:"scopes"`
-	ExplicitScopes       []string                `json:"explicit_scopes"`
-	Origins              []string                `json:"origins"`
-	Surfaces             []AppSurfaceDeclaration `json:"surfaces"`
-	MaxMemoryMB          int                     `json:"max_memory_mb"`
-	Revision             int64                   `json:"revision"`
-	State                string                  `json:"state"`
-	ExpiresAt            int64                   `json:"expires_at"`
-	Consent              string                  `json:"consent"`
+	StorageQuota          models.AppStorageQuota         `json:"storage_quota"`
+	StorageQuotaOverrides models.AppStorageQuotaOverride `json:"storage_quota_overrides"`
+	ID                    string                         `json:"id"`
+	Digest                string                         `json:"digest"`
+	Version               string                         `json:"version"`
+	Name                  string                         `json:"name"`
+	Settings              map[string]any                 `json:"settings"`
+	RequestedPermissions  []string                       `json:"requested_permissions"`
+	Permissions           []string                       `json:"permissions"`
+	BlockedPermissions    []string                       `json:"blocked_permissions"`
+	Scopes                []string                       `json:"scopes"`
+	ExplicitScopes        []string                       `json:"explicit_scopes"`
+	Origins               []string                       `json:"origins"`
+	Surfaces              []AppSurfaceDeclaration        `json:"surfaces"`
+	MaxMemoryMB           int                            `json:"max_memory_mb"`
+	Revision              int64                          `json:"revision"`
+	State                 string                         `json:"state"`
+	ExpiresAt             int64                          `json:"expires_at"`
+	Consent               string                         `json:"consent"`
 }
 
 // Preview revalida pasta, settings e leitura humana dos escopos antes de assinar o consentimento.
@@ -80,11 +83,28 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 		return p, e
 	}
 	if e == nil {
+		p.StorageQuotaOverrides = current.StorageQuotaOverrides
 		p.Revision = current.PluginRevision
 		p.State = current.PluginState
 		p.MaxMemoryMB = min(current.MaxMemoryMB, p.MaxMemoryMB)
 		_ = json.Unmarshal(current.PluginSettings, &p.Settings)
 		_ = json.Unmarshal(current.ExplicitScopes, &p.ExplicitScopes)
+	}
+	if o.StorageQuota != nil {
+		v := o.StorageQuota
+		if v.MaxKeys != nil {
+			p.StorageQuotaOverrides.MaxKeys = v.MaxKeys
+		}
+		if v.MaxTotalBytes != nil {
+			p.StorageQuotaOverrides.MaxTotalBytes = v.MaxTotalBytes
+		}
+		if v.MaxValueBytes != nil {
+			p.StorageQuotaOverrides.MaxValueBytes = v.MaxValueBytes
+		}
+	}
+	p.StorageQuota, e = config.EffectiveAppStorageQuota(p.StorageQuotaOverrides)
+	if e != nil {
+		return p, ErrInvalidInput
 	}
 	values := map[string]any{}
 	for _, s := range b.Manifest.Settings {

@@ -70,7 +70,7 @@ func (m *PluginManager) apply(ctx context.Context, actor string, b pluginbundle.
 	if e != nil || fresh.Digest != p.Digest {
 		return models.AppInstallation{}, ErrPluginConsent
 	}
-	a, e := storage.SavePlugin(ctx, storage.PluginApproval{Key: p.ID, Name: p.Name, Actor: actor, Digest: p.Digest, Version: p.Version, Settings: jsonValue(p.Settings), Origins: jsonValue(p.Origins), Permissions: jsonValue(p.Permissions), Surfaces: jsonValue(p.Surfaces), ExplicitScopes: jsonValue(p.ExplicitScopes), MemoryMB: p.MaxMemoryMB, Capabilities: capabilities(p.Permissions), Scopes: p.Scopes, ExpectedRevision: p.Revision, Avatar: avatar})
+	a, e := storage.SavePlugin(ctx, storage.PluginApproval{Key: p.ID, Name: p.Name, Actor: actor, Digest: p.Digest, Version: p.Version, Settings: jsonValue(p.Settings), Origins: jsonValue(p.Origins), Permissions: jsonValue(p.Permissions), Surfaces: jsonValue(p.Surfaces), ExplicitScopes: jsonValue(p.ExplicitScopes), MemoryMB: p.MaxMemoryMB, StorageQuota: p.StorageQuotaOverrides, Capabilities: capabilities(p.Permissions), Scopes: p.Scopes, ExpectedRevision: p.Revision, Avatar: avatar})
 	if errors.Is(e, storage.ErrUniqueViolation) {
 		return a, ErrPluginConsent
 	}
