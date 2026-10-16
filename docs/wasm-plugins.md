@@ -281,3 +281,9 @@ O título permite observar o resultado por API nativa sem injetar scripts ou bri
 Verificado em WPE 2.54.1 com sessão efêmera, backend local e Postgres 16 migrado
 com goose: as duas páginas e todos os recursos retornaram 200, e ambas chegaram
 ao título de sucesso. WebView2 não estava disponível neste host.
+
+A origem explícita no CSP vem de `APPS_ORIGIN` (origem HTTP(S), sem caminho), ou
+é extraída de `BASE_URL` quando a variável está vazia. Nunca vem dos headers
+Host/Forwarded. O smoke HTTP também busca as duas páginas e cada asset real com
+`Origin: null`, verifica MIME, ausência de credenciais e CORS em 200 e 304.
+A execução HTTP não substitui a execução do módulo em uma WebView.

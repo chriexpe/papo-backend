@@ -3,7 +3,10 @@ try {
     if (!response.ok) throw new Error(`JSON: ${response.status}`);
     return response.json();
   });
-  await document.fonts.load('16px "Papo Fixture"', 'Papo');
+  const fonts = await document.fonts.load('16px "Papo Fixture"', 'Papo');
+  if (fonts.length === 0 || !document.fonts.check('16px "Papo Fixture"', 'Papo')) {
+    throw new Error('Fonte não carregada');
+  }
   await document.querySelector('img').decode();
   if (getComputedStyle(document.body).getPropertyValue('--fixture-css').trim() !== 'loaded') {
     throw new Error('CSS não carregado');

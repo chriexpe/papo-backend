@@ -32,7 +32,7 @@ def main():
         env.update(
             SERVER_PORT=str(args.port), DATABASE_URL=args.database_url,
             JWT_SECRET="local-plugins-smoke-test-secret-32-characters",
-            HMAC_SECRET="local-plugins-smoke-media-secret", BASE_URL=base,
+            HMAC_SECRET="local-plugins-smoke-media-secret", BASE_URL=base, APPS_ORIGIN="",
             PLUGINS_DIR=str(plugins), PLUGINS_HOT_RELOAD="false",
             MODERATION_ENABLED="false", USE_FCM_RELAY="false",
             VOICE_ICE_UDP_PORT="0", AUTH_RATE_LIMIT="100", AUTH_RATE_BURST="100",
@@ -123,6 +123,35 @@ def main():
             assert "default-src 'self' " + base in headers
             print("PASS: curl UI without cookie; response headers follow:")
             print(headers.strip())
+            # Todos os recursos reais são públicos para o sandbox opaco, inclusive em 304.
+            ui_root = ui.rsplit("/", 1)[0] + "/"
+            assets = {"index.html": "text/html", "result.html": "text/html",
+                      "style.css": "text/css", "main.mjs": "javascript",
+                      "image.svg": "image/svg+xml", "fixture.ttf": "font/ttf",
+                      "data.json": "application/json"}
+            for name, mime in assets.items():
+                req = urllib.request.Request(ui_root + name, headers={"Origin": "null"})
+                with urllib.request.urlopen(req) as response:
+                    payload = response.read()
+                    assert payload and mime in response.headers["Content-Type"]
+                    assert response.headers["Access-Control-Allow-Origin"] == "*"
+                    assert response.headers.get("Access-Control-Allow-Credentials") is None
+                    assert response.headers.get("Set-Cookie") is None
+                    etag = response.headers["ETag"]
+                    if name.endswith(".html"):
+                        assert all(asset.encode() in payload for asset in ("main.mjs", "style.css", "image.svg"))
+                    if name == "data.json":
+                        assert json.loads(payload)["message"]
+                cached = urllib.request.Request(ui_root + name, headers={"Origin": "null", "If-None-Match": etag})
+                try:
+                    urllib.request.urlopen(cached)
+                    raise AssertionError("revalidação deveria retornar 304")
+                except urllib.error.HTTPError as response:
+                    assert response.code == 304
+                    assert response.headers["Access-Control-Allow-Origin"] == "*"
+                    assert response.headers.get("Access-Control-Allow-Credentials") is None
+                    assert response.headers["Cross-Origin-Resource-Policy"] == "cross-origin"
+            print("PASS: both pages and module/image/font/fetch JSON assets with Origin:null; 200 and 304")
             request("POST", "/plugins/reference/trigger", {"request": {"method": "kv.put", "key": "counter", "value": 42}})
             stop()
             start()
