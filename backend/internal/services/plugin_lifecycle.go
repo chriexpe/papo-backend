@@ -64,7 +64,7 @@ func (m *PluginManager) apply(ctx context.Context, actor string, b pluginbundle.
 	}
 	// Revalidação imediatamente antes do commit evita aprovar assets alterados após preview.
 	fresh, e := m.bundle(ctx, b.Manifest.ID, false)
-	if errors.Is(e, plugins.ErrBusy) {
+	if transientPluginError(e) {
 		return models.AppInstallation{}, e
 	}
 	if e != nil || fresh.Digest != p.Digest {
@@ -243,7 +243,7 @@ func (m *PluginManager) callEvent(ctx context.Context, id, event string, input j
 		return nil, plugins.ErrQuarantined
 	}
 	b, e := m.bundle(ctx, id, false)
-	if errors.Is(e, plugins.ErrBusy) {
+	if transientPluginError(e) {
 		return nil, e
 	}
 	if e != nil {

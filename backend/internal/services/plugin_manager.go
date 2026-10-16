@@ -316,6 +316,9 @@ func (m *PluginManager) Resolve(ctx context.Context, id string) (PluginSurfaceBu
 		return PluginSurfaceBundle{}, ErrAppNotFound
 	}
 	b, e := m.bundle(ctx, a.AppKey, false)
+	if transientPluginError(e) {
+		return PluginSurfaceBundle{}, e
+	}
 	if e != nil || b.Digest != *a.PluginDigest {
 		// O watcher/trigger aplica upgrade sem expansão; até lá UI fica indisponível.
 		if !m.Config.HotReload && !errors.Is(e, plugins.ErrBusy) {
@@ -391,4 +394,9 @@ func (m *PluginManager) invalidate(ctx context.Context, id string) {
 	if m.Effects.Invalidate != nil {
 		m.Effects.Invalidate(ctx, id)
 	}
+}
+
+// transientPluginError não confunde saturação/cancelamento do pedido com artefato inválido.
+func transientPluginError(e error) bool {
+	return errors.Is(e, plugins.ErrBusy) || errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded)
 }

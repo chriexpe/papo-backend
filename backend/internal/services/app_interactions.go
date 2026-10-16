@@ -296,9 +296,15 @@ func (m *PluginManager) validateUIToken(ctx context.Context, id, secret, kind st
 		return t, ErrAppSession
 	}
 	if e = m.refreshHumanPlugin(ctx, id); e != nil {
+		if transientPluginError(e) {
+			return t, e
+		}
 		return t, ErrAppSession
 	}
 	b, e := ResolvePluginSurfaceBundle(ctx, id)
+	if transientPluginError(e) {
+		return t, e
+	}
 	if e != nil || b.Digest != t.Digest {
 		_ = storage.RevokeUserAppUI(ctx, t.UserID, id)
 		return t, ErrAppSession
@@ -496,6 +502,9 @@ func (m *PluginManager) refreshHumanPlugin(ctx context.Context, id string) error
 		return ErrPermissionDenied
 	}
 	b, e := m.bundle(ctx, a.AppKey, false)
+	if transientPluginError(e) {
+		return e
+	}
 	if e == nil && a.PluginDigest != nil && b.Digest == *a.PluginDigest {
 		return nil
 	}
@@ -509,6 +518,9 @@ func (m *PluginManager) refreshHumanPlugin(ctx context.Context, id string) error
 		return e
 	}
 	b, e = m.bundle(ctx, a.AppKey, false)
+	if transientPluginError(e) {
+		return e
+	}
 	if e == nil && a.PluginDigest != nil && b.Digest == *a.PluginDigest {
 		return nil
 	}

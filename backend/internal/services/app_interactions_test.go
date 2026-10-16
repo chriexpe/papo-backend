@@ -463,18 +463,27 @@ func TestAppTicketConcurrentReplay(t *testing.T) {
 	for range 8 {
 		if e := <-out; e == nil {
 			success++
-		} else if !errors.Is(e, ErrAppSession) {
+		} else if !errors.Is(e, ErrAppSession) && !errors.Is(e, plugins.ErrBusy) {
 			t.Fatal(e)
 		}
 	}
 	if success != 1 {
 		t.Fatal("trocas aceitas", success)
 	}
+	current, e := storage.GetApp(testCtx(), a.ID)
+	if e != nil || current.PluginState != "enabled" {
+		t.Fatal("saturação desativou plugin", current.PluginState, e)
+	}
 }
 
 // TestAppActionsInChannelSnapshots entrega ações também no channel_create, sem esperar refetch.
 func TestAppActionsInChannelSnapshots(t *testing.T) {
 	m, u, ch := managerFixture(t, false)
+	if _, e := storage.FindPlugin(testCtx(), "reference"); e == nil {
+		if e = m.Disable(testCtx(), u.ID, "reference"); e != nil {
+			t.Fatal(e)
+		}
+	}
 	var snapshot *models.AppChannel
 	m.Effects.Channels = func(_ context.Context, changes []AppChannelChange) {
 		for _, v := range changes {
@@ -486,5 +495,27 @@ func TestAppActionsInChannelSnapshots(t *testing.T) {
 	a := enableReference(t, m, u, ch)
 	if snapshot == nil || len(snapshot.UserActions) != 1 || snapshot.UserActions[0].ID != "convidar" || snapshot.UserActions[0].Icon != "/apps/"+a.ID+"/ui/image.svg" {
 		t.Fatal("ações ausentes no snapshot", snapshot)
+	}
+}
+
+// TestAppSaturationPreservesTickets responde fila cheia sem invalidar identidade ou artefato.
+func TestAppSaturationPreservesTickets(t *testing.T) {
+	m, u, _, a, channel, _ := interactionFixture(t)
+	ticket, e := m.LaunchAppUI(testCtx(), u.ID, a.ID, LaunchInput{SurfaceID: "home", ChannelID: channel})
+	if e != nil {
+		t.Fatal(e)
+	}
+	for range cap(m.ioSlots) {
+		m.ioSlots <- struct{}{}
+	}
+	_, e = m.ExchangeAppTicket(testCtx(), a.ID, ticket["ticket"].(string))
+	for range cap(m.ioSlots) {
+		<-m.ioSlots
+	}
+	if !errors.Is(e, plugins.ErrBusy) {
+		t.Fatal("saturação não preservada", e)
+	}
+	if _, e = m.ExchangeAppTicket(testCtx(), a.ID, ticket["ticket"].(string)); e != nil {
+		t.Fatal("ticket revogado por saturação", e)
 	}
 }

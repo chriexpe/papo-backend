@@ -9,7 +9,6 @@ import (
 
 	"papo/internal/models"
 	"papo/internal/pluginbundle"
-	"papo/internal/plugins"
 	"papo/internal/storage"
 	"papo/internal/utils"
 )
@@ -48,7 +47,7 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, data []byte) ([
 	}
 	b, e := m.bundle(ctx, a.AppKey, false)
 	if e != nil || a.PluginDigest == nil || b.Digest != *a.PluginDigest {
-		if !m.Config.HotReload && !errors.Is(e, plugins.ErrBusy) {
+		if !m.Config.HotReload && !transientPluginError(e) {
 			_ = m.quarantine(ctx, a)
 		}
 		return pluginResponse(nil, ErrPermissionDenied)
