@@ -228,16 +228,16 @@ func RotateAppToken(ctx context.Context, actor, id string) (string, error) {
 
 // RevokeApp desativa a instalação sem apagar suas mensagens.
 func RevokeApp(ctx context.Context, actor, id string) error {
-	_, err := RevokeAppWithViewChannels(ctx, actor, id)
+	_, err := RevokeAppWithChannelChanges(ctx, actor, id)
 	return err
 }
 
-// RevokeAppWithViewChannels revoga e retorna os canais cujas views foram removidas.
-func RevokeAppWithViewChannels(ctx context.Context, actor, id string) ([]string, error) {
+// RevokeAppWithChannelChanges revoga e retorna os snapshots dos canais app removidos.
+func RevokeAppWithChannelChanges(ctx context.Context, actor, id string) ([]AppChannelChange, error) {
 	if _, err := activeApp(ctx, id); err != nil {
 		return nil, err
 	}
-	channels, err := storage.RevokeAppWithViewChannels(ctx, id)
+	channels, err := storage.RevokeAppWithChannelChanges(ctx, id)
 	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrAppNotFound
 	}

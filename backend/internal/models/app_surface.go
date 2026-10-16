@@ -15,7 +15,7 @@ type AppSurfaceDeclaration struct {
 type AppChannel struct {
 	AppInstallationID string `json:"app_installation_id"`
 	SurfaceID         string `json:"surface_id"`
-	Source            string `json:"source"`
+	Source            string `json:"source,omitempty"`
 	Entry             string `json:"entry,omitempty"`
 	AvatarURL         string `json:"avatar_url"`
 	Available         bool   `json:"available"`

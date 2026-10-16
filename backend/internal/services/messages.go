@@ -95,6 +95,9 @@ func ListMessagesOrdered(ctx context.Context, channelID, userID string, since *t
 		return models.MessageList{}, err
 	}
 
+	if channel.Type == "app" {
+		return models.MessageList{}, ErrPermissionDenied
+	}
 	allowed, err := userHasChannelPermission(ctx, channel, userID, true, func(p models.ChannelPermission) bool {
 		return p.ReadChannel
 	})
@@ -124,7 +127,7 @@ func ListMessagesOrdered(ctx context.Context, channelID, userID string, since *t
 		}
 	}
 
-	embedsByMessage, err := storage.ListEmbedsByMessageIDs(ctx, messageIDs)
+	embedsByMessage, err := ListMessageEmbeds(ctx, messageIDs)
 	if err != nil {
 		return models.MessageList{}, err
 	}
@@ -302,7 +305,7 @@ func createMessageAs(ctx context.Context, channelID string, sender messageSender
 	}
 	// Embeds são validados antes de qualquer gravação: uma mensagem não pode
 	// ser criada com embeds que depois seriam rejeitados.
-	if err := validateCustomEmbeds(embeds); err != nil {
+	if err := validateMessageEmbeds(ctx, appID, embeds); err != nil {
 		return models.MessageWithAttachment{}, false, err
 	}
 
@@ -445,7 +448,7 @@ func createMessageAs(ctx context.Context, channelID string, sender messageSender
 		setAttachmentThumbnails(&messageAttachments, thumbnails)
 	}
 
-	messageEmbeds, err := CreateCustomEmbeds(ctx, mediaOwner, embeds)
+	messageEmbeds, err := createMessageEmbeds(ctx, mediaOwner, appID, embeds)
 	if err != nil {
 		return models.MessageWithAttachment{}, false, err
 	}
@@ -714,7 +717,17 @@ func ProcessEditedMessageEmbeds(ctx context.Context, messageID, authorID, conten
 // payload do evento message_embeds_update). Mensagens sem embed não aparecem no
 // mapa.
 func ListMessageEmbeds(ctx context.Context, messageIDs []string) (map[string][]models.Embed, error) {
-	return storage.ListEmbedsByMessageIDs(ctx, messageIDs)
+	items, err := storage.ListEmbedsByMessageIDs(ctx, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	for id, embeds := range items {
+		for i := range embeds {
+			decorateAppEmbed(ctx, &embeds[i])
+		}
+		items[id] = embeds
+	}
+	return items, nil
 }
 
 // EditMessage edita o conteúdo de uma mensagem (README:
@@ -755,7 +768,7 @@ func editMessageAs(ctx context.Context, messageID string, sender messageSender, 
 	if !sender.valid() || utf8.RuneCountInString(content) > maxMessageContentLength {
 		return models.MessageWithAttachment{}, ErrInvalidInput
 	}
-	if err := validateCustomEmbeds(embeds); err != nil {
+	if err := validateMessageEmbeds(ctx, appID, embeds); err != nil {
 		return models.MessageWithAttachment{}, err
 	}
 
@@ -813,7 +826,7 @@ func editMessageAs(ctx context.Context, messageID string, sender messageSender, 
 	}
 	var oldCustomIDs []string
 	for _, e := range oldEmbeds[updated.ID] {
-		if e.SourceType == embedSourceCustom {
+		if e.SourceType == embedSourceCustom || e.SourceType == "app" {
 			oldCustomIDs = append(oldCustomIDs, e.ID)
 		}
 	}
@@ -825,14 +838,14 @@ func editMessageAs(ctx context.Context, messageID string, sender messageSender, 
 	var messageEmbeds []models.Embed
 	if embeds == nil {
 		for _, existing := range oldEmbeds[updated.ID] {
-			if existing.SourceType == embedSourceCustom {
+			if existing.SourceType == embedSourceCustom || existing.SourceType == "app" {
 				messageEmbeds = append(messageEmbeds, existing)
 			}
 		}
 	} else {
 		if webhookID == "" && appID == "" {
 			mediaOwner := authorID
-			messageEmbeds, err = CreateCustomEmbeds(ctx, mediaOwner, embeds)
+			messageEmbeds, err = createMessageEmbeds(ctx, mediaOwner, appID, embeds)
 			if err != nil {
 				return models.MessageWithAttachment{}, err
 			}
@@ -841,7 +854,7 @@ func editMessageAs(ctx context.Context, messageID string, sender messageSender, 
 			if loadErr != nil {
 				return models.MessageWithAttachment{}, loadErr
 			}
-			messageEmbeds, err = CreateCustomEmbeds(ctx, a.CreatedBy, embeds)
+			messageEmbeds, err = createMessageEmbeds(ctx, a.CreatedBy, appID, embeds)
 			if err != nil {
 				return models.MessageWithAttachment{}, err
 			}
@@ -851,7 +864,7 @@ func editMessageAs(ctx context.Context, messageID string, sender messageSender, 
 			if err != nil {
 				return models.MessageWithAttachment{}, ErrPermissionDenied
 			}
-			messageEmbeds, err = CreateCustomEmbeds(ctx, hook.CreatedBy, embeds)
+			messageEmbeds, err = createMessageEmbeds(ctx, hook.CreatedBy, appID, embeds)
 			if err != nil {
 				return models.MessageWithAttachment{}, err
 			}
@@ -918,6 +931,9 @@ func editMessageAs(ctx context.Context, messageID string, sender messageSender, 
 		})
 	}
 
+	for i := range messageEmbeds {
+		decorateAppEmbed(ctx, &messageEmbeds[i])
+	}
 	return models.MessageWithAttachment{
 		Message:       updated,
 		Attachments:   messageAttachments,
@@ -1217,6 +1233,9 @@ func ListPinnedMessages(ctx context.Context, channelID, userID string) (models.P
 		return models.PinnedMessageList{}, err
 	}
 
+	if channel.Type == "app" {
+		return models.PinnedMessageList{}, ErrPermissionDenied
+	}
 	allowed, err := userHasChannelPermission(ctx, channel, userID, true, func(p models.ChannelPermission) bool {
 		return p.ReadChannel
 	})
@@ -1241,7 +1260,7 @@ func ListPinnedMessages(ctx context.Context, channelID, userID string) (models.P
 		}
 	}
 
-	embedsByMessage, err := storage.ListEmbedsByMessageIDs(ctx, messageIDs)
+	embedsByMessage, err := ListMessageEmbeds(ctx, messageIDs)
 	if err != nil {
 		return models.PinnedMessageList{}, err
 	}

@@ -44,14 +44,18 @@ func ListChannels(ctx context.Context, userID string) ([]models.ChannelSummary, 
 		return nil, err
 	}
 	for i := range channels {
-		views, err := ListChannelViews(ctx, userID, channels[i].ID)
-		if errors.Is(err, ErrPermissionDenied) {
+		if channels[i].Type != "app" {
 			continue
 		}
+		if err := CanReadChannel(ctx, channels[i].ID, userID); errors.Is(err, ErrPermissionDenied) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		channels[i].App, err = channelAppPayload(ctx, channels[i].ID)
 		if err != nil {
 			return nil, err
 		}
-		channels[i].Views = views
 	}
 	return channels, nil
 }
@@ -243,6 +247,9 @@ func DeleteChannel(ctx context.Context, actorID, id string) error {
 		}
 		return err
 	}
+	if channel.Type == "app" {
+		return ErrAppChannelManaged
+	}
 	if channel.Type == "dm" {
 		return ErrChannelNotFound
 	}
@@ -349,8 +356,14 @@ func ChannelReaders(ctx context.Context, channelID string, userIDs []string) (ma
 		return allowed, err
 	}
 
+	return ChannelReadersSnapshot(ctx, channel, userIDs)
+}
+
+// ChannelReadersSnapshot autoriza leitores usando a ACL capturada antes de uma exclusão.
+func ChannelReadersSnapshot(ctx context.Context, channel models.Channel, userIDs []string) (map[string]bool, error) {
+	allowed := make(map[string]bool, len(userIDs))
 	if channel.Type == "dm" {
-		return storage.DirectConversationReaders(ctx, channelID, userIDs)
+		return storage.DirectConversationReaders(ctx, channel.ID, userIDs)
 	}
 
 	// Canal aberto (sem roles definidas): leitura livre para todos.
@@ -481,19 +494,34 @@ func DeleteChannelRolePermission(ctx context.Context, actorID, channelID, roleID
 	return nil
 }
 
-// channelSummaryForActor inclui views nas respostas de gestão apenas quando o ator lê o canal.
+// channelSummaryForActor inclui a superfície app nas respostas de gestão apenas quando o ator lê o canal.
 func channelSummaryForActor(ctx context.Context, channelID, actorID string) (models.ChannelSummary, error) {
 	summary, err := storage.GetChannelSummary(ctx, channelID)
 	if err != nil {
 		return summary, err
 	}
-	views, err := ListChannelViews(ctx, actorID, channelID)
-	if errors.Is(err, ErrPermissionDenied) {
-		return summary, nil
+	if summary.Type == "app" {
+		if err := CanReadChannel(ctx, channelID, actorID); errors.Is(err, ErrPermissionDenied) {
+			return summary, nil
+		} else if err != nil {
+			return summary, err
+		}
+		summary.App, err = channelAppPayload(ctx, channelID)
 	}
+	return summary, err
+}
+
+// ValidateChannelTypeChange torna explícita a imutabilidade do tipo do canal.
+func ValidateChannelTypeChange(ctx context.Context, id, wanted string) error {
+	ch, err := storage.GetChannelByID(ctx, id)
 	if err != nil {
-		return summary, err
+		return err
 	}
-	summary.Views = views
-	return summary, nil
+	if ch.Type == "app" || wanted == "app" {
+		return ErrAppChannelManaged
+	}
+	if wanted != ch.Type {
+		return ErrInvalidInput
+	}
+	return nil
 }
