@@ -137,6 +137,7 @@ func MediaIsReferenced(ctx context.Context, shaHash string) (bool, error) {
 	var referenced bool
 	err := GetDB().QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM users WHERE avatar_media = $1 OR banner_media = $1)
+		   OR EXISTS (SELECT 1 FROM app_installations WHERE avatar_media = $1 OR artifact_sha = $1)
 		   OR EXISTS (SELECT 1 FROM servers WHERE icon_media = $1)
 		   OR EXISTS (SELECT 1 FROM emojis WHERE image_media = $1)
 		   OR EXISTS (SELECT 1 FROM attachments WHERE media_sha_hash = $1)

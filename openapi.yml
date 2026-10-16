@@ -8,6 +8,31 @@ info:
     - Autenticação via cookie HttpOnly `Auth` (JWT).
     - Erros seguem RFC 7807 (`application/problem+json`) e toda resposta
       inclui o header `X-Request-ID`.
+    Eventos duráveis de apps:
+    - As mutações e seus snapshots são confirmados na mesma transação.
+    - São produzidos message.created, message.updated, message.deleted,
+      reaction.added, reaction.removed e channel.deleted somente se houver
+      instalação ativa com read_messages e escopo no canal text/voice.
+    - message.created não é produzido em conflitos idempotentes.
+    - O conteúdo é um snapshot do instante da escrita; não inclui embeds,
+      previews nem bytes de anexos. REST continua sendo a fonte do estado atual.
+    - Exclusões redigem snapshots created/updated sem confirmação durável,
+      inclusive aqueles já atribuídos ao backlog: apenas IDs e redacted:true.
+      Eventos já confirmados são história e não são retraídos.
+    - Conteúdo exige instalação ativa, read_messages e escopo no momento da
+      leitura para entrega. Tombstones content-free capturam destinatários na
+      escrita, antes da cascata de escopos; para eles basta a instalação ativa.
+    - O dispatcher usa claims transacionais SKIP LOCKED e sequências locais
+      por instalação. A ordem é a atribuição, sem promessa de ordem por UUID,
+      início da transação ou timestamp. Consumidores deduplicam por event_id.
+    - Snapshots expiram por idade (APP_EVENT_RETENTION_DAYS, padrão 7 dias)
+      e backlog por instalação (APP_EVENT_MAX_DELIVERIES, padrão 10000).
+      A poda mantém replay_floor para detectar lacunas de retenção; novas
+      instalações não recebem fatos anteriores à sua criação.
+    - GET /app/gateway promove WSS autenticado com Bearer explícito. O protocolo
+      é hello -> ready -> dispatch -> ack, com heartbeat e uma única época ativa
+      por instalação. Reentrega é at-least-once; consumidores deduplicam event_id.
+      Replay abaixo de replay_floor recebe resync_required e exige reconciliação REST.
   version: 1.0.0
 servers:
   - url: http://localhost:8080
@@ -32,6 +57,7 @@ tags:
   - name: Voice
   - name: WebSocket
   - name: Webhooks
+  - name: Apps
 
 security:
   - cookieAuth: []
@@ -650,13 +676,17 @@ paths:
   /users/{user_id}/avatar:
     get:
       tags: [Users]
-      summary: Serve a imagem do avatar do usuário (público, sem autenticação; consumido pelo bot bridge)
+      summary: Serve avatar público sem credenciais, inclusive em páginas sandbox de plugins
       security: []
       parameters:
         - $ref: '#/components/parameters/UserId'
       responses:
         '200':
           description: Bytes do avatar (Content-Type do MIME registrado; Cache-Control public, max-age=3600)
+          headers:
+            Cross-Origin-Resource-Policy: {schema: {type: string, enum: [cross-origin]}}
+            Access-Control-Allow-Origin: {schema: {type: string, enum: ['*']}}
+            X-Content-Type-Options: {schema: {type: string, enum: [nosniff]}}
           content:
             image/png:
               schema:
@@ -2776,7 +2806,7 @@ paths:
 
         | Event            | Direction | Payload                                                                           |
         | ---------        | --------- | ---------------------------------------------------------------------             |
-        | `message`        | outbound  | `{ type: "message", id, channel_id, author_id, webhook_id?, external_author?, content, reply_to?, attachments?, created_at }` (reply_to: null quando não é resposta; sem reactions/embeds/user_reactions; webhook_id/external_author presentes somente em mensagens de webhook) |
+        | `message`        | outbound  | `{ type: "message", id, channel_id, author_id, webhook_id?, app_installation_id?, external_author?, content, reply_to?, attachments?, created_at }` (reply_to: null quando não é resposta; sem reactions/embeds/user_reactions; webhook_id identifica webhooks, app_installation_id identifica apps; external_author carrega o snapshot de máquinas e author_id fica vazio) |
         | `message_edit`   | outbound  | `{ type: "message_edit", id, channel_id, content, edited_at }`                          |
         | `message_delete` | outbound  | `{ type: "message_delete", id, channel_id }`                                            |
         | `attachment_moderation_update` | outbound  | `{ type: "attachment_moderation_update", channel_id, message_id, attachment_id, status }` (status: sensitive; o blocked exclui a mensagem e chega como `message_delete`) |
@@ -2784,8 +2814,9 @@ paths:
         | `react_update`   | outbound  | `{ type: "react_update", message_id, emoji_id, unicode, count }` (emoji_id/unicode: um é null; count = usuários que reagiram com aquele emoji, 0 quando a última foi removida) |
         | `message_embeds_update` | outbound | `{ type: "message_embeds_update", channel_id, message_id, embeds }` (embeds: lista ATUAL de embeds da mensagem, mesma forma do campo `embeds` de `GET /channels/{channel_id}/messages`; metadados apenas, sem `image_data` — a mídia é buscada sob demanda por `GET /embeds/{embed_id}` e `GET /embeds/{embed_id}/video`. Um evento por mensagem, distribuído aos leitores do canal após o crawl em background (criação/edição), após a substituição de embeds na edição (lista vazia quando todos foram removidos) ou quando um embed compartilhado é refetchado por expiração de cache) |
         | `new_notification` | unicast  | `{ type: "new_notification", id, user_id, message_id, message_content }` (id: row de notificação ou UUID efêmero quando a configuração all gera evento sem row; user_id: autor da mensagem; message_content: truncado a 512 caracteres) |
-        | `channel_create` | outbound  | `{ type: "channel_create", channel_id, name, channel_type, position, topic? }` (topic: null para canais category) |
-        | `channel_update` | outbound  | `{ type: "channel_update", channel_id, name, position, topic? }`                               |
+        | `channel_create` | outbound  | `{ type: "channel_create", channel_id, name, channel_type, position, topic?, app? }` (topic: null para canais category) |
+        | `channel_update` | outbound  | `{ type: "channel_update", channel_id, name, position, topic?, app? }`                               |
+        | `app_invalidate` | outbound | `{ type: "app_invalidate", app_installation_id }`. Revoga imediatamente superfícies vivas e invalida payloads locais dessa instalação em disable, remoção, quarantine e substituição de aprovação. Enviado somente aos leitores atuais de um canal app ou de um canal com embed dessa instalação (inclusive plugins sem canal app), antes da exclusão dos canais. Exige payload REST novo antes de reativar; nunca concede disponibilidade. |
         | `channel_delete` | outbound  | `{ type: "channel_delete", channel_id }`                                               |
         | `typing`         | inbound   | `{ type: "typing", channel_id }`                                                        |
         | `typing`         | outbound  | `{ type: "typing", channel_id, user_id, is_typing }`                                    |
@@ -2825,8 +2856,1200 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /apps/{installation_id}/ui/{path}:
+    get:
+      tags: [Apps]
+      summary: Assets públicos estáticos de uma superfície bundled
+      security: []
+      description: |
+        Rota pública porque a WebView isolada não tem sessão. Serve somente arquivos
+        estáticos da pasta ui/ do plugin resolvido pelo provedor de metadados da PR 5;
+        nunca dados por usuário, templates, plugin.toml ou plugin.wasm. Não lê nem
+        emite cookies. Instalação desabilitada, revogada, removida ou sem provedor: 404.
+        Não lista diretórios; rejeita traversal, caminhos absolutos e symlinks.
+        Nada é executado pelo backend. Tipos permitidos: HTML/CSS/JS/JSON, imagens,
+        fontes, texto e módulos Wasm dentro de ui/.
+
+        Headers obrigatórios (§9.1.4):
+        Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self' <origem servida>
+        (origem explícita extraída de APPS_ORIGIN ou BaseURL, nunca do Host/Forwarded
+        da requisição; acrescenta as origens remotas aprovadas; nunca allow-same-origin).
+        X-Content-Type-Options: nosniff
+        Referrer-Policy: no-referrer
+        Cross-Origin-Resource-Policy: cross-origin
+        Access-Control-Allow-Origin: *
+        Access-Control-Allow-Credentials: ausente (mesmo com o CORS global habilitado)
+        ETag: derivado do digest do plugin e do caminho do asset.
+        Cache-Control: public, max-age=0, must-revalidate (revalida o digest em cada uso).
+        Os mesmos headers de isolamento/CORS acompanham respostas 304. UI estática permite
+        a leitura por páginas de origem opaca, inclusive fontes, módulos JS e fetch().
+        Indisponibilidade responde no-store. O restante da API nunca permite Origin: null,
+        mesmo quando CORS_ORIGINS contiver wildcard ou null.
+      parameters:
+        - {name: installation_id, in: path, required: true, schema: {type: string, format: uuid}}
+        - name: path
+          in: path
+          required: true
+          description: Caminho do arquivo dentro de ui/, incluindo subdiretórios.
+          schema: {type: string}
+      responses:
+        '200':
+          description: Asset estático sob sandbox de origem opaca
+          headers:
+            Content-Security-Policy: {schema: {type: string}}
+            X-Content-Type-Options: {schema: {type: string, enum: [nosniff]}}
+            Referrer-Policy: {schema: {type: string, enum: [no-referrer]}}
+            Cross-Origin-Resource-Policy: {schema: {type: string, enum: [cross-origin]}}
+            Access-Control-Allow-Origin: {schema: {type: string, enum: ['*']}}
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+          content:
+            text/html: {schema: {type: string}}
+            application/octet-stream: {schema: {type: string, format: binary}}
+        '206': {description: Intervalo do asset estático}
+        '304': {description: Asset não modificado para o digest/caminho}
+        '404': {description: Instalação desabilitada ou asset inexistente/não permitido}
+  /apps:
+    post:
+      tags:
+      - Apps
+      summary: Instala app
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '201':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppCreated'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAppRequest'
+    get:
+      tags:
+      - Apps
+      summary: Lista instalações ativas
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppList'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: since
+        in: query
+        description: Timestamp created_at do último item da página anterior (ISO 8601).
+        schema:
+          type: string
+          format: date-time
+      - name: last_id
+        in: query
+        description: UUID do último item da página anterior; usado junto com since.
+        schema:
+          type: string
+          format: uuid
+      - name: order
+        in: query
+        schema:
+          type: string
+          enum:
+          - asc
+          - desc
+          default: desc
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 30
+  /apps/{app_id}:
+    parameters:
+    - name: app_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    patch:
+      tags:
+      - Apps
+      summary: Atualiza nome, identidade e capacidades
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInstallation'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAppRequest'
+    delete:
+      tags:
+      - Apps
+      summary: Revoga instalação e remove escopos
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '204':
+          description: Operação concluída
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /apps/{app_id}/token:
+    parameters:
+    - name: app_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - Apps
+      summary: Rotaciona token remoto
+      description: Exige manage_apps. Somente remote; plugin retorna 400. O token antigo deixa de autenticar imediatamente.
+        O novo segredo aparece apenas nesta resposta.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppToken'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /apps/{app_id}/channels/{channel_id}:
+    parameters:
+    - name: app_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: channel_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    put:
+      tags:
+      - Apps
+      summary: Adiciona escopo de canal
+      description: 'Exige manage_apps e read_channel do ator no canal alvo; o dono sempre pode ler. Somente text/voice.
+        A linha de escopo é a ACL de máquina: a instalação passa a acessar o canal sem herdar channels.permissions
+        ou roles do instalador. Operação idempotente.'
+      responses:
+        '204':
+          description: Operação concluída
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+      - Apps
+      summary: Remove escopo de canal
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '204':
+          description: Operação concluída
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /apps/{app_id}/avatar:
+    get:
+      description: 'Público (sem cookie): serve a imagem do avatar do app, como GET /users/{user_id}/avatar. 404 quando
+        o app não tem avatar.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/AppId'
+      responses:
+        '200':
+          content:
+            image/gif: {}
+            image/jpeg: {}
+            image/png: {}
+            image/webp: {}
+          description: Imagem do avatar
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Avatar persistente do app
+      tags:
+      - Apps
+  /app/gateway:
+    get:
+      tags: [Apps]
+      summary: Gateway WSS de eventos duráveis por instalação
+      security:
+        - appBearer: []
+      description: |
+        Upgrade WebSocket com `Authorization: Bearer <token>` remoto ativo.
+        Cookies, parâmetros de URL e subprotocolos não substituem Bearer. Usar
+        WSS em produção, normalmente via proxy TLS; WS é permitido no servidor
+        HTTP local para desenvolvimento. Este gateway não usa o hub humano /ws.
+
+        1. Servidor envia `{"op":"hello","version":1,"heartbeat_interval_ms":30000}`.
+        2. Cliente responde em até 10 s com `{"op":"hello"}` ou
+           `{"op":"hello","resume_after":42}`. O padrão é o último ack durável.
+           resume_after é um checkpoint declarado pelo cliente, entre 0 e last_seq;
+           ele não confirma entregas por si só. Instalações novas começam no presente.
+        3. Servidor incrementa uma época durável, substitui a conexão anterior e
+           envia `{"op":"ready","epoch":2,"cursor":42,"replay_floor":0,"last_seq":45}`.
+           A ativação ocorre no hello válido, e não apenas no upgrade HTTP.
+        4. Cada `dispatch` contém op, epoch e os campos de AppEventDelivery.
+           A ordem é a atribuição por instalação. Há lacunas quando a autorização
+           descarta fatos; elas não indicam perda de um fato autorizado.
+        5. Cliente persiste seus efeitos/checkpoint antes de enviar
+           `{"op":"ack","epoch":2,"delivery_seq":45}`. A confirmação é cumulativa:
+           todos os dispatches recebidos até essa sequência devem ter sido
+           processados. Não pode superar o maior checkpoint declarado/enviado na
+           conexão. Acks antigos/repetidos são idempotentes; época obsoleta é recusada.
+        6. Cliente envia `{"op":"heartbeat","epoch":2}` a cada 30 s; servidor
+           responde `{"op":"heartbeat_ack","epoch":2}`. Sem frames por 90 s,
+           a conexão termina. Frames de entrada têm limite de 4 KiB e 100/s
+           (burst 200). Frames malformados ou controles inválidos encerram o socket.
+
+        Uma nova conexão cerca os acks da antiga no PostgreSQL, inclusive entre
+        processos. Frames já em trânsito podem pertencer à época anterior; o
+        consumidor deve ignorá-los após substituição. Em crash após envio e antes
+        de ack, o mesmo event_id e delivery_seq são reenviados: deduplicar por
+        event_id. Um novo processo/reconexão não depende da memória do registry.
+
+        O buffer é limitado a 32 controles/sequências; não guarda snapshots.
+        O payload é relido e a credencial, a época, as capacidades e o escopo são
+        revalidados antes de enviar. Um consumidor lento é desconectado; seu
+        backlog não confirmado permanece durável até os limites de retenção.
+        Rotação e revogação encerram conexões autenticadas pelo token antigo.
+
+        Tombstones e remoção de conteúdo seguem AppEventTombstone. Exclusão de
+        mensagem substitui created/updated ainda sem ack por IDs e redacted:true.
+        Embeds/previews são obtidos por REST, fora do snapshot.
+
+        Retenção é limitada por idade (padrão 7 dias) e 10000 linhas por instalação,
+        configuráveis no servidor. Snapshots confirmados por todos os destinatários
+        são liberados para poda. Replay abaixo do piso, no hello ou durante o
+        consumo, recebe `{"op":"resync_required","epoch":3,"cursor":0,
+        "replay_floor":40,"last_seq":45}` e a conexão termina. Reconciliar via
+        GET /app/channels/:id/messages; depois reconectar usando o last_seq recebido
+        como checkpoint. Fatos atribuídos depois dele continuam disponíveis para replay.
+      responses:
+        '101':
+          description: |
+            Upgrade concluído. Frames JSON seguem AppGatewayServerFrame e
+            AppGatewayClientFrame; OpenAPI não representa o fluxo WSS como body HTTP.
+        '400':
+          description: Requisição não é um upgrade WebSocket válido.
+        '401':
+          description: Mesmo erro para Bearer ausente, errado, revogado ou rotacionado.
+        '429':
+          description: Limite de upgrades da instalação excedido.
+
+  /app/channels/{channel_id}/messages:
+    parameters:
+    - name: channel_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - Apps
+      summary: Envia mensagem como app
+      description: 'Bearer remoto, send_messages e canal text/voice explicitamente autorizado. Cookie/JWT não autenticam.
+        Token ausente, errado, rotacionado ou revogado retorna o mesmo 401. Snapshot external_author sempre contém
+        source=app, id, name e avatar_url=/apps/<id>/avatar; não aceita override. Attachments e embeds pertencem ao
+        created_by para armazenamento, nunca autoria. Não dispara @everyone. Retry com a mesma external_message_id
+        retorna 200 com mensagem completa, payload ignorado e sem repetir efeitos. A chave é por instalação, não por
+        canal; uma chave de outro canal retorna 403. Limitação: a deduplicação dura somente enquanto a mensagem existir;
+        após exclusão, um retry cria outra mensagem. Chaves retidas estão fora do escopo. multipart/form-data, até
+        110MB de corpo; até 10 arquivos de 100MB, content até 8192 caracteres e até 10 embeds.'
+      responses:
+        '201':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '429':
+          description: 'Token bucket por instalação: 10 requisições/s, burst 20. Retry-After: 1. Além do limite global
+            por IP.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '200':
+          description: Retry idempotente; attachments, embeds e reações atuais
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+      security:
+      - appBearer: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: string
+                external_message_id:
+                  type: string
+                  maxLength: 200
+                reply_to:
+                  type: string
+                  format: uuid
+                embeds:
+                  type: string
+                  description: JSON array de embeds customizados
+                attachments:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+    get:
+      tags:
+      - Apps
+      summary: Lê histórico autorizado
+      description: Exige Bearer remoto, read_messages e canal text/voice no escopo em cada requisição. Inclui attachments,
+        thumbnails, embeds, contagens de reações e user_reactions vazio; não marca mensagens como lidas. Não há eventos
+        nem gateway neste PR.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageListResponse'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '429':
+          description: 'Token bucket por instalação: 10 requisições/s, burst 20. Retry-After: 1. Além do limite global
+            por IP.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - appBearer: []
+      parameters:
+      - name: since
+        in: query
+        description: Timestamp created_at do último item da página anterior (ISO 8601).
+        schema:
+          type: string
+          format: date-time
+      - name: last_id
+        in: query
+        description: UUID do último item da página anterior; usado junto com since.
+        schema:
+          type: string
+          format: uuid
+      - name: order
+        in: query
+        schema:
+          type: string
+          enum:
+          - asc
+          - desc
+          default: desc
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 30
+  /app/channels/{channel_id}/messages/{message_id}:
+    parameters:
+    - name: channel_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: message_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    put:
+      tags:
+      - Apps
+      summary: Edita mensagem própria
+      description: Exige Bearer, send_messages e escopo atual. Somente mensagem desta instalação e deste canal. Embeds
+        omitidos são preservados; [] remove embeds customizados.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '429':
+          description: 'Token bucket por instalação: 10 requisições/s, burst 20. Retry-After: 1. Além do limite global
+            por IP.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppEditRequest'
+      security:
+      - appBearer: []
+    delete:
+      tags:
+      - Apps
+      summary: Exclui mensagem própria
+      description: Exige Bearer, send_messages e escopo atual. Somente mensagem desta instalação e deste canal. Humanos
+        com delete_messages também podem excluí-la pela rota humana.
+      responses:
+        '204':
+          description: Operação concluída
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '429':
+          description: 'Token bucket por instalação: 10 requisições/s, burst 20. Retry-After: 1. Além do limite global
+            por IP.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - appBearer: []
+
+
+  /plugins:
+    get:
+      tags:
+      - Apps
+      summary: Lista plugins descobertos e erros de validação
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginCatalog'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+  /plugins/rescan:
+    post:
+      tags:
+      - Apps
+      summary: Descobre pastas e pacotes sem instanciar módulos
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginCatalog'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+  /plugins/{id}/preview:
+    post:
+      tags:
+      - Apps
+      summary: Gera consentimento assinado sem habilitar o plugin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginPreview'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+      parameters:
+      - &id001
+        $ref: '#/components/parameters/PluginId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PluginOptions'
+      description: Preview vincula ator, digest de toda a pasta, revisão, settings, grants, origens, canais, escopos
+        e memória. Setting channel entra como escopo visível a aprovar; exige read_channel. Consentimento expira em
+        15 minutos.
+  /plugins/{id}/enable:
+    post:
+      tags:
+      - Apps
+      summary: Aprova consentimento e habilita ou reaprova plugin
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInstallation'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+      parameters:
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PluginOptions'
+      description: Envie a mesma seleção do preview junto de consent e expires_at. Alteração de digest, revisão, política
+        ou seleção exige novo preview (409). Persiste grants/settings/scopes, chama os hooks da PR 18 e on_enable.
+        Falhas fazem cleanup; efeitos já confirmados não são revertidos.
+  /plugins/{id}:
+    patch:
+      tags:
+      - Apps
+      summary: Atualiza settings e memória de plugin habilitado
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInstallation'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+      parameters:
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PluginPatch'
+      description: Preserva grants existentes. Settings são parciais. Se mudar escopos ou origens, exige novo preview
+        para a seleção efetiva e seus consent/expires_at. Outras mudanças de settings e redução/ajuste de memória
+        dentro do pedido aprovado não precisam de novo consentimento.
+  /plugins/{id}/disable:
+    post:
+      tags:
+      - Apps
+      summary: Executa on_disable e remove grants, backlog e canais app
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: Plugin desabilitado; canais, escopos e grants removidos.
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+      parameters:
+      - *id001
+      description: Callback limitado por deadline. Mesmo se falhar (422), cleanup desativa o plugin, revoga grants/scopes/backlog
+        e remove canais. Embeds históricos ficam inertes.
+  /plugins/{id}/trigger:
+    post:
+      tags:
+      - Apps
+      summary: Invoca on_trigger; on_event não está disponível nesta rodada
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginResult'
+        '400':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '401':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '403':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '404':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '409':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '413':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '422':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+        '429':
+          description: Erro RFC 7807; sem concessão implícita de grants.
+      parameters:
+      - *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Entrada JSON do plugin, até 64 KiB.
+      description: Até um inline embed por message.send, apenas superfície embed própria. Três falhas consecutivas
+        colocam em quarentena persistente. Digest novo exige reaprovação; com hot reload sem expansão de permissões/origens/escopos,
+        aplica na fronteira de invocação. Host responses podem retornar HTTP 200 com ok=false.
+
+  /interactions:
+    post:
+      tags:
+      - Apps
+      summary: Executar botão ou ação de usuário
+      description: Valida leitura, plugin habilitado e seletor existente. on_interaction
+        recebe identidades verificadas. Botões com opens não usam esta rota. Prazo padrão
+        de 3 s, com limites por usuário e instalação.
+      security:
+      - cookieAuth: []
+      responses:
+        '202':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInteractionAccepted'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppInteraction'
+  /apps/{installation_id}/launch:
+    post:
+      tags:
+      - Apps
+      summary: Emitir ticket de lançamento
+      description: 'Ticket opaco de uso único, válido por 60 s. Vinculado a usuário,
+        instalação, superfície, canal e mensagem/convite opcionais. Cliente entrega
+        somente no fragmento #papo_ticket, nunca query ou sessão Papo.'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppLaunchResult'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppLaunch'
+  /apps/{installation_id}/session:
+    post:
+      tags:
+      - Apps
+      summary: Trocar ticket por sessão UI
+      description: CORS *, sem credenciais; ignora cookies. Consumo atômico do ticket.
+        Token opaco, armazenado como SHA-256. Inatividade de 30 min e máximo absoluto
+        de 8 h; somente RPC válido estende a inatividade.
+      security: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppUISession'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppTicket'
+    options:
+      summary: Preflight da ponte confinada
+      security: []
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: CORS *, métodos POST/OPTIONS e headers Content-Type/Authorization;
+            sem credenciais.
+  /apps/{installation_id}/rpc:
+    post:
+      tags:
+      - Apps
+      summary: Chamar somente o plugin da sessão
+      description: 'CORS *, sem credenciais. Bearer UI com vínculo restrito. Revalida
+        ACL, estado, digest e geração em cada chamada. on_ui_call recebe user_id verificado,
+        channel_id, session_id, method, params e convite aceito opcional. Disable/app_invalidate
+        ou alteração de ACL revogam tokens; inválidos retornam 401. Polling padrão do
+        SDK: 1500 ms, configurável.'
+      security:
+      - appUIBearer: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginResult'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppRPC'
+    options:
+      summary: Preflight da ponte confinada
+      security: []
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: CORS *, métodos POST/OPTIONS e headers Content-Type/Authorization;
+            sem credenciais.
+  /notifications/{id}/accept:
+    post:
+      tags:
+      - Apps
+      summary: Aceitar convite do app
+      description: Somente destinatário. Decisão atômica e idempotente; convite expirado
+        não pode ser aceito. Aceitação retorna contexto para abrir o canal e pedir launch,
+        sem emitir token automaticamente.
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInvite'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+  /notifications/{id}/decline:
+    post:
+      tags:
+      - Apps
+      summary: Recusar convite do app
+      description: Somente destinatário. Decisão atômica e idempotente; convite expirado
+        não pode ser aceito. Aceitação retorna contexto para abrir o canal e pedir launch,
+        sem emitir token automaticamente.
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInvite'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+  /apps/{installation_id}/user-settings:
+    patch:
+      tags:
+      - Apps
+      summary: Silenciar convites de um plugin
+      description: ''
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: Preferência salva
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppUserSettings'
+
 components:
   securitySchemes:
+    appUIBearer:
+      type: http
+      scheme: bearer
+      description: Token opaco confinado de sessão UI; nunca JWT ou segredo remoto.
+    appBearer:
+      type: http
+      scheme: bearer
+      description: Token remoto de app; cookies e JWT de usuários não são aceitos. Tokens UI usam outro esquema confinado.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -2834,6 +4057,20 @@ components:
       description: JWT em cookie HttpOnly (Path=/, Secure, SameSite=Strict)
 
   parameters:
+    PluginId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z0-9][a-z0-9._-]{0,99}$'
+    AppId:
+      name: app_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     UserId:
       name: user_id
       in: path
@@ -3545,9 +4782,71 @@ components:
         role_count:
           type: integer
 
+    AppChannel:
+      type: object
+      description: |
+        Superfície que ocupa o canal inteiro; não é aba e não tem conversa.
+        Declarada no plugin e criada no enable; disable/remove apaga o canal.
+        Renomear, mover e ajustar ACL usa os endpoints normais com manage_channels.
+        Exclusão manual e mudança de tipo são recusadas com detalhe em português
+        apontando às configurações do app. Upgrade reconcilia por surface_id e
+        preserva ID, nome, posição e ACL. Não exige capacidade nem escopo próprio;
+        escopos de envio/leitura continuam limitados a text/voice.
+
+        Regras de isolamento obrigatórias (§9.1):
+        1. WebView exclusiva e perfil não persistente, sem compartilhar cookies,
+           armazenamento ou cache com contextos que acessam a API Papo.
+        2. Não injetar sessão, JWT ou cookies. Só o ticket de launch de uso único vai no fragmento da URL.
+        3. Não registrar bridge, IPC, callbacks nativos ou scripts injetados.
+        4. Remote exige HTTPS, origem aprovada e host diferente de BASE_URL;
+           validação de embed mais rejeição a localhost/redes privadas/reservadas,
+           inclusive DNS. Backend nunca faz proxy da superfície remota. Bundled
+           aceita somente /apps/<instalação ativa>/ui/ com sandbox allow-scripts
+           allow-forms, sem allow-same-origin, default-src 'self' mais a origem servida
+           configurada e origens aprovadas. Assets estáticos usam CORP cross-origin e
+           CORS * sem credenciais; somente essa rota permite leitura pela origem opaca. Essa é a única exceção de URL Papo
+           aceita pelo cliente, somente quando recebida num payload autorizado.
+           Somente session/rpc da ponte admitem origem opaca, sem credenciais; demais rotas da API recusam null. Origem opaca não tem localStorage/IndexedDB.
+        5. Travar navegação à origem, inclusive redirects/scripts. Negar popups,
+           downloads, file/esquemas customizados e câmera/microfone/localização/
+           clipboard. Links fora da origem seguem o prompt de confirmação existente.
+        6. Falha de framing, timeout, indisponibilidade ou falta de isolamento usa
+           fallback. Remoto oferece Abrir no navegador com confirmação; bundled
+           informa dispositivo não suportado. Nunca enfraquecer o isolamento.
+
+        Canal app ocupa o painel abaixo do cabeçalho, sem timeline/composer/toggle.
+        Frames usam size/load/display/poster conforme AppFrameEmbed: inline ativa na
+        mensagem; overlay abre popup no chat apenas ao clique. Não há header extra
+        de provedor no frame. Há apenas uma superfície ativa entre apps e players
+        rich-link; a mais recentemente ativada/visível vence.
+        Sair do canal destrói a página; cabeçalho e gestos ficam fora do WebView.
+        Instalação desabilitada mantém embeds históricos inertes, sem entry executável.
+        channel_create/channel_update/channel_delete são publicados pelo chamador
+        após commit, apenas a leitores; exclusão usa a ACL capturada antes de apagar.
+      required: [app_installation_id, surface_id, available, avatar_url]
+      properties:
+        user_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppUserAction'
+        app_installation_id: {type: string, format: uuid}
+        surface_id: {type: string}
+        source:
+          type: string
+          enum: [bundled, remote]
+          description: Origem da superfície do canal app (frames têm schema próprio).
+        entry:
+          type: string
+          description: URL aprovada ou /apps/<id>/ui/...; ausente quando indisponível.
+        avatar_url: {type: string}
+        available: {type: boolean}
     Channel:
       type: object
       properties:
+        app:
+          allOf:
+            - {$ref: '#/components/schemas/AppChannel'}
+          description: Presente somente em canais app e para leitores autorizados.
         id:
           type: string
           format: uuid
@@ -3555,7 +4854,7 @@ components:
           type: string
         type:
           type: string
-          enum: [text, category, voice]
+          enum: [text, category, voice, app]
         position:
           type: integer
           description: Posição do canal na visualização (1-based)
@@ -3626,12 +4925,34 @@ components:
     Notification:
       type: object
       properties:
+        kind:
+          type: string
+          enum:
+          - message
+          - app_invite
+        app_installation_id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        invite_status:
+          type: string
+          enum:
+          - pending
+          - accepted
+          - declined
+          nullable: true
         id:
           type: string
           format: uuid
         message_id:
           type: string
           format: uuid
+          nullable: true
         channel_id:
           type: string
           format: uuid
@@ -3786,6 +5107,12 @@ components:
       type: object
       nullable: true
       properties:
+        components:
+          $ref: '#/components/schemas/AppComponents'
+        app_installation_id:
+          type: string
+          format: uuid
+          description: Presente somente em mensagens de app (campo aditivo e omitido nas demais).
         id:
           type: string
           format: uuid
@@ -3825,9 +5152,9 @@ components:
           allOf:
             - $ref: '#/components/schemas/ExternalAuthor'
           description: >
-            Identidade de exibição da mensagem de webhook (nunca um usuário do
-            Papo): nickname/avatar do webhook ou autoria temporária informada
-            no envio. Null em mensagens humanas.
+            Identidade de exibição de webhook ou app (nunca um usuário do Papo).
+            Apps gravam source=app e o snapshot da instalação; somente webhooks
+            aceitam autoria temporária no envio. Null em mensagens humanas.
         attachments:
           type: array
           items:
@@ -3923,9 +5250,9 @@ components:
     ExternalAuthor:
       type: object
       description: >
-        Identidade de exibição de mensagem de webhook. Não é um usuário do
-        Papo e nunca determina autorização. avatar_url pode ser URL absoluta
-        externa ou caminho do backend (avatar persistente do webhook).
+        Identidade de exibição de mensagem de webhook ou app. Não é um usuário
+        do Papo e nunca determina autorização. avatar_url pode ser URL absoluta
+        externa ou caminho do backend (/webhooks/{uuid}/avatar ou /apps/{uuid}/avatar).
       properties:
         source:
           type: string
@@ -3954,6 +5281,12 @@ components:
         inclui channel_id, edited_at, reply_to, attachments, embeds,
         reactions ou user_reactions.
       properties:
+        app_installation_id:
+          type: string
+          format: uuid
+          description: Presente somente em mensagens de app (campo aditivo e omitido nas demais).
+        external_author:
+          $ref: '#/components/schemas/ExternalAuthor'
         id:
           type: string
           format: uuid
@@ -4233,25 +5566,108 @@ components:
             (pending quando a moderação está desativada).
 
     Embed:
+      oneOf:
+        - {$ref: '#/components/schemas/NativeEmbed'}
+        - {$ref: '#/components/schemas/AppFrameEmbed'}
+      discriminator:
+        propertyName: source_type
+        mapping:
+          link: '#/components/schemas/NativeEmbed'
+          custom: '#/components/schemas/NativeEmbed'
+          app: '#/components/schemas/AppFrameEmbed'
+    AppSurfaceSize:
+      type: object
+      additionalProperties: false
+      required: [width, height]
+      description: >
+        Dimensões autorais obrigatórias, inteiros positivos. O serviço aplica
+        APP_EMBED_MAX_WIDTH e APP_EMBED_MAX_HEIGHT (padrão 560 e 420).
+        O cliente reduz proporcionalmente à largura da timeline. Em overlay,
+        size define somente o card; o popup usa a área do chat, sem esse limite autoral.
+      properties:
+        width: {type: integer, minimum: 1}
+        height: {type: integer, minimum: 1}
+    AppSurfaceReference:
+      type: object
+      additionalProperties: false
+      required: [app_installation_id, id]
+      properties:
+        app_installation_id: {type: string, format: uuid}
+        id: {type: string}
+    AppFrameEmbed:
+      type: object
+      additionalProperties: false
+      required: [id, source_type, surface, size, load, display]
+      description: |
+        Um frame por mensagem, declarado pelo plugin proprietário. Sem header de
+        provedor: não contém nome, avatar, provider, author ou metadados de card nativo.
+        A autoria continua na mensagem, fora do frame. Só há title se enviado pelo app.
+        Entry é resolvida contra a superfície declarada e origens aprovadas atuais.
+        Disable/remove torna o frame inerte omitindo entry e poster; referência,
+        size/load/display persistidos e title permanecem. Um teto reduzido também
+        impede lançar frames históricos que agora excedem o máximo.
+
+        load=click (padrão) mostra poster ou card neutro com title até o clique,
+        sem botão de play de vídeo. load=visible ativa ao entrar na área visível.
+        display=inline (padrão) ativa na mensagem com clipping; sair da tela ou
+        trocar de canal destrói a superfície. display=overlay exige load=click:
+        abre popup na área do chat, com margens das pills; size só dimensiona o card.
+        O cliente desenha a barra com identidade do autor, title opcional e fechar;
+        Esc, botão de fechar e gesto de voltar fecham; trocar de canal destrói.
+        Em todos os modos uma única superfície vive entre apps e rich-link players;
+        a mais recentemente ativada/visível vence e as outras mostram o poster.
+        Aplicam-se os requisitos de isolamento e fallback documentados em AppChannel.
+      oneOf:
+        - properties:
+            display: {enum: [inline]}
+        - properties:
+            display: {enum: [overlay]}
+            load: {enum: [click]}
+      properties:
+        id: {type: string, format: uuid}
+        source_type: {type: string, enum: [app]}
+        surface: {$ref: '#/components/schemas/AppSurfaceReference'}
+        entry:
+          type: string
+          description: Destino aprovado; ausente quando inerte.
+        size: {$ref: '#/components/schemas/AppSurfaceSize'}
+        load: {type: string, enum: [click, visible], default: click}
+        display: {type: string, enum: [inline, overlay], default: inline}
+        poster:
+          type: string
+          description: URL /apps/<id>/ui/... da imagem declarada; ausente quando não definida ou inerte.
+        title: {type: string, maxLength: 256}
+    AppEmbedSurfaceDeclaration:
+      type: object
+      required: [id, kind, source, entry, size]
+      description: >
+        Metadados fornecidos pela PR 5 a partir de plugin.toml. Poster opcional deve
+        ser imagem existente confinada a ui/, sem traversal/symlinks. Formatos
+        PNG/JPEG/GIF/WebP/SVG são validados. frame_width/frame_height foram substituídos
+        por size. Load padrão click; display padrão inline; overlay+visible é rejeitado.
+      oneOf:
+        - properties:
+            display: {enum: [inline]}
+        - required: [display]
+          properties:
+            display: {enum: [overlay]}
+            load: {enum: [click]}
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [embed]}
+        source: {type: string, enum: [bundled, remote]}
+        entry: {type: string}
+        size: {$ref: '#/components/schemas/AppSurfaceSize'}
+        load: {type: string, enum: [click, visible], default: click}
+        display: {type: string, enum: [inline, overlay], default: inline}
+        poster: {type: string, example: ui/poster.png}
+    NativeEmbed:
       type: object
       description: >
-        Embed de mensagem. source_type: 'link' (preview automático de link,
-        obtido por fetch e reutilizado pelo cache por URL normalizada) ou
-        'custom' (embed enviado pela mensagem, dono do próprio registro).
-        fetch_method: 'opengraph' (parser OpenGraph), 'oembed' (provedor
-        allowlistado) ou 'manual' (embed customizado).
-
-        A mídia é referenciada internamente: a imagem da thumbnail é servida
-        por GET /embeds/{embed_id} (image_data) e o vídeo por
-        GET /embeds/{embed_id}/video (relay autenticado com suporte a Range).
-
-        Player: `video` tem duas formas. Vídeo direto (og:video ou embed
-        customizado) traz `mime_type` de vídeo e é reproduzido pelo relay. Para
-        o provedor de iframe allowlistado (YouTube), `video.url` é a página de
-        embed `https://www.youtube.com/embed/<id>` e `mime_type` não vem: o
-        cliente renderiza iframe somente quando a URL casa exatamente com esse
-        padrão (derivado por padrão hardcoded do backend a partir da URL do
-        link, nunca do campo `html` da resposta oEmbed) e não chama o relay.
+        Embeds nativos existentes: link (preview automático reutilizado por cache)
+        ou custom (card com título, descrição, imagem e demais campos nativos).
+        Continuam disponíveis a apps sem alteração no formato ou comportamento.
+        Mídias seguem o fluxo de armazenamento e relay autenticado já existente.
       properties:
         id:
           type: string
@@ -4453,19 +5869,24 @@ components:
     EmbedInput:
       type: object
       description: >
-        Embed customizado enviado na criação/edição de mensagem. O cliente não
-        controla source_type, fetch_method, cache_key, timestamps nem a
-        referência interna da mídia: o backend fixa source_type='custom' e
-        fetch_method='manual' e nunca sobrescreve um embed gerado pelo crawler.
-
-        Limites (contados por caracteres Unicode): 10 embeds por mensagem
-        (somando os automáticos), título 256, descrição 4192, 25 fields por
-        embed, nome de field 256, valor 1024, autor 256, footer 2048, soma do
-        texto de todos os embeds da mensagem 6000, URL 2048. Cor fora de
-        #RRGGBB, esquema de URL não permitido e MIME type não suportado → 400.
+        Cards customizados mantêm o formato e comportamento existentes, inclusive
+        para apps. Para source_type=app, somente app_surface_id e title opcional
+        (máximo 256 caracteres Unicode) são aceitos além do discriminador.
+        É obrigatório send_messages + post_app_embeds, com um frame por mensagem
+        em canal text/voice escopado. Size/load/display/poster vêm da superfície
+        declarada, nunca de overrides na mensagem. Campos de card nativo como
+        imagem, thumbnail, descrição, author, fields, footer e cor são recusados
+        no frame; use source_type=custom para esses cards. Envio interno pela PR 5
+        usa CreatePluginMessage, sem token de plugin. Humanos/webhooks não podem
+        postar frames. Os limites existentes de texto e número de embeds continuam.
       properties:
+        source_type: {type: string, enum: [custom, app], default: custom}
+        app_surface_id:
+          type: string
+          description: Obrigatório somente para app; ID da superfície embed do próprio plugin.
         title:
           type: string
+          maxLength: 256
         description:
           type: string
         url:
@@ -4575,6 +5996,8 @@ components:
         manage_channels:
           type: boolean
         manage_roles:
+          type: boolean
+        manage_apps:
           type: boolean
         manage_webhooks:
           type: boolean
@@ -4718,6 +6141,12 @@ components:
     SearchResult:
       type: object
       properties:
+        app_installation_id:
+          type: string
+          format: uuid
+          description: Presente somente em mensagens de app (campo aditivo e omitido nas demais).
+        external_author:
+          $ref: '#/components/schemas/ExternalAuthor'
         type:
           type: string
           example: message
@@ -4781,3 +6210,778 @@ components:
         has_more:
           type: boolean
           description: Indica se existe próxima página (cursor since + last_id)
+    AppCapabilities:
+      type: object
+      properties:
+        send_invites:
+          type: boolean
+          default: false
+        private_storage:
+          type: boolean
+          default: false
+          description: Permite KV persistente privado no namespace da instalação plugin.
+        send_messages:
+          type: boolean
+          default: false
+        read_messages:
+          type: boolean
+          default: false
+        post_app_embeds:
+          type: boolean
+          default: false
+    AppInstallation:
+      type: object
+      description: Identidade do servidor. created_by é histórico e propriedade de armazenamento; perder roles ou ser
+        banido não desativa o app. Hash nunca é exposto.
+      properties:
+        storage_quota:
+          $ref: '#/components/schemas/AppStorageQuota'
+        storage_quota_overrides:
+          $ref: '#/components/schemas/AppStorageQuotaOverride'
+        id:
+          type: string
+          format: uuid
+        plugin_digest:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        version:
+          type: string
+        state:
+          type: string
+          enum: [enabled, disabled, quarantined, removed]
+          description: Estado operacional de instalações plugin.
+        settings:
+          type: object
+        approved_origins:
+          type: array
+          items: {type: string}
+        approved_permissions:
+          type: array
+          items: {type: string}
+        explicit_scopes:
+          type: array
+          items: {type: string, format: uuid}
+        max_memory_mb:
+          type: integer
+          minimum: 1
+          maximum: 256
+        revision:
+          type: integer
+          format: int64
+        transition_pending:
+          type: boolean
+          description: Transição incompleta; UI e invocações externas ficam indisponíveis.
+        app_key:
+          type: string
+        kind:
+          type: string
+          enum:
+          - remote
+          - plugin
+        name:
+          type: string
+        display_name:
+          type: string
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+        capabilities:
+          $ref: '#/components/schemas/AppCapabilities'
+    AppToken:
+      type: object
+      properties:
+        token:
+          type: string
+          description: 32 bytes aleatórios em hex; retornado uma única vez.
+    AppCreated:
+      allOf:
+      - $ref: '#/components/schemas/AppInstallation'
+      - $ref: '#/components/schemas/AppToken'
+    AppList:
+      type: object
+      properties:
+        apps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppInstallation'
+        has_more:
+          type: boolean
+    CreateAppRequest:
+      type: object
+      required:
+      - app_key
+      - kind
+      - name
+      properties:
+        app_key:
+          type: string
+          minLength: 1
+          maxLength: 200
+        kind:
+          type: string
+          enum:
+          - remote
+
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        capabilities:
+          $ref: '#/components/schemas/AppCapabilities'
+    UpdateAppRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        display_name:
+          type: string
+          maxLength: 100
+          description: Vazio remove o nickname; omitido preserva.
+        avatar:
+          type: string
+          description: Base64 de GIF/JPEG/PNG/WEBP até 2MB e 512px. Vazio remove; omitido preserva.
+        avatar_format:
+          type: string
+        capabilities:
+          $ref: '#/components/schemas/AppCapabilities'
+    AppEditRequest:
+      $ref: '#/components/schemas/UpdateMessageRequest'
+
+    AppEventSnapshot:
+      type: object
+      description: |
+        Snapshot de message.created. A autoria é human, webhook ou app.
+        external_author é a identidade externa capturada; reply_to pode apontar
+        para uma mensagem já excluída. Nenhum embed ou preview é incluído.
+      required: [channel_id, message_id, sender_kind, sender_id, content, external_author, reply_to, created_at, attachments]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        sender_kind:
+          type: string
+          enum: [human, webhook, app]
+        sender_id:
+          type: string
+          format: uuid
+          nullable: true
+        external_author:
+          allOf:
+            - $ref: '#/components/schemas/ExternalAuthor'
+          nullable: true
+        content:
+          type: string
+          nullable: true
+        reply_to:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppEventAttachment'
+    AppEventAttachment:
+      type: object
+      description: Metadados imutáveis; o ID usa o caminho normal de mídia e pode deixar de existir.
+      additionalProperties: false
+      required: [id, mime_type, original_file_name, size_bytes, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        mime_type:
+          type: string
+        original_file_name:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    AppEventTombstone:
+      type: object
+      description: |
+        IDs apenas. channel.deleted contém somente channel_id; message.deleted
+        também contém message_id. Um snapshot created/updated redigido contém
+        ambos e redacted:true, preservando o tipo e event_id originais.
+      additionalProperties: false
+      required: [channel_id]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        redacted:
+          type: boolean
+          enum: [true]
+    AppEventMessageUpdate:
+      type: object
+      required: [channel_id, message_id, content, edited_at]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          nullable: true
+        edited_at:
+          type: string
+          format: date-time
+    AppEventReaction:
+      type: object
+      description: Exatamente um de emoji_id e unicode é não nulo. Sem conteúdo de mensagem.
+      required: [channel_id, message_id, user_id, emoji_id, unicode]
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        emoji_id:
+          type: string
+          format: uuid
+          nullable: true
+        unicode:
+          type: string
+          nullable: true
+    AppEventDelivery:
+      type: object
+      description: |
+        Envelope durável do dispatch. delivery_seq é local à instalação e pode
+        conter lacunas por autorização/retenção. event_id identifica o fato entre
+        tentativas; nenhum UUID serve como cursor. O frame WSS acrescenta op e epoch.
+      required: [event_id, type, channel_id, payload, created_at, delivery_seq]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [message.created, message.updated, message.deleted, reaction.added, reaction.removed, channel.deleted]
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        delivery_seq:
+          type: integer
+          format: int64
+          minimum: 1
+        payload:
+          anyOf:
+            - $ref: '#/components/schemas/AppEventSnapshot'
+            - $ref: '#/components/schemas/AppEventMessageUpdate'
+            - $ref: '#/components/schemas/AppEventReaction'
+            - $ref: '#/components/schemas/AppEventTombstone'
+
+    AppGatewayClientFrame:
+      type: object
+      description: hello inicia a conexão; ack/heartbeat exigem a epoch de ready.
+      required: [op]
+      properties:
+        op:
+          type: string
+          enum: [hello, ack, heartbeat]
+        resume_after:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Apenas em hello; ausente usa o último ack durável.
+        epoch:
+          type: integer
+          format: int64
+          minimum: 1
+        delivery_seq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Obrigatório em ack; maior prefixo já processado nesta época.
+    AppGatewayServerFrame:
+      type: object
+      description: |
+        Discriminador op. hello inclui version e heartbeat_interval_ms; ready e
+        resync_required incluem epoch/cursor/replay_floor/last_seq; heartbeat_ack
+        inclui epoch. dispatch acrescenta os campos de AppEventDelivery no mesmo
+        objeto (event_id, type, channel_id, message_id, payload, created_at, delivery_seq).
+      required: [op]
+      properties:
+        op:
+          type: string
+          enum: [hello, ready, dispatch, heartbeat_ack, resync_required]
+        version:
+          type: integer
+          enum: [1]
+        heartbeat_interval_ms:
+          type: integer
+          example: 30000
+        epoch:
+          type: integer
+          format: int64
+        cursor:
+          type: integer
+          format: int64
+        replay_floor:
+          type: integer
+          format: int64
+        last_seq:
+          type: integer
+          format: int64
+        event_id:
+          type: string
+          format: uuid
+        delivery_seq:
+          type: integer
+          format: int64
+        type:
+          type: string
+          enum: [message.created, message.updated, message.deleted, reaction.added, reaction.removed, channel.deleted]
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        payload:
+          anyOf:
+            - $ref: '#/components/schemas/AppEventSnapshot'
+            - $ref: '#/components/schemas/AppEventMessageUpdate'
+            - $ref: '#/components/schemas/AppEventReaction'
+            - $ref: '#/components/schemas/AppEventTombstone'
+
+    PluginOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        storage_quota:
+          $ref: '#/components/schemas/AppStorageQuotaOverride'
+        settings: {type: object, additionalProperties: true}
+        permissions:
+          type: array
+          items: {type: string, enum: [send_messages, read_messages, post_app_embeds, private_storage]}
+        scopes:
+          type: array
+          items: {type: string, format: uuid}
+        max_memory_mb: {type: integer, minimum: 1, maximum: 256}
+        consent: {type: string, minLength: 64, maxLength: 64}
+        expires_at: {type: integer, format: int64}
+    PluginPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        storage_quota:
+          $ref: '#/components/schemas/AppStorageQuotaOverride'
+        settings: {type: object, additionalProperties: true}
+        max_memory_mb: {type: integer, minimum: 1, maximum: 256}
+        consent: {type: string, minLength: 64, maxLength: 64}
+        expires_at: {type: integer, format: int64}
+    PluginPreview:
+      type: object
+      required: [id, digest, version, name, settings, requested_permissions, permissions, blocked_permissions, scopes, explicit_scopes, origins, surfaces, max_memory_mb, revision, state, expires_at, consent]
+      properties:
+        storage_quota:
+          $ref: '#/components/schemas/AppStorageQuota'
+        storage_quota_overrides:
+          $ref: '#/components/schemas/AppStorageQuotaOverride'
+        id: {type: string}
+        digest: {type: string, pattern: '^[0-9a-f]{64}$'}
+        version: {type: string}
+        name: {type: string}
+        settings: {type: object}
+        requested_permissions: {type: array, items: {type: string}}
+        permissions: {type: array, items: {type: string}}
+        blocked_permissions: {type: array, items: {type: string}}
+        scopes: {type: array, items: {type: string, format: uuid}}
+        explicit_scopes: {type: array, items: {type: string, format: uuid}}
+        origins: {type: array, items: {type: string}}
+        surfaces:
+          type: array
+          items:
+            type: object
+            required: [id, kind, source, entry]
+            properties:
+              id: {type: string}
+              kind: {type: string, enum: [channel, embed]}
+              source: {type: string, enum: [bundled, remote]}
+              entry: {type: string}
+              default_name: {type: string}
+              frame_width: {type: integer}
+              frame_height: {type: integer}
+        max_memory_mb: {type: integer}
+        revision: {type: integer, format: int64}
+        state: {type: string, enum: [discovered, enabled, disabled, quarantined, removed]}
+        expires_at: {type: integer, format: int64}
+        consent: {type: string}
+    PluginCatalog:
+      type: object
+      properties:
+        plugins:
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: {type: string}
+              digest: {type: string}
+              error: {type: string}
+              manifest:
+                type: object
+                description: Metadados plugin.toml v1 validados sem executar código. Schema completo em docs/wasm-plugins.md.
+              installation:
+                $ref: '#/components/schemas/AppInstallation'
+    PluginResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: {type: boolean}
+        result: {}
+        error:
+          type: object
+          properties:
+            code: {type: string}
+
+    AppButton:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - label
+      - style
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        label:
+          type: string
+          minLength: 1
+          maxLength: 80
+        style:
+          type: string
+          enum:
+          - primary
+          - secondary
+          - danger
+        disabled:
+          type: boolean
+          default: false
+        opens:
+          type: string
+          description: ID de superfície embed própria. Abre diretamente, sem on_interaction.
+    AppComponents:
+      type: array
+      maxItems: 2
+      items:
+        type: array
+        minItems: 1
+        maxItems: 5
+        items:
+          $ref: '#/components/schemas/AppButton'
+      description: Até dez botões, IDs únicos por mensagem. Desabilitados se o plugin
+        estiver indisponível. message e message_edit carregam components de forma aditiva;
+        [] em edição remove os botões.
+    AppUserAction:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - label
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        icon:
+          type: string
+          description: URL pública de imagem validada em ui/.
+    AppInteraction:
+      type: object
+      additionalProperties: false
+      required:
+      - app_installation_id
+      - channel_id
+      - kind
+      properties:
+        app_installation_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - button
+          - user_action
+        message_id:
+          type: string
+          format: uuid
+        component_id:
+          type: string
+        action_id:
+          type: string
+        target_user_id:
+          type: string
+          format: uuid
+    AppLaunch:
+      type: object
+      additionalProperties: false
+      required:
+      - surface_id
+      - channel_id
+      properties:
+        surface_id:
+          type: string
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        invite_id:
+          type: string
+          format: uuid
+    AppTicket:
+      type: object
+      additionalProperties: false
+      required:
+      - ticket
+      properties:
+        ticket:
+          type: string
+          writeOnly: true
+    AppRPC:
+      type: object
+      additionalProperties: false
+      required:
+      - method
+      - params
+      properties:
+        method:
+          type: string
+          minLength: 1
+          maxLength: 100
+        params:
+          description: JSON de até 32 KiB; não concede identidade.
+    AppInvite:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        id:
+          type: string
+          format: uuid
+        app_installation_id:
+          type: string
+          format: uuid
+        inviter_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        surface_id:
+          type: string
+        text:
+          type: string
+          maxLength: 500
+        data: {}
+        status:
+          type: string
+          enum:
+          - pending
+          - accepted
+          - declined
+        expires_at:
+          type: string
+          format: date-time
+    AppUserSettings:
+      type: object
+      additionalProperties: false
+      required:
+      - invites_muted
+      properties:
+        invites_muted:
+          type: boolean
+    AppLaunchResult:
+      type: object
+      additionalProperties: false
+      required: [ticket, expires_at, surface]
+      properties:
+        ticket:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        surface:
+          $ref: '#/components/schemas/AppChannel'
+        display:
+          type: string
+          enum: [inline, overlay, '']
+        load:
+          type: string
+        size:
+          type: object
+          properties:
+            width:
+              type: integer
+            height:
+              type: integer
+        poster:
+          type: string
+    AppUISession:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        token:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+        absolute_expires_at:
+          type: string
+          format: date-time
+    AppInteractionAccepted:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        interaction_id:
+          type: string
+          format: uuid
+
+    AppUserProfile:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - username
+      - display_name
+      - avatar_url
+      description: Projeção pública mínima. Sem e-mail, IP, roles, status, hashes, banner
+        ou outros dados privados. display_name usa nickname, com fallback para username.
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+          pattern: ^/users/[0-9a-f-]{36}/avatar$
+          description: Caminho relativo ao servidor; endpoint público com CORS * sem credenciais
+            e CORP cross-origin.
+    AppStorageQuotaOverride:
+      type: object
+      additionalProperties: false
+      properties:
+        max_keys:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        max_total_bytes:
+          type: integer
+          minimum: 0
+          maximum: 1073741824
+        max_value_bytes:
+          type: integer
+          minimum: 0
+          maximum: 65536
+      description: 'Override administrativo parcial: ausente conserva o override atual;
+        zero volta ao default global. Não é metadado controlado pelo plugin. Não remove
+        dados existentes; escritas respeitam a quota atual sob lock SQL.'
+    AppStorageQuota:
+      type: object
+      required:
+      - max_keys
+      - max_total_bytes
+      - max_value_bytes
+      properties:
+        max_keys:
+          type: integer
+          default: 256
+        max_total_bytes:
+          type: integer
+          default: 1048576
+        max_value_bytes:
+          type: integer
+          default: 16384
+      description: 'Limites efetivos: defaults PLUGINS_STORAGE_MAX_KEYS/MAX_TOTAL_BYTES/MAX_VALUE_BYTES
+        mais overrides positivos. Bytes contam chave UTF-8 e JSONB normalizado; valor
+        não inclui chave. O transporte ABI mantém seu teto independente.'
+    AppUsersResolve:
+      type: object
+      additionalProperties: false
+      required:
+      - method
+      - ids
+      properties:
+        method:
+          type: string
+          enum:
+          - users.resolve
+        ids:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+      description: Host call via papo_host_v1.call, não uma rota REST. Instalação plugin
+        habilitada. Omite negados, banidos e inexistentes sem distingui-los; inclui apenas
+        leitores de pelo menos um canal app próprio ou escopo atual. IDs duplicados são
+        deduplicados, preservando ordem. Limite padrão 120 chamadas/min por instalação,
+        PLUGINS_USERS_RESOLVE_PER_PLUGIN.
+    AppUsersResolveResult:
+      type: array
+      maxItems: 50
+      items:
+        $ref: '#/components/schemas/AppUserProfile'
+    AppHumanCallbackProfiles:
+      type: object
+      required:
+      - user
+      properties:
+        user:
+          $ref: '#/components/schemas/AppUserProfile'
+        target_user:
+          $ref: '#/components/schemas/AppUserProfile'
+      description: 'Campos aditivos de input em on_interaction/on_ui_call: user vem do
+        usuário autenticado, nunca de params ou request. target_user só existe em user_action.
+        user_id/target_user_id legados permanecem. Não são aceitos como identidade na
+        API de interações.'

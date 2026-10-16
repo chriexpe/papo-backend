@@ -1143,6 +1143,7 @@ func GetEmbed(ctx context.Context, embedID, userID string) (models.Embed, error)
 		embed.AuthorFilePath = &path
 	}
 
+	decorateAppEmbed(ctx, &embed)
 	return embed, nil
 }
 

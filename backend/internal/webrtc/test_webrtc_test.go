@@ -942,7 +942,6 @@ func TestFanoutDistributesFullStreamToAllSubscribers(t *testing.T) {
 	case pubTrack := <-trackCh:
 		// fanout: reader único da track do publisher.
 		fanout := newFanout(pubTrack)
-		fanout.start()
 		defer fanout.destroy()
 
 		// 2 subscribers (forwarders). Não iniciamos o run() — lemos direto do
@@ -951,6 +950,8 @@ func TestFanoutDistributesFullStreamToAllSubscribers(t *testing.T) {
 		fwd2 := newForwarder(&slot{}, nil, "audio", fanout)
 		fanout.subscribe(fwd1)
 		fanout.subscribe(fwd2)
+		// Inscreve ambos antes de consumir o primeiro pacote, inclusive sob -race.
+		fanout.start()
 
 		// Cada subscriber deve receber os 20 pacotes, na ordem, com o mesmo SSN.
 		// (Antes da correção, os 2 forwarders competiam na ReadRTP e cada um

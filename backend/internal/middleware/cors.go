@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
@@ -12,11 +13,27 @@ import (
 // desenvolvimento local). AllowCredentials é necessário porque a
 // autenticação usa o cookie Auth (HttpOnly) em requisições cross-origin.
 func CORS(origins []string) echo.MiddlewareFunc {
-	return echoMiddleware.CORSWithConfig(echoMiddleware.CORSConfig{
+	cors := echoMiddleware.CORSWithConfig(echoMiddleware.CORSConfig{
 		AllowOrigins:     origins,
 		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
 		AllowHeaders:     []string{echo.HeaderContentType, echo.HeaderAuthorization, echo.HeaderXRequestID},
 		ExposeHeaders:    []string{echo.HeaderXRequestID},
 		AllowCredentials: true,
 	})
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		handler := cors(next)
+		return func(c echo.Context) error {
+			if strings.HasPrefix(c.Path(), "/apps/") && (strings.HasSuffix(c.Path(), "/session") || strings.HasSuffix(c.Path(), "/rpc")) {
+				return next(c)
+			}
+			if c.Request().Header.Get(echo.HeaderOrigin) == "null" {
+				// Nunca refletir a origem opaca, nem com wildcard ou configuração explícita.
+				if c.Request().Method == http.MethodOptions {
+					return c.NoContent(http.StatusNoContent)
+				}
+				return next(c)
+			}
+			return handler(c)
+		}
+	}
 }

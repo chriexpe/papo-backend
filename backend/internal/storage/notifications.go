@@ -174,9 +174,9 @@ func ListUserNotificationsOrdered(ctx context.Context, userID string, since *tim
 	}
 	fetch := limit + 1
 
-	query := "SELECT n.id, n.message_id, m.channel_id, m.author_id, m.content, n.read, n.created_at " +
+	query := "SELECT n.id, COALESCE(n.message_id::text,''), COALESCE(m.channel_id::text,n.payload->>'channel_id',''), m.author_id, COALESCE(m.content,n.payload->>'text'), n.read, n.created_at,n.kind,n.app_installation_id,n.payload,n.expires_at,n.invite_status " +
 		"FROM notifications n " +
-		"JOIN messages m ON m.id = n.message_id " +
+		"LEFT JOIN messages m ON m.id = n.message_id " +
 		"WHERE n.user_id = $1"
 	args := []any{userID}
 	op, order := "<", "DESC"
@@ -218,6 +218,7 @@ func ListUserNotificationsOrdered(ctx context.Context, userID string, since *tim
 			&content,
 			&summary.Read,
 			&summary.CreatedAt,
+			&summary.Kind, &summary.AppInstallationID, &summary.Payload, &summary.ExpiresAt, &summary.InviteStatus,
 		); err != nil {
 			return nil, fmt.Errorf("falha ao ler notificação: %w", err)
 		}

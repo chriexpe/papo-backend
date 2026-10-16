@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"papo/internal/appgateway"
 	"papo/internal/config"
 	"papo/internal/middleware"
+	"papo/internal/plugins"
+	"papo/internal/services"
 
 	"github.com/labstack/echo/v4"
 )
@@ -340,4 +343,38 @@ func RegisterWebhookRoutes(e *echo.Echo, cfg *config.Config) {
 	e.DELETE("/webhooks/:webhook_id/messages/:message_id", func(c echo.Context) error {
 		return DeleteWebhookMessageHandler(cfg.BaseURL, c)
 	})
+}
+
+// RegisterAppRoutes registra gestão humana e execução remota com ACL própria.
+func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) *appgateway.Registry {
+	e.GET("/apps/:app_id/ui/*", func(c echo.Context) error { return AppUIHandler(cfg.BaseURL, c) })
+	gateway := appgateway.NewRegistry()
+	management := e.Group("/apps", middleware.JWTMiddleware, middleware.RequireManageApps())
+	management.POST("", func(c echo.Context) error { return CreateAppHandler(cfg.BaseURL, c) })
+	management.GET("", func(c echo.Context) error { return ListAppsHandler(cfg.BaseURL, c) })
+	management.PATCH("/:app_id", func(c echo.Context) error { return UpdateAppHandler(cfg.BaseURL, c) }, remoteManagementOnly)
+	management.DELETE("/:app_id", func(c echo.Context) error { return DeleteAppHandler(cfg.BaseURL, c) }, remoteManagementOnly)
+	management.POST("/:app_id/token", func(c echo.Context) error { return RotateAppTokenHandler(cfg.BaseURL, c) })
+	management.PUT("/:app_id/channels/:channel_id", func(c echo.Context) error { return AddAppScopeHandler(cfg.BaseURL, c) }, remoteManagementOnly)
+	management.DELETE("/:app_id/channels/:channel_id", func(c echo.Context) error { return RemoveAppScopeHandler(cfg.BaseURL, c) }, remoteManagementOnly)
+	e.GET("/apps/:app_id/avatar", func(c echo.Context) error { return GetAppAvatarHandler(cfg.BaseURL, c) })
+	execution := e.Group("/app", appAuthentication(cfg.BaseURL))
+	execution.GET("/gateway", func(c echo.Context) error { return AppGatewayHandler(c, gateway) })
+	execution.POST("/channels/:channel_id/messages", func(c echo.Context) error { return ExecuteAppHandler(cfg.BaseURL, c) }, middleware.BodyLimit(middleware.MaxUploadBodySize, nil))
+	execution.GET("/channels/:channel_id/messages", func(c echo.Context) error { return ListAppMessagesHandler(cfg.BaseURL, c) })
+	execution.PUT("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return EditAppMessageHandler(cfg.BaseURL, c) })
+	execution.DELETE("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return DeleteAppMessageHandler(cfg.BaseURL, c) })
+	return gateway
+}
+
+// RegisterPluginRoutes expõe somente descoberta e consentimento; não há upload de artefatos.
+func RegisterPluginRoutes(e *echo.Echo, baseURL string, m *services.PluginManager) {
+	g := e.Group("/plugins", middleware.JWTMiddleware, middleware.RequireManageApps())
+	g.GET("", func(c echo.Context) error { return PluginHandler(baseURL, m, "list", c) })
+	g.POST("/rescan", func(c echo.Context) error { return PluginHandler(baseURL, m, "rescan", c) })
+	for _, action := range []string{"preview", "enable", "disable", "trigger"} {
+		a := action
+		g.POST("/:id/"+a, func(c echo.Context) error { return PluginHandler(baseURL, m, a, c) }, middleware.BodyLimit(plugins.MaxPayload, nil))
+	}
+	g.PATCH("/:id", func(c echo.Context) error { return PluginHandler(baseURL, m, "patch", c) }, middleware.BodyLimit(plugins.MaxPayload, nil))
 }

@@ -429,6 +429,11 @@ func UpdateAvatarHandler(baseURL string, c echo.Context) error {
 // consiga buscar sem cookie de sessão. Outros mídia (attachments, banners)
 // continuam autenticadas em GET /media/:sha_hash.
 func GetUserAvatarHandler(baseURL string, c echo.Context) error {
+	// Avatar já é público; esta política permite imagens e fetch sem credenciais no sandbox opaco.
+	c.Response().Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+	c.Response().Header().Del("Access-Control-Allow-Credentials")
+	c.Response().Header().Set("X-Content-Type-Options", "nosniff")
 	userID := c.Param("user_id")
 	if _, err := uuid.Parse(userID); err != nil {
 		return utils.SendProblem(c, baseURL, http.StatusNotFound,

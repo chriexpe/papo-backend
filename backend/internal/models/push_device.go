@@ -21,10 +21,11 @@ type PushDevice struct {
 // Contém apenas o mínimo necessário para o papo-push construir a mensagem
 // de push (título, corpo e IDs para o app abrir a conversa).
 type PushJobPayload struct {
-	Type           string  `json:"type"`
-	NotificationID *string `json:"notification_id,omitempty"`
-	MessageID      string  `json:"message_id"`
-	ChannelID      string  `json:"channel_id"`
-	Author         string  `json:"author"`
-	Preview        string  `json:"preview"`
+	AppInstallationID string  `json:"app_installation_id,omitempty"`
+	Type              string  `json:"type"`
+	NotificationID    *string `json:"notification_id,omitempty"`
+	MessageID         string  `json:"message_id"`
+	ChannelID         string  `json:"channel_id"`
+	Author            string  `json:"author"`
+	Preview           string  `json:"preview"`
 }

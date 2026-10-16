@@ -1,0 +1,22 @@
+manifest_version = 1
+id = "bluemap"
+name = "BlueMap"
+version = "1.0.0"
+min_papo_api = 1
+
+[permissions]
+request = []
+
+[runtime]
+max_memory_mb = 16
+
+[[settings]]
+key = "map_url"
+type = "https_url"
+required = true
+
+[[surfaces]]
+id = "map"
+kind = "channel"
+default_name = "bluemap"
+entry_url_setting = "map_url"
