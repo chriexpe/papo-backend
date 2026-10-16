@@ -17,6 +17,7 @@ type Message struct {
 	// WebhookID/ExternalAuthor identificam mensagens de webhook (NULL em
 	// mensagens humanas). ExternalMessageID é a chave de idempotência do
 	// envio e jamais é serializada para clientes.
+	AppInstallationID *string         `db:"app_installation_id" json:"app_installation_id,omitempty"`
 	WebhookID         *string         `db:"webhook_id" json:"webhook_id,omitempty"`
 	ExternalAuthor    *ExternalAuthor `json:"external_author,omitempty"`
 	ExternalMessageID *string         `json:"-"`

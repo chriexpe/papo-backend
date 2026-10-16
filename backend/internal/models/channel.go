@@ -19,6 +19,7 @@ type ChannelPermission struct {
 // Topic é o tópico do canal (máx 512 caracteres), válido apenas para canais
 // de texto; canais category têm Topic NULL.
 type Channel struct {
+	App         *AppChannel                  `json:"app,omitempty"`
 	ID          string                       `db:"id" json:"id"`
 	Name        string                       `db:"name" json:"name"`
 	Permissions map[string]ChannelPermission `db:"permissions" json:"permissions"`
@@ -39,11 +40,13 @@ type ChannelPermissionEntry struct {
 // ChannelLastMessage é a última mensagem de um canal, como exibida na
 // listagem de canais.
 type ChannelLastMessage struct {
-	ID             string    `json:"id"`
-	Content        *string   `json:"content"`
-	AuthorID       *string   `json:"author_id"`
-	AuthorUsername *string   `json:"author_username"`
-	CreatedAt      time.Time `json:"created_at"`
+	AppInstallationID *string         `json:"app_installation_id,omitempty"`
+	ExternalAuthor    *ExternalAuthor `json:"external_author,omitempty"`
+	ID                string          `json:"id"`
+	Content           *string         `json:"content"`
+	AuthorID          *string         `json:"author_id"`
+	AuthorUsername    *string         `json:"author_username"`
+	CreatedAt         time.Time       `json:"created_at"`
 }
 
 // ChannelSummary é a visão de canal exposta pela API (GET /channels e
@@ -54,6 +57,7 @@ type ChannelLastMessage struct {
 // notificação do usuário no canal (channel_user_settings; ausência de row
 // equivale ao padrão "only_mentions").
 type ChannelSummary struct {
+	App                  *AppChannel              `json:"app,omitempty"`
 	ID                   string                   `json:"id"`
 	Name                 string                   `json:"name"`
 	Type                 string                   `json:"type"`

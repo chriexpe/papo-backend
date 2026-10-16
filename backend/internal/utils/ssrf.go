@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -234,4 +235,28 @@ func readLimitedBody(r io.Reader, limit int64) ([]byte, error) {
 			return nil, fmt.Errorf("falha ao ler o corpo da resposta: %w", err)
 		}
 	}
+}
+
+// ValidatePublicHost rejeita nomes locais e IPs privados/reservados, inclusive via DNS.
+// A validação não baixa conteúdo nem substitui a verificação no cliente ao navegar.
+func ValidatePublicHost(ctx context.Context, host string) error {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || !strings.Contains(host, ".") && net.ParseIP(host) == nil {
+		return ErrSSRFBlocked
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return checkSSRFSafeIP(ip)
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+	if err != nil || len(ips) == 0 {
+		return ErrSSRFBlocked
+	}
+	for _, ip := range ips {
+		if err := checkSSRFSafeIP(ip.IP); err != nil {
+			return err
+		}
+	}
+	return nil
 }
