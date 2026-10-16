@@ -74,7 +74,9 @@ entry = "ui/index.html"
 id = "result"
 kind = "embed"
 entry = "ui/result.html"
-frame = { width = 480, height = 320 }
+size = { width = 480, height = 320 }
+load = "click"
+display = "overlay"
 ```
 
 IDs usam `[a-z0-9][a-z0-9._-]{0,99}` e coincidem com a pasta. Versão SemVer;
@@ -87,7 +89,7 @@ Cada superfície escolhe exatamente uma fonte: `entry` dentro de `ui/`,
 `entry_url` HTTPS de origem declarada, ou `entry_url_setting` referindo um setting
 `https_url`. Origens desses settings entram explicitamente no consentimento.
 As regras de URL/DNS/host são as da #18; não há proxy remoto. Canal exige
-`default_name`; embed tem frame padrão 480×320 e máximo 1920×1080.
+`default_name`; embed exige size positivo e segue os tetos da C4 (padrão 560×420), load e display. O campo frame antigo é aceito como alias de size.
 
 ## Configuração
 
@@ -106,7 +108,7 @@ Limites em bytes, todos lidos no startup; valores inválidos impedem inicializa�
 | `PLUGINS_ASSET_READ_BYTES` | 32768, pode reduzir; nunca ultrapassa 32 KiB |
 | `PLUGINS_DEFAULT_MEMORY_MB` | 16 |
 | `PLUGINS_MAX_MEMORY_MB` | 64 (teto absoluto do adaptador: 256) |
-| `PLUGINS_ALLOWED_PERMISSIONS` | send_messages,read_messages,post_app_embeds,private_storage |
+| `PLUGINS_ALLOWED_PERMISSIONS` | send_messages,read_messages,post_app_embeds,private_storage,send_invites |
 | `PLUGINS_BLOCKED_PERMISSIONS` | vazio |
 
 Allowlist ausente usa os quatro nomes conhecidos; allowlist explicitamente vazia
@@ -188,8 +190,8 @@ fechamento. Scratch da importação pertence ao guest. Se capacity for insuficie
 retorna tamanho necessário sem escrever; **efeitos já podem ter ocorrido**: nunca
 repetir automaticamente uma escrita. Entrada/saída JSON UTF-8, resposta com `ok` booleano.
 
-Envelope: `{"type":"on_enable|on_disable|on_trigger","settings":{...},"input":...}`.
-Somente esses três callbacks nesta rodada; **on_event é um commit posterior**.
+Envelope: `{"type":"on_enable|on_disable|on_trigger|on_interaction|on_ui_call","settings":{...},"input":...}`.
+Interações e RPC usam os dois novos callbacks; **on_event continua fora desta rodada**.
 O dispatcher entrega somente a integrações remote enquanto isso, sem outro schema.
 
 Host calls (identidade sempre implícita, checks atuais de capacidade e escopo):

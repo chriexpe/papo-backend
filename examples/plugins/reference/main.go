@@ -11,6 +11,12 @@ func init() { sdk.Handler = handle }
 
 // handle usa um template externo e posta somente a própria superfície declarada.
 func handle(e sdk.Event) (json.RawMessage, error) {
+	if e.Type == "on_interaction" {
+		return interaction(e)
+	}
+	if e.Type == "on_ui_call" {
+		return uiCall(e)
+	}
 	if e.Type != "on_trigger" {
 		return nil, nil
 	}
@@ -36,7 +42,7 @@ func handle(e sdk.Event) (json.RawMessage, error) {
 	if !ok || channel == "" {
 		return nil, errors.New("target_channel obrigatório")
 	}
-	return sdk.Call(map[string]any{"method": "message.send", "channel_id": channel, "content": string(text), "embeds": []any{map[string]any{"source_type": "app", "app_surface_id": "result", "title": "Resultado do plugin"}}})
+	return sdk.Call(map[string]any{"method": "message.send", "channel_id": channel, "content": string(text), "components": gameButtons(), "embeds": []any{map[string]any{"source_type": "app", "app_surface_id": "result", "title": "Resultado do plugin"}}})
 }
 
 // main permanece vazio: este módulo é um reactor WASI.

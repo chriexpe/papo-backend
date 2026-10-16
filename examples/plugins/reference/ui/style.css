@@ -1,3 +1,4 @@
 :root{font:18px system-ui;color-scheme:light dark}main{max-width:48rem;margin:2rem auto;padding:1rem}h1{font-size:1.6rem;line-height:1.2}p{line-height:1.6}
 
 @font-face{font-family:"Papo Fixture";src:url("fixture.ttf") format("truetype")}body{--fixture-css:loaded}.fixture-font{font-family:"Papo Fixture"}img{vertical-align:middle;margin-right:.5rem}
+#board{display:grid;grid-template-columns:repeat(3,64px);gap:6px;margin:1rem 0}#board button{width:64px;height:64px;font-size:2rem}#latency{display:block;font-size:.85rem}

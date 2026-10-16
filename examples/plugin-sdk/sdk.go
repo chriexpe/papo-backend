@@ -21,7 +21,7 @@ type Event struct {
 	Input    json.RawMessage `json:"input"`
 }
 
-// Handler trata on_enable, on_disable e on_trigger; estado durável usa KV do host.
+// Handler trata lifecycle, trigger, on_interaction e on_ui_call; estado durável usa KV do host.
 var Handler func(Event) (json.RawMessage, error)
 var scratch [65536]byte
 
@@ -39,7 +39,7 @@ func Call(req any) (json.RawMessage, error) {
 	}
 	n := hostCall(pointer(data), uint32(len(data)), pointer(scratch[:]), uint32(len(scratch)))
 	if n > uint32(len(scratch)) {
-		return nil, errors.New("host response excedida")
+		return nil, errors.New("resposta do host excedida")
 	}
 	return append([]byte(nil), scratch[:n]...), nil
 }
@@ -83,4 +83,50 @@ func invoke(p, n uint32) uint64 {
 	}
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(uintptr(ptr))), len(out)), out)
 	return uint64(ptr)<<32 | uint64(len(out))
+}
+
+// Interaction contém somente identidades verificadas pelo servidor.
+type Interaction struct {
+	InteractionID string `json:"interaction_id"`
+	Kind          string `json:"kind"`
+	UserID        string `json:"user_id"`
+	ChannelID     string `json:"channel_id"`
+	MessageID     string `json:"message_id,omitempty"`
+	ComponentID   string `json:"component_id,omitempty"`
+	ActionID      string `json:"action_id,omitempty"`
+	TargetUserID  string `json:"target_user_id,omitempty"`
+}
+
+// Invite é o contexto autorizado após aceitação do destinatário.
+type Invite struct {
+	ID        string          `json:"id"`
+	InviterID string          `json:"inviter_id"`
+	Data      json.RawMessage `json:"data"`
+}
+
+// UICall nunca aceita identidade fornecida pela página.
+type UICall struct {
+	UserID    string          `json:"user_id"`
+	ChannelID string          `json:"channel_id"`
+	SessionID string          `json:"session_id"`
+	Method    string          `json:"method"`
+	Params    json.RawMessage `json:"params"`
+	Invite    *Invite         `json:"invite,omitempty"`
+}
+
+// InviteSend é permitido somente em on_interaction ou on_ui_call humanos.
+type InviteSend struct {
+	Method   string `json:"method"`
+	ToUserID string `json:"to_user_id"`
+	Text     string `json:"text"`
+	Data     any    `json:"data"`
+}
+
+// Button é um controle nativo em uma das duas linhas de components.
+type Button struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Style    string `json:"style"`
+	Disabled bool   `json:"disabled"`
+	Opens    string `json:"opens,omitempty"`
 }

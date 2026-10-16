@@ -14,12 +14,10 @@ através da interface `services.PluginSurfaceSource`:
 Resolve(context.Context, installationID string) (services.PluginSurfaceBundle, error)
 ```
 
-O resultado contém `Directory`, `Digest`, `Enabled`, `ApprovedOrigins` e `Surfaces`.
+O resultado contém `Directory`, `Digest`, `Enabled`, `ApprovedOrigins`, `Surfaces` e `UserActions`.
 `SetPluginSurfaceSource` registra esse provedor no startup. Sem provedor, metadados
 indisponíveis ou `Enabled=false`, a UI responde 404 e embeds históricos ficam inertes.
-Nesta etapa, os testes fornecem pastas fixture com `plugin.wasm` e `ui/`. O tipo
-legado `wasm` continua sendo o registro sem token até a migration de plugins da PR 5
-introduzir `plugin`; `remote`/`view` não são aceitos como plugins pelo provedor.
+A migration 021 consolidou os tipos em `remote` e `plugin`. Somente `plugin` é aceito pelo provedor.
 
 Os hooks são funções de pacote, sem publisher ou struct de serviço:
 
@@ -167,3 +165,12 @@ A 019 foi corrigida em lugar de acrescentar uma segunda migration sobre o modelo
 rejeitado. Bancos descartáveis devem ser recriados. Quem já aplicou a 019 antiga deve
 fazer rollback usando a revisão antiga antes de trocar para esta versão. Não executar
 um Down novo contra o schema da antiga `channel_app_views`.
+
+## Interações e ponte HTTP confinada (§10)
+
+A UI não recebe credenciais Papo ou bridge nativa. O cliente autenticado obtém um
+ ticket de lançamento e o entrega somente no fragmento `#papo_ticket=...`.
+As únicas rotas adicionais com CORS `*`, sem credenciais, são `session` e `rpc`;
+nenhuma delas aceita cookies como autenticação. As demais rotas da API continuam
+recusando origem opaca. O contrato e a revogação estão em
+[app-interactions.md](app-interactions.md).

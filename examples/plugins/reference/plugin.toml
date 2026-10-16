@@ -5,7 +5,7 @@ version = "1.0.0"
 min_papo_api = 1
 
 [permissions]
-request = ["send_messages", "post_app_embeds", "private_storage"]
+request = ["send_messages", "post_app_embeds", "private_storage", "send_invites"]
 
 [runtime]
 max_memory_mb = 16
@@ -25,4 +25,11 @@ entry = "ui/index.html"
 id = "result"
 kind = "embed"
 entry = "ui/result.html"
-frame = { width = 480, height = 320 }
+size = { width = 480, height = 320 }
+load = "click"
+display = "overlay"
+
+[[user_actions]]
+id = "convidar"
+label = "Convidar para jogar"
+icon = "ui/image.svg"

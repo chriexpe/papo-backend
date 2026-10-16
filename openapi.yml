@@ -3737,12 +3737,315 @@ paths:
         colocam em quarentena persistente. Digest novo exige reaprovação; com hot reload sem expansão de permissões/origens/escopos,
         aplica na fronteira de invocação. Host responses podem retornar HTTP 200 com ok=false.
 
+  /interactions:
+    post:
+      tags:
+      - Apps
+      summary: Executar botão ou ação de usuário
+      description: Valida leitura, plugin habilitado e seletor existente. on_interaction
+        recebe identidades verificadas. Botões com opens não usam esta rota. Prazo padrão
+        de 3 s, com limites por usuário e instalação.
+      security:
+      - cookieAuth: []
+      responses:
+        '202':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInteractionAccepted'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppInteraction'
+  /apps/{installation_id}/launch:
+    post:
+      tags:
+      - Apps
+      summary: Emitir ticket de lançamento
+      description: 'Ticket opaco de uso único, válido por 60 s. Vinculado a usuário,
+        instalação, superfície, canal e mensagem/convite opcionais. Cliente entrega
+        somente no fragmento #papo_ticket, nunca query ou sessão Papo.'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppLaunchResult'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppLaunch'
+  /apps/{installation_id}/session:
+    post:
+      tags:
+      - Apps
+      summary: Trocar ticket por sessão UI
+      description: CORS *, sem credenciais; ignora cookies. Consumo atômico do ticket.
+        Token opaco, armazenado como SHA-256. Inatividade de 30 min e máximo absoluto
+        de 8 h; somente RPC válido estende a inatividade.
+      security: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppUISession'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppTicket'
+    options:
+      summary: Preflight da ponte confinada
+      security: []
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: CORS *, métodos POST/OPTIONS e headers Content-Type/Authorization;
+            sem credenciais.
+  /apps/{installation_id}/rpc:
+    post:
+      tags:
+      - Apps
+      summary: Chamar somente o plugin da sessão
+      description: 'CORS *, sem credenciais. Bearer UI com vínculo restrito. Revalida
+        ACL, estado, digest e geração em cada chamada. on_ui_call recebe user_id verificado,
+        channel_id, session_id, method, params e convite aceito opcional. Disable/app_invalidate
+        ou alteração de ACL revogam tokens; inválidos retornam 401. Polling padrão do
+        SDK: 1500 ms, configurável.'
+      security:
+      - appUIBearer: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginResult'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppRPC'
+    options:
+      summary: Preflight da ponte confinada
+      security: []
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: CORS *, métodos POST/OPTIONS e headers Content-Type/Authorization;
+            sem credenciais.
+  /notifications/{id}/accept:
+    post:
+      tags:
+      - Apps
+      summary: Aceitar convite do app
+      description: Somente destinatário. Decisão atômica e idempotente; convite expirado
+        não pode ser aceito. Aceitação retorna contexto para abrir o canal e pedir launch,
+        sem emitir token automaticamente.
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInvite'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+  /notifications/{id}/decline:
+    post:
+      tags:
+      - Apps
+      summary: Recusar convite do app
+      description: Somente destinatário. Decisão atômica e idempotente; convite expirado
+        não pode ser aceito. Aceitação retorna contexto para abrir o canal e pedir launch,
+        sem emitir token automaticamente.
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInvite'
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+  /apps/{installation_id}/user-settings:
+    patch:
+      tags:
+      - Apps
+      summary: Silenciar convites de um plugin
+      description: ''
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: Preferência salva
+        '400':
+          description: Parâmetros inválidos
+        '401':
+          description: Autenticação ou sessão inválida
+        '403':
+          description: Acesso negado
+        '404':
+          description: Recurso não encontrado
+        '429':
+          description: 'Limite excedido; Retry-After: 60'
+        '504':
+          description: O app não respondeu a tempo
+      parameters:
+      - name: installation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppUserSettings'
+
 components:
   securitySchemes:
+    appUIBearer:
+      type: http
+      scheme: bearer
+      description: Token opaco confinado de sessão UI; nunca JWT ou segredo remoto.
     appBearer:
       type: http
       scheme: bearer
-      description: Token remoto de app; cookies e JWT de usuários não são aceitos. Plugins não possuem token.
+      description: Token remoto de app; cookies e JWT de usuários não são aceitos. Tokens UI usam outro esquema confinado.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -4499,7 +4802,7 @@ components:
            configurada e origens aprovadas. Assets estáticos usam CORP cross-origin e
            CORS * sem credenciais; somente essa rota permite leitura pela origem opaca. Essa é a única exceção de URL Papo
            aceita pelo cliente, somente quando recebida num payload autorizado.
-           API nunca aceita null no CORS. Origem opaca não tem localStorage/IndexedDB.
+           Somente session/rpc da ponte admitem origem opaca, sem credenciais; demais rotas da API recusam null. Origem opaca não tem localStorage/IndexedDB.
         5. Travar navegação à origem, inclusive redirects/scripts. Negar popups,
            downloads, file/esquemas customizados e câmera/microfone/localização/
            clipboard. Links fora da origem seguem o prompt de confirmação existente.
@@ -4518,6 +4821,10 @@ components:
         após commit, apenas a leitores; exclusão usa a ACL capturada antes de apagar.
       required: [app_installation_id, surface_id, available, avatar_url]
       properties:
+        user_actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppUserAction'
         app_installation_id: {type: string, format: uuid}
         surface_id: {type: string}
         source:
@@ -4614,6 +4921,27 @@ components:
     Notification:
       type: object
       properties:
+        kind:
+          type: string
+          enum:
+          - message
+          - app_invite
+        app_installation_id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        invite_status:
+          type: string
+          enum:
+          - pending
+          - accepted
+          - declined
+          nullable: true
         id:
           type: string
           format: uuid
@@ -4774,6 +5102,8 @@ components:
       type: object
       nullable: true
       properties:
+        components:
+          $ref: '#/components/schemas/AppComponents'
         app_installation_id:
           type: string
           format: uuid
@@ -5878,6 +6208,9 @@ components:
     AppCapabilities:
       type: object
       properties:
+        send_invites:
+          type: boolean
+          default: false
         private_storage:
           type: boolean
           default: false
@@ -6319,3 +6652,201 @@ components:
           type: object
           properties:
             code: {type: string}
+
+    AppButton:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - label
+      - style
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        label:
+          type: string
+          minLength: 1
+          maxLength: 80
+        style:
+          type: string
+          enum:
+          - primary
+          - secondary
+          - danger
+        disabled:
+          type: boolean
+          default: false
+        opens:
+          type: string
+          description: ID de superfície embed própria. Abre diretamente, sem on_interaction.
+    AppComponents:
+      type: array
+      maxItems: 2
+      items:
+        type: array
+        minItems: 1
+        maxItems: 5
+        items:
+          $ref: '#/components/schemas/AppButton'
+      description: Até dez botões, IDs únicos por mensagem. Desabilitados se o plugin
+        estiver indisponível. message e message_edit carregam components de forma aditiva;
+        [] em edição remove os botões.
+    AppUserAction:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - label
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        icon:
+          type: string
+          description: URL pública de imagem validada em ui/.
+    AppInteraction:
+      type: object
+      additionalProperties: false
+      required:
+      - app_installation_id
+      - channel_id
+      - kind
+      properties:
+        app_installation_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - button
+          - user_action
+        message_id:
+          type: string
+          format: uuid
+        component_id:
+          type: string
+        action_id:
+          type: string
+        target_user_id:
+          type: string
+          format: uuid
+    AppLaunch:
+      type: object
+      additionalProperties: false
+      required:
+      - surface_id
+      - channel_id
+      properties:
+        surface_id:
+          type: string
+        channel_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+        invite_id:
+          type: string
+          format: uuid
+    AppTicket:
+      type: object
+      additionalProperties: false
+      required:
+      - ticket
+      properties:
+        ticket:
+          type: string
+          writeOnly: true
+    AppRPC:
+      type: object
+      additionalProperties: false
+      required:
+      - method
+      - params
+      properties:
+        method:
+          type: string
+          minLength: 1
+          maxLength: 100
+        params:
+          description: JSON de até 32 KiB; não concede identidade.
+    AppInvite:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        id:
+          type: string
+          format: uuid
+        app_installation_id:
+          type: string
+          format: uuid
+        inviter_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        surface_id:
+          type: string
+        text:
+          type: string
+          maxLength: 500
+        data: {}
+        status:
+          type: string
+          enum:
+          - pending
+          - accepted
+          - declined
+        expires_at:
+          type: string
+          format: date-time
+    AppUserSettings:
+      type: object
+      additionalProperties: false
+      required:
+      - invites_muted
+      properties:
+        invites_muted:
+          type: boolean
+    AppLaunchResult:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        ticket:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    AppUISession:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        token:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+        absolute_expires_at:
+          type: string
+          format: date-time
+    AppInteractionAccepted:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        interaction_id:
+          type: string
+          format: uuid

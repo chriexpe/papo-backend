@@ -112,7 +112,7 @@ def main():
             assert message["app_installation_id"] == installed["reference"]["id"]
             assert len(message["embeds"]) == 1
             embed = message["embeds"][0]
-            assert embed["source_type"] == "app" and embed["app"]["surface_id"] == "result" and embed["app"]["available"]
+            assert embed["source_type"] == "app" and embed["surface"]["id"] == "result" and embed["entry"]
             print("PASS: reference trigger reads template and posts own inline embed")
             ui = base + "/apps/" + installed["reference"]["id"] + "/ui/index.html"
             headers = subprocess.check_output(["curl", "-fsS", "-D", "-", "-o", str(Path(work) / "ui.html"), ui], text=True)
@@ -152,6 +152,74 @@ def main():
                     assert response.headers.get("Access-Control-Allow-Credentials") is None
                     assert response.headers["Cross-Origin-Resource-Policy"] == "cross-origin"
             print("PASS: both pages and module/image/font/fetch JSON assets with Origin:null; 200 and 304")
+            # Duas sessões humanas distintas percorrem convite e uma partida autoritativa.
+            owner_cookie = cookie
+            player_name = "player" + uuid.uuid4().hex[:8]
+            _, player, _ = request("POST", "/auth/register", {"username": player_name, "password": "SmokeLocal!12345"})
+            _, _, login_headers = request("POST", "/auth/login", {"username": player_name, "password": "SmokeLocal!12345"})
+            player_cookie = login_headers["Set-Cookie"].split(";", 1)[0]
+            app_id = installed["reference"]["id"]
+            app_channel = next(c for c in apps if c["app"]["app_installation_id"] == app_id)
+            assert app_channel["app"]["user_actions"][0]["id"] == "convidar"
+            status, _, _ = request("POST", "/interactions", {
+                "app_installation_id": app_id, "channel_id": app_channel["id"],
+                "kind": "user_action", "action_id": "convidar", "target_user_id": player["id"],
+            })
+            assert status == 202
+            cookie = player_cookie
+            _, notifications, _ = request("GET", f"/users/{player['id']}/notifications")
+            invite = next(n for n in notifications["notifications"] if n["kind"] == "app_invite")
+            assert invite["message_id"] is None
+            _, accepted, _ = request("POST", f"/notifications/{invite['id']}/accept")
+            assert accepted["channel_id"] == app_channel["id"]
+
+            def bridge(path, body, token=None):
+                headers = {"Content-Type": "application/json", "Origin": "null"}
+                if token:
+                    headers["Authorization"] = "Bearer " + token
+                req = urllib.request.Request(base + f"/apps/{app_id}/" + path, data=json.dumps(body).encode(), headers=headers, method="POST")
+                with urllib.request.urlopen(req) as response:
+                    assert response.headers["Access-Control-Allow-Origin"] == "*"
+                    assert response.headers.get("Access-Control-Allow-Credentials") is None
+                    return json.load(response)
+
+            def open_session(invite_id=None):
+                selection = {"surface_id": "home", "channel_id": app_channel["id"]}
+                if invite_id:
+                    selection["invite_id"] = invite_id
+                _, ticket, _ = request("POST", f"/apps/{app_id}/launch", selection)
+                return bridge("session", {"ticket": ticket["ticket"]})["token"]
+
+            player_token = open_session(invite["id"])
+            cookie = owner_cookie
+            owner_token = open_session()
+            def rpc(token, method, params=None):
+                result = bridge("rpc", {"method": method, "params": params or {}}, token)
+                assert result["ok"], result
+                return result["result"]
+            assert rpc(player_token, "identity")["user_id"] == player["id"]
+            assert rpc(owner_token, "game.state")["game"]["revision"] == 0
+            started = time.perf_counter()
+            moved = rpc(owner_token, "game.move", {"cell": 0, "revision": 0})
+            acknowledged_ms = (time.perf_counter() - started) * 1000
+            assert moved["game"]["board"][0] == "X"
+            # Observador na próxima rodada do polling padrão, sem SSE ou socket do jogo.
+            time.sleep(max(0, 1.5 - (time.perf_counter() - started)))
+            seen = rpc(player_token, "game.state")
+            observed_ms = (time.perf_counter() - started) * 1000
+            assert seen["game"]["board"][0] == "X" and seen["game"]["revision"] == 1
+            assert rpc(player_token, "game.move", {"cell": 4, "revision": 1})["game"]["board"][4] == "O"
+            for token, cell, revision in [(owner_token, 1, 2), (player_token, 3, 3), (owner_token, 2, 4)]:
+                final = rpc(token, "game.move", {"cell": cell, "revision": revision})
+            assert final["game"]["winner"] == "X"
+            print(f"PASS: two players invite → accept → launch → verified RPC → full game; move ack={acknowledged_ms:.1f} ms, second player observes={observed_ms:.1f} ms with 1500 ms polling (local HTTP, not browser rendering)")
+            _, chat, _ = request("GET", f"/channels/{channel['id']}/messages")
+            game_message = next(m for m in chat["messages"] if m["id"] == final["game"]["message_id"])
+            assert game_message["components"][0][1]["opens"] == "result"
+            assert game_message["embeds"][0]["display"] == "overlay"
+            assert request("POST", "/interactions", {"app_installation_id": app_id, "channel_id": channel["id"], "kind": "button", "message_id": game_message["id"], "component_id": "revanche"})[0] == 202
+            assert rpc(player_token, "game.state")["game"]["winner"] == ""
+            print("PASS: message components and opens overlay; Revanche resets persisted game")
             request("POST", "/plugins/reference/trigger", {"request": {"method": "kv.put", "key": "counter", "value": 42}})
             stop()
             start()
@@ -164,6 +232,12 @@ def main():
             assert not any(c["type"] == "app" for c in channels["channels"])
             status = subprocess.check_output(["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", ui], text=True)
             assert status == "404"
+            try:
+                rpc(owner_token, "identity")
+                raise AssertionError("sessão sobreviveu disable")
+            except urllib.error.HTTPError as response:
+                assert response.code == 401
+            print("PASS: disabled plugin revokes UI sessions")
             print("PASS: disable both → app channels gone → UI returns 404")
         finally:
             stop()
