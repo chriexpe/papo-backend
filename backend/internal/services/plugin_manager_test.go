@@ -536,3 +536,32 @@ func TestPluginInvalidationWithoutAppChannel(t *testing.T) {
 		t.Fatalf("notifications after authority closes: %v", states)
 	}
 }
+
+func TestPluginConsentValidatesBundledPoster(t *testing.T) {
+	m, u, ch := managerFixture(t, false)
+	manifest := filepath.Join(m.Config.Directory, "reference", "plugin.toml")
+	original, e := os.ReadFile(manifest)
+	if e != nil {
+		t.Fatal(e)
+	}
+	withPoster := strings.Replace(string(original), `display = "overlay"`, "display = \"inline\"\nposter = \"ui/image.svg\"", 1)
+	if e = os.WriteFile(manifest, []byte(withPoster), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e = m.Rescan(testCtx()); e != nil {
+		t.Fatal(e)
+	}
+	opts := PluginOptions{Settings: map[string]any{"target_channel": ch.ID}}
+	preview, e := m.Preview(testCtx(), u.ID, "reference", opts)
+	if e != nil {
+		t.Fatalf("valid poster rejected: %v", e)
+	}
+	if preview.Surfaces[1].Poster != "ui/image.svg" {
+		t.Fatal(preview.Surfaces)
+	}
+	opts.Consent = preview.Consent
+	opts.ExpiresAt = preview.ExpiresAt
+	if _, e = m.Enable(testCtx(), u.ID, "reference", opts); e != nil {
+		t.Fatal(e)
+	}
+}

@@ -91,9 +91,15 @@ func TestAppBridgeRoutes(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	var ticket map[string]string
+	var ticket struct {
+		Ticket  string            `json:"ticket"`
+		Surface models.AppChannel `json:"surface"`
+	}
 	json.Unmarshal(rec.Body.Bytes(), &ticket)
-	sessionBody := []byte(`{"ticket":"` + ticket["ticket"] + `"}`)
+	if ticket.Surface.SurfaceID != "home" || ticket.Surface.AppInstallationID != a.ID || !strings.HasPrefix(ticket.Surface.Entry, "/apps/"+a.ID+"/ui/") {
+		t.Fatalf("launch metadata: %+v", ticket.Surface)
+	}
+	sessionBody := []byte(`{"ticket":"` + ticket.Ticket + `"}`)
 	request := func(path string, b []byte, bearer string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", path, strings.NewReader(string(b)))
 		r.Header.Set("Content-Type", "application/json")

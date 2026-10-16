@@ -241,10 +241,12 @@ func (m *PluginManager) LaunchAppUI(ctx context.Context, user, id string, in Lau
 		return nil, e
 	}
 	found := false
+	var selected AppSurfaceDeclaration
 	for _, s := range b.Surfaces {
 		if s.ID != in.SurfaceID {
 			continue
 		}
+		selected = s
 		if s.Kind == "channel" {
 			ch, e := storage.GetAppChannel(ctx, in.ChannelID)
 			found = e == nil && ch.AppInstallationID == id && ch.SurfaceID == s.ID
@@ -306,7 +308,19 @@ func (m *PluginManager) LaunchAppUI(ctx context.Context, user, id string, in Lau
 		return nil, e
 	}
 	RecordAudit(ctx, AuditEntry{ActorID: user, Action: ActionAppUILaunch, EntityType: EntityApp, EntityID: &id})
-	return map[string]any{"ticket": secret, "expires_at": t.ExpiresAt}, nil
+	entry := selected.Entry
+	poster := selected.Poster
+	if selected.Source == "bundled" {
+		entry = "/apps/" + id + "/" + entry
+	}
+	if poster != "" {
+		poster = "/apps/" + id + "/" + poster
+	}
+	return map[string]any{
+		"ticket": secret, "expires_at": t.ExpiresAt,
+		"surface": models.AppChannel{AppInstallationID: id, SurfaceID: selected.ID, Source: selected.Source, Entry: entry, AvatarURL: "/apps/" + id + "/avatar", Available: true},
+		"display": selected.Display, "load": selected.Load, "size": selected.Size, "poster": poster,
+	}, nil
 }
 
 // validateUIToken refaz autorização em toda troca e chamada; falhas revogam os vínculos.
