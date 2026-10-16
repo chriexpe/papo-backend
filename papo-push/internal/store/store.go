@@ -56,7 +56,7 @@ type PushJob struct {
 	Attempts       int
 	NextAttemptAt  time.Time
 	CreatedAt      time.Time
-	LastError       string
+	LastError      string
 	// DeliveredTokens são os tokens já entregues em tentativas anteriores.
 	// O worker os usa para não reenviar (evitar notificação duplicada) em retry.
 	DeliveredTokens []string
