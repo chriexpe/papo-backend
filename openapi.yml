@@ -2810,8 +2810,8 @@ paths:
         | `react_update`   | outbound  | `{ type: "react_update", message_id, emoji_id, unicode, count }` (emoji_id/unicode: um é null; count = usuários que reagiram com aquele emoji, 0 quando a última foi removida) |
         | `message_embeds_update` | outbound | `{ type: "message_embeds_update", channel_id, message_id, embeds }` (embeds: lista ATUAL de embeds da mensagem, mesma forma do campo `embeds` de `GET /channels/{channel_id}/messages`; metadados apenas, sem `image_data` — a mídia é buscada sob demanda por `GET /embeds/{embed_id}` e `GET /embeds/{embed_id}/video`. Um evento por mensagem, distribuído aos leitores do canal após o crawl em background (criação/edição), após a substituição de embeds na edição (lista vazia quando todos foram removidos) ou quando um embed compartilhado é refetchado por expiração de cache) |
         | `new_notification` | unicast  | `{ type: "new_notification", id, user_id, message_id, message_content }` (id: row de notificação ou UUID efêmero quando a configuração all gera evento sem row; user_id: autor da mensagem; message_content: truncado a 512 caracteres) |
-        | `channel_create` | outbound  | `{ type: "channel_create", channel_id, name, channel_type, position, topic? }` (topic: null para canais category) |
-        | `channel_update` | outbound  | `{ type: "channel_update", channel_id, name, position, topic?, views? }`                               |
+        | `channel_create` | outbound  | `{ type: "channel_create", channel_id, name, channel_type, position, topic?, app? }` (topic: null para canais category) |
+        | `channel_update` | outbound  | `{ type: "channel_update", channel_id, name, position, topic?, app? }`                               |
         | `channel_delete` | outbound  | `{ type: "channel_delete", channel_id }`                                               |
         | `typing`         | inbound   | `{ type: "typing", channel_id }`                                                        |
         | `typing`         | outbound  | `{ type: "typing", channel_id, user_id, is_typing }`                                    |
@@ -2851,97 +2851,53 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /channels/{channel_id}/views:
-    parameters:
-      - name: channel_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+  /apps/{installation_id}/ui/{path}:
     get:
       tags: [Apps]
-      summary: Lista views do canal
-      description: Exige manage_apps e read_channel. Responde array ordenado por position, created_at e id.
+      summary: Assets públicos estáticos de uma superfície bundled
+      security: []
+      description: |
+        Rota pública porque a WebView isolada não tem sessão. Serve somente arquivos
+        estáticos da pasta ui/ do plugin resolvido pelo provedor de metadados da PR 5;
+        nunca dados por usuário, templates, plugin.toml ou plugin.wasm. Não lê nem
+        emite cookies. Instalação desabilitada, revogada, removida ou sem provedor: 404.
+        Não lista diretórios; rejeita traversal, caminhos absolutos e symlinks.
+        Nada é executado pelo backend. Tipos permitidos: HTML/CSS/JS/JSON, imagens,
+        fontes, texto e módulos Wasm dentro de ui/.
+
+        Headers obrigatórios (§9.1.4):
+        Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self'
+        (acrescenta somente origens HTTPS aprovadas; nunca allow-same-origin).
+        X-Content-Type-Options: nosniff
+        Referrer-Policy: no-referrer
+        Cross-Origin-Resource-Policy: same-origin
+        ETag: derivado do digest do plugin e do caminho do asset.
+        Cache-Control: public, max-age=0, must-revalidate (revalida o digest em cada uso).
+        Indisponibilidade responde no-store. A API nunca permite Origin: null,
+        mesmo quando CORS_ORIGINS contiver wildcard ou null.
+      parameters:
+        - {name: installation_id, in: path, required: true, schema: {type: string, format: uuid}}
+        - name: path
+          in: path
+          required: true
+          description: Caminho do arquivo dentro de ui/, incluindo subdiretórios.
+          schema: {type: string}
       responses:
         '200':
-          description: Views ativas com attach_views e escopo atual
+          description: Asset estático sob sandbox de origem opaca
+          headers:
+            Content-Security-Policy: {schema: {type: string}}
+            X-Content-Type-Options: {schema: {type: string, enum: [nosniff]}}
+            Referrer-Policy: {schema: {type: string, enum: [no-referrer]}}
+            Cross-Origin-Resource-Policy: {schema: {type: string, enum: [same-origin]}}
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
           content:
-            application/json:
-              schema:
-                type: array
-                items: {$ref: '#/components/schemas/ChannelAppView'}
-        '400': {description: Identificador inválido}
-        '401': {description: Sessão ausente ou inválida}
-        '403': {description: Sem manage_apps ou leitura do canal}
-        '404': {description: Canal inexistente}
-    post:
-      tags: [Apps]
-      summary: Anexa uma view passiva ao canal
-      description: >
-        Exige manage_apps, read_channel e canal text/voice. A instalação deve ser
-        ativa, kind view, possuir attach_views e escopo no canal. Não recebe token.
-        Views são apagadas ao remover o escopo, revogar a instalação ou excluir o canal.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              allOf:
-                - {$ref: '#/components/schemas/ChannelAppViewInput'}
-                - type: object
-                  required: [app_installation_id]
-                  properties:
-                    app_installation_id: {type: string, format: uuid}
-      responses:
-        '201':
-          description: View anexada
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ChannelAppView'}
-        '400': {description: URL, posição ou identificador inválido}
-        '401': {description: Sessão ausente ou inválida}
-        '403': {description: Sem permissão, capacidade, tipo ou escopo apropriado}
-        '404': {description: Canal ou instalação inexistente/revogada}
-  /channels/{channel_id}/views/{view_id}:
-    parameters:
-      - name: channel_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: view_id
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-    put:
-      tags: [Apps]
-      summary: Substitui URL e posição de uma view
-      description: >
-        Mesmas autorizações da criação. app_installation_id pode ser omitido;
-        quando presente deve identificar a instalação original. Não move views entre canais.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/ChannelAppViewInput'}
-      responses:
-        '200':
-          description: View atualizada
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ChannelAppView'}
-        '400': {description: URL, posição ou instalação inválida}
-        '401': {description: Sessão ausente ou inválida}
-        '403': {description: Sem permissão, capacidade ou escopo apropriado}
-        '404': {description: Canal, instalação ou view inexistente}
-    delete:
-      tags: [Apps]
-      summary: Remove uma view do canal
-      description: Exige manage_apps e read_channel; permite limpeza mesmo sem attach_views atual.
-      responses:
-        '204': {description: View removida}
-        '400': {description: Canal inválido}
-        '401': {description: Sessão ausente ou inválida}
-        '403': {description: Sem manage_apps ou leitura do canal}
-        '404': {description: Canal ou view inexistente}
+            text/html: {schema: {type: string}}
+            application/octet-stream: {schema: {type: string, format: binary}}
+        '206': {description: Intervalo do asset estático}
+        '304': {description: Asset não modificado para o digest/caminho}
+        '404': {description: Instalação desabilitada ou asset inexistente/não permitido}
   /apps:
     post:
       tags:
@@ -4247,68 +4203,65 @@ components:
         role_count:
           type: integer
 
-    ChannelAppViewInput:
-      type: object
-      required: [url]
-      properties:
-        app_installation_id: {type: string, format: uuid}
-        url:
-          type: string
-          format: uri
-          maxLength: 2048
-          description: >
-            HTTPS apenas, sem userinfo ou porta não padrão. Reutiliza validateEmbedURL;
-            rejeita localhost, nomes locais, IPs privados/reservados e DNS que resolva
-            para essas redes. Falha de DNS rejeita o cadastro. Host diferente do
-            BASE_URL configurado (ignora caixa, porta e ponto final).
-            O backend nunca baixa, serve ou faz proxy deste conteúdo.
-        position:
-          type: integer
-          minimum: 0
-          maximum: 2147483647
-          default: 0
-    ChannelAppView:
+    AppChannel:
       type: object
       description: |
-        Conteúdo web não confiável, mesmo aprovado por administrador. Contrato obrigatório do cliente (§9.1):
-        1. Cada view usa WebView própria, com perfil/diretório não persistente e exclusivo;
-           nunca compartilha cookies, armazenamento ou cache com contextos que acessaram a API Papo.
-        2. Nunca injeta sessão, JWT, cookies ou headers Papo, nem tokens na URL.
-        3. Nunca registra IPC, bridge JS, injeção de scripts ou callbacks nativos.
-        4. Nunca serve conteúdo sob a origem Papo. O servidor não oferece proxy.
-        5. Navegação restrita à origem da view (scheme, host e porta); demais destinos,
-           popups, downloads, file/custom schemes e permissões (câmera, microfone,
-           localização, clipboard) são negados ou encaminhados ao navegador externo.
-        6. Se o site recusar framing, estiver inacessível ou a plataforma não garantir
-           as regras anteriores, mostrar “Abrir no navegador”, sem enfraquecer o isolamento.
-        Anexar, editar ou remover uma view, remover seu escopo ou revogar a instalação
-        envia o evento existente channel_update somente aos leitores atuais de cada canal
-        afetado, após a confirmação da escrita. O campo views contém a lista completa
-        atualizada; [] remove a última aba. Ausência do campo em outros channel_update
-        não altera a lista local de views. GET /channels continua sendo a fonte de
-        reconciliação após desconexão. Não existe tipo novo de evento.
-        Uma URL aprovada não garante segurança de redirects ou DNS futuros; o cliente
-        deve aplicar isolamento e restrição de origem durante toda a navegação.
-      required: [id, app_installation_id, channel_id, url, position, created_by, created_at]
+        Superfície que ocupa o canal inteiro; não é aba e não tem conversa.
+        Declarada no plugin e criada no enable; disable/remove apaga o canal.
+        Renomear, mover e ajustar ACL usa os endpoints normais com manage_channels.
+        Exclusão manual e mudança de tipo são recusadas com detalhe em português
+        apontando às configurações do app. Upgrade reconcilia por surface_id e
+        preserva ID, nome, posição e ACL. Não exige capacidade nem escopo próprio;
+        escopos de envio/leitura continuam limitados a text/voice.
+
+        Regras de isolamento obrigatórias (§9.1):
+        1. WebView exclusiva e perfil não persistente, sem compartilhar cookies,
+           armazenamento ou cache com contextos que acessam a API Papo.
+        2. Não injetar sessão, JWT, cookies, headers ou tokens na URL.
+        3. Não registrar bridge, IPC, callbacks nativos ou scripts injetados.
+        4. Remote exige HTTPS, origem aprovada e host diferente de BASE_URL;
+           validação de embed mais rejeição a localhost/redes privadas/reservadas,
+           inclusive DNS. Backend nunca faz proxy da superfície remota. Bundled
+           aceita somente /apps/<instalação ativa>/ui/ com sandbox allow-scripts
+           allow-forms, sem allow-same-origin, default-src 'self' mais origens
+           aprovadas e headers da rota UI. Essa é a única exceção de URL Papo
+           aceita pelo cliente, somente quando recebida num payload autorizado.
+           API nunca aceita null no CORS. Origem opaca não tem localStorage/IndexedDB.
+        5. Travar navegação à origem, inclusive redirects/scripts. Negar popups,
+           downloads, file/esquemas customizados e câmera/microfone/localização/
+           clipboard. Links fora da origem seguem o prompt de confirmação existente.
+        6. Falha de framing, timeout, indisponibilidade ou falta de isolamento usa
+           fallback. Remoto oferece Abrir no navegador com confirmação; bundled
+           informa dispositivo não suportado. Nunca enfraquecer o isolamento.
+
+        Canal app ocupa o painel abaixo do cabeçalho, sem timeline/composer/toggle.
+        Inline app embed inicia como card, ativa ao clique, fica na mensagem com
+        clipping e é destruído ao sair da tela ou trocar de canal. Há apenas uma
+        superfície ativa entre apps e players rich-link; ativar uma destrói a outra.
+        Sair do canal destrói a página; cabeçalho e gestos ficam fora do WebView.
+        Instalação desabilitada mantém embeds históricos inertes, sem entry executável.
+        channel_create/channel_update/channel_delete são publicados pelo chamador
+        após commit, apenas a leitores; exclusão usa a ACL capturada antes de apagar.
+      required: [app_installation_id, surface_id, available, avatar_url]
       properties:
-        id: {type: string, format: uuid}
         app_installation_id: {type: string, format: uuid}
-        channel_id: {type: string, format: uuid}
-        url: {type: string, format: uri, maxLength: 2048}
-        position: {type: integer, minimum: 0}
-        created_by: {type: string, format: uuid}
-        created_at: {type: string, format: date-time}
+        surface_id: {type: string}
+        source:
+          type: string
+          enum: [bundled, remote]
+          description: Sempre presente em canais app; pode faltar no card inerte de um plugin removido.
+        entry:
+          type: string
+          description: URL aprovada ou /apps/<id>/ui/...; ausente quando indisponível.
+        avatar_url: {type: string}
+        available: {type: boolean}
     Channel:
       type: object
       properties:
-        views:
-          type: array
-          description: >
-            Campo aditivo dos payloads de canais (listagem e respostas de gestão),
-            somente para leitores do canal; omitido
-            para não leitores ou lista vazia. Apenas instalações ativas com attach_views.
-            Ordem por position, created_at e id. Não altera a visibilidade dos metadados existentes.
-          items: {$ref: '#/components/schemas/ChannelAppView'}
+        app:
+          allOf:
+            - {$ref: '#/components/schemas/AppChannel'}
+          description: Presente somente em canais app e para leitores autorizados.
         id:
           type: string
           format: uuid
@@ -4316,7 +4269,7 @@ components:
           type: string
         type:
           type: string
-          enum: [text, category, voice]
+          enum: [text, category, voice, app]
         position:
           type: integer
           description: Posição do canal na visualização (1-based)
@@ -5008,7 +4961,10 @@ components:
       description: >
         Embed de mensagem. source_type: 'link' (preview automático de link,
         obtido por fetch e reutilizado pelo cache por URL normalizada) ou
-        'custom' (embed enviado pela mensagem, dono do próprio registro).
+        'custom' (embed enviado pela mensagem, dono do próprio registro), ou 'app'
+        (referência à superfície embed declarada pelo plugin proprietário). Para app,
+        o estado atual resolve entry em app; disable/remove mantém available=false
+        e remove entry/url/embed_url executáveis.
         fetch_method: 'opengraph' (parser OpenGraph), 'oembed' (provedor
         allowlistado) ou 'manual' (embed customizado).
 
@@ -5024,12 +4980,18 @@ components:
         padrão (derivado por padrão hardcoded do backend a partir da URL do
         link, nunca do campo `html` da resposta oEmbed) e não chama o relay.
       properties:
+        app_installation_id: {type: string, format: uuid}
+        app_surface_id: {type: string}
+        frame_width: {type: integer, minimum: 1, maximum: 1920}
+        frame_height: {type: integer, minimum: 1, maximum: 1080}
+        app:
+          $ref: '#/components/schemas/AppChannel'
         id:
           type: string
           format: uuid
         source_type:
           type: string
-          enum: [link, custom]
+          enum: [link, custom, app]
         fetch_method:
           type: string
           enum: [opengraph, oembed, manual]
@@ -5224,17 +5186,20 @@ components:
     EmbedInput:
       type: object
       description: >
-        Embed customizado enviado na criação/edição de mensagem. O cliente não
-        controla source_type, fetch_method, cache_key, timestamps nem a
-        referência interna da mídia: o backend fixa source_type='custom' e
-        fetch_method='manual' e nunca sobrescreve um embed gerado pelo crawler.
-
-        Limites (contados por caracteres Unicode): 10 embeds por mensagem
-        (somando os automáticos), título 256, descrição 4192, 25 fields por
-        embed, nome de field 256, valor 1024, autor 256, footer 2048, soma do
-        texto de todos os embeds da mensagem 6000, URL 2048. Cor fora de
-        #RRGGBB, esquema de URL não permitido e MIME type não suportado → 400.
+        Embed customizado por padrão. source_type=app exige app_surface_id de uma
+        superfície embed declarada pelo próprio plugin. Somente remetentes app com
+        send_messages e post_app_embeds podem enviar um app embed por mensagem em
+        canal text/voice escopado. Humanos/webhooks são recusados. Entry, frame e
+        origem vêm da declaração aprovada, nunca da mensagem; url, video e author
+        são recusados nesse input. Thumbnail opcional usa o fluxo de mídia SSRF-safe
+        já existente. Envio de plugin usa CreatePluginMessage no host da PR 5, sem token.
+        Fetch_method, cache_key e referências internas de mídia não são controláveis.
+        Limites de texto/mídia seguem os embeds customizados, incluindo soma total.
       properties:
+        source_type: {type: string, enum: [custom, app], default: custom}
+        app_surface_id:
+          type: string
+          description: Obrigatório somente para app; ID da superfície embed do próprio plugin.
         title:
           type: string
         description:
@@ -5569,7 +5534,7 @@ components:
         read_messages:
           type: boolean
           default: false
-        attach_views:
+        post_app_embeds:
           type: boolean
           default: false
     AppInstallation:

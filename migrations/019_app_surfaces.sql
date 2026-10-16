@@ -16,7 +16,7 @@ ALTER TABLE embeds ADD COLUMN app_installation_id UUID REFERENCES app_installati
  ADD COLUMN app_surface_id TEXT, ADD COLUMN frame_width INTEGER, ADD COLUMN frame_height INTEGER;
 ALTER TABLE embeds ADD CONSTRAINT embeds_app_surface_check CHECK (
  (source_type='app' AND app_installation_id IS NOT NULL AND app_surface_id IS NOT NULL
-  AND frame_width BETWEEN 1 AND 1920 AND frame_height BETWEEN 1 AND 1080)
+  AND frame_width IS NOT NULL AND frame_height IS NOT NULL AND frame_width BETWEEN 1 AND 1920 AND frame_height BETWEEN 1 AND 1080)
  OR (source_type<>'app' AND app_installation_id IS NULL AND app_surface_id IS NULL));
 
 -- +goose Down
