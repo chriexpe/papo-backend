@@ -16,6 +16,7 @@ type PluginApproval struct {
 	Key, Name, Actor, Digest, Version                        string
 	Settings, Origins, Permissions, Surfaces, ExplicitScopes json.RawMessage
 	MemoryMB                                                 int
+	StorageQuota                                             models.AppStorageQuotaOverride
 	Capabilities                                             models.AppCapabilities
 	Scopes                                                   []string
 	ExpectedRevision                                         int64
@@ -46,7 +47,7 @@ func SavePlugin(ctx context.Context, p PluginApproval) (models.AppInstallation, 
 		return a, ErrUniqueViolation
 	}
 	caps, _ := json.Marshal(p.Capabilities)
-	_, e = tx.ExecContext(ctx, `UPDATE app_installations SET name=$2,plugin_digest=$3,version=$4,settings=$5,approved_origins=$6,approved_permissions=$7,plugin_surfaces=$8,max_memory_mb=$9,capabilities=$10,state='enabled',lifecycle_pending=true,explicit_scopes=$12,avatar_media=$11,plugin_revision=plugin_revision+1 WHERE id=$1`, a.ID, p.Name, p.Digest, p.Version, p.Settings, p.Origins, p.Permissions, p.Surfaces, p.MemoryMB, string(caps), p.Avatar, p.ExplicitScopes)
+	_, e = tx.ExecContext(ctx, `UPDATE app_installations SET name=$2,plugin_digest=$3,version=$4,settings=$5,approved_origins=$6,approved_permissions=$7,plugin_surfaces=$8,max_memory_mb=$9,capabilities=$10,state='enabled',lifecycle_pending=true,explicit_scopes=$12,avatar_media=$11,plugin_revision=plugin_revision+1,storage_quota=$13 WHERE id=$1`, a.ID, p.Name, p.Digest, p.Version, p.Settings, p.Origins, p.Permissions, p.Surfaces, p.MemoryMB, string(caps), p.Avatar, p.ExplicitScopes, string(mustQuotaJSON(p.StorageQuota)))
 	if e != nil {
 		return a, e
 	}
@@ -142,3 +143,6 @@ func FinishPlugin(ctx context.Context, id string, revision int64) error {
 	}
 	return nil
 }
+
+// mustQuotaJSON serializa um tipo fechado, sem dados arbitrários.
+func mustQuotaJSON(q models.AppStorageQuotaOverride) []byte { b, _ := json.Marshal(q); return b }

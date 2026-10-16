@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"papo/internal/config"
+	"papo/internal/models"
 )
 
 // ErrAppStorageQuota indica que a instalação esgotou seu espaço persistente.
@@ -23,7 +25,7 @@ func GetAppStorage(ctx context.Context, id, key string) (AppStorageEntry, error)
 }
 
 // MutateAppStorage serializa a quota com o lock da instalação, inclusive entre processos.
-// Cada instalação aceita até 256 chaves e 1 MiB de chaves mais JSON normalizado.
+// Padrões globais e override são resolvidos sob o mesmo lock; bytes usam JSONB normalizado.
 func MutateAppStorage(ctx context.Context, id, key string, value json.RawMessage, remove bool) (AppStorageEntry, error) {
 	tx, err := GetDB().BeginTx(ctx, nil)
 	if err != nil {
@@ -31,8 +33,17 @@ func MutateAppStorage(ctx context.Context, id, key string, value json.RawMessage
 	}
 	defer tx.Rollback()
 	var active string
-	if err = tx.QueryRowContext(ctx, `SELECT id FROM app_installations WHERE id=$1 AND kind='plugin' AND state='enabled' AND capabilities @> '{"private_storage":true}'::jsonb AND revoked_at IS NULL FOR UPDATE`, id).Scan(&active); err != nil {
+	var raw []byte
+	if err = tx.QueryRowContext(ctx, `SELECT id,storage_quota FROM app_installations WHERE id=$1 AND kind='plugin' AND state='enabled' AND capabilities @> '{"private_storage":true}'::jsonb AND revoked_at IS NULL FOR UPDATE`, id).Scan(&active, &raw); err != nil {
 		return AppStorageEntry{}, mapStorageError(err)
+	}
+	var override models.AppStorageQuotaOverride
+	if err = json.Unmarshal(raw, &override); err != nil {
+		return AppStorageEntry{}, err
+	}
+	quota, err := config.EffectiveAppStorageQuota(override)
+	if err != nil {
+		return AppStorageEntry{}, err
 	}
 	if remove {
 		_, err = tx.ExecContext(ctx, "DELETE FROM app_storage WHERE installation=$1 AND key=$2", id, key)
@@ -48,7 +59,7 @@ func MutateAppStorage(ctx context.Context, id, key string, value json.RawMessage
 	if err = tx.QueryRowContext(ctx, "SELECT octet_length($1::jsonb::text)", string(value)).Scan(&encoded); err != nil {
 		return AppStorageEntry{}, err
 	}
-	if count >= 256 || encoded > 16384 || size+len(key)+encoded > 1<<20 {
+	if count >= quota.MaxKeys || encoded > quota.MaxValueBytes || size+len(key)+encoded > quota.MaxTotalBytes {
 		return AppStorageEntry{}, ErrAppStorageQuota
 	}
 	var e AppStorageEntry

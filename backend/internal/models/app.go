@@ -17,29 +17,31 @@ type AppCapabilities struct {
 // AppInstallation representa uma identidade de máquina pertencente ao servidor.
 // CreatedBy é histórico e propriedade de armazenamento, nunca autoria ou autoridade.
 type AppInstallation struct {
-	LifecyclePending    bool            `json:"transition_pending,omitempty"`
-	PluginDigest        *string         `json:"plugin_digest,omitempty"`
-	PluginVersion       string          `json:"version,omitempty"`
-	PluginSettings      json.RawMessage `json:"settings,omitempty"`
-	ExplicitScopes      json.RawMessage `json:"explicit_scopes,omitempty"`
-	ApprovedOrigins     json.RawMessage `json:"approved_origins,omitempty"`
-	ApprovedPermissions json.RawMessage `json:"approved_permissions,omitempty"`
-	PluginSurfaces      json.RawMessage `json:"-"`
-	PluginState         string          `json:"state,omitempty"`
-	MaxMemoryMB         int             `json:"max_memory_mb,omitempty"`
-	PluginRevision      int64           `json:"revision,omitempty"`
-	ArtifactSHA         *string         `json:"artifact_sha,omitempty"`
-	ArtifactDigest      *string         `json:"artifact_digest,omitempty"`
-	ID                  string          `json:"id"`
-	AppKey              string          `json:"app_key"`
-	Kind                string          `json:"kind"`
-	Name                string          `json:"name"`
-	DisplayName         *string         `json:"display_name,omitempty"`
-	AvatarMedia         *string         `json:"-"`
-	Capabilities        AppCapabilities `json:"capabilities"`
-	CreatedBy           string          `json:"created_by"`
-	CreatedAt           time.Time       `json:"created_at"`
-	RevokedAt           *time.Time      `json:"revoked_at,omitempty"`
+	StorageQuota          AppStorageQuota         `json:"storage_quota"`
+	StorageQuotaOverrides AppStorageQuotaOverride `json:"storage_quota_overrides"`
+	LifecyclePending      bool                    `json:"transition_pending,omitempty"`
+	PluginDigest          *string                 `json:"plugin_digest,omitempty"`
+	PluginVersion         string                  `json:"version,omitempty"`
+	PluginSettings        json.RawMessage         `json:"settings,omitempty"`
+	ExplicitScopes        json.RawMessage         `json:"explicit_scopes,omitempty"`
+	ApprovedOrigins       json.RawMessage         `json:"approved_origins,omitempty"`
+	ApprovedPermissions   json.RawMessage         `json:"approved_permissions,omitempty"`
+	PluginSurfaces        json.RawMessage         `json:"-"`
+	PluginState           string                  `json:"state,omitempty"`
+	MaxMemoryMB           int                     `json:"max_memory_mb,omitempty"`
+	PluginRevision        int64                   `json:"revision,omitempty"`
+	ArtifactSHA           *string                 `json:"artifact_sha,omitempty"`
+	ArtifactDigest        *string                 `json:"artifact_digest,omitempty"`
+	ID                    string                  `json:"id"`
+	AppKey                string                  `json:"app_key"`
+	Kind                  string                  `json:"kind"`
+	Name                  string                  `json:"name"`
+	DisplayName           *string                 `json:"display_name,omitempty"`
+	AvatarMedia           *string                 `json:"-"`
+	Capabilities          AppCapabilities         `json:"capabilities"`
+	CreatedBy             string                  `json:"created_by"`
+	CreatedAt             time.Time               `json:"created_at"`
+	RevokedAt             *time.Time              `json:"revoked_at,omitempty"`
 }
 
 // AppList contém uma página de instalações ativas.

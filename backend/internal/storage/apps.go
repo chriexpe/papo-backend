@@ -7,22 +7,31 @@ import (
 	"strings"
 	"time"
 
+	"papo/internal/config"
 	"papo/internal/models"
 )
 
 // appColumns exclui a credencial das respostas públicas.
-const appColumns = "id, app_key, kind, name, display_name, avatar_media, capabilities, created_by, created_at, revoked_at, artifact_sha, artifact_digest, plugin_digest,version,settings,approved_origins,approved_permissions,plugin_surfaces,state,max_memory_mb,plugin_revision,explicit_scopes,lifecycle_pending"
+const appColumns = "id, app_key, kind, name, display_name, avatar_media, capabilities, created_by, created_at, revoked_at, artifact_sha, artifact_digest, plugin_digest,version,settings,approved_origins,approved_permissions,plugin_surfaces,state,max_memory_mb,plugin_revision,explicit_scopes,lifecycle_pending,storage_quota"
 
 // scanApp lê a instalação e decodifica suas capacidades.
 func scanApp(row rowScanner, secret ...*string) (models.AppInstallation, error) {
 	var a models.AppInstallation
-	var caps []byte
-	targets := []any{&a.ID, &a.AppKey, &a.Kind, &a.Name, &a.DisplayName, &a.AvatarMedia, &caps, &a.CreatedBy, &a.CreatedAt, &a.RevokedAt, &a.ArtifactSHA, &a.ArtifactDigest, &a.PluginDigest, &a.PluginVersion, &a.PluginSettings, &a.ApprovedOrigins, &a.ApprovedPermissions, &a.PluginSurfaces, &a.PluginState, &a.MaxMemoryMB, &a.PluginRevision, &a.ExplicitScopes, &a.LifecyclePending}
+	var caps, quota []byte
+	targets := []any{&a.ID, &a.AppKey, &a.Kind, &a.Name, &a.DisplayName, &a.AvatarMedia, &caps, &a.CreatedBy, &a.CreatedAt, &a.RevokedAt, &a.ArtifactSHA, &a.ArtifactDigest, &a.PluginDigest, &a.PluginVersion, &a.PluginSettings, &a.ApprovedOrigins, &a.ApprovedPermissions, &a.PluginSurfaces, &a.PluginState, &a.MaxMemoryMB, &a.PluginRevision, &a.ExplicitScopes, &a.LifecyclePending, &quota}
 	if len(secret) > 0 {
 		targets = append(targets, secret[0])
 	}
 	if err := row.Scan(targets...); err != nil {
 		return a, mapStorageError(err)
+	}
+	if err := json.Unmarshal(quota, &a.StorageQuotaOverrides); err != nil {
+		return a, err
+	}
+	var e error
+	a.StorageQuota, e = config.EffectiveAppStorageQuota(a.StorageQuotaOverrides)
+	if e != nil {
+		return a, e
 	}
 	err := json.Unmarshal(caps, &a.Capabilities)
 	return a, err
