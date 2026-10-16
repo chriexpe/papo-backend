@@ -31,8 +31,12 @@ DeleteAppChannels(ctx, actorID, installationID) ([]AppChannelChange, error)
 
 Recebem a lista completa de declarações já resolvidas do manifest. `Kind` é
 `channel` ou `embed`, `Source` é `bundled` ou `remote`; cada uma tem `ID` estável e
-`Entry`. Canais têm `DefaultName`; embeds têm `FrameWidth`/`FrameHeight` (padrões
-480×320, limites 1920×1080). `actorID` vazio registra operação de sistema.
+`Entry`. Canais têm `DefaultName`; superfícies embed exigem `Size` com `Width` e
+`Height` positivos. O teto padrão do servidor é 560×420, configurável por
+`APP_EMBED_MAX_WIDTH`/`APP_EMBED_MAX_HEIGHT`. `Load` aceita `click` (padrão) ou
+`visible`; `Display` aceita `inline` (padrão) ou `overlay`. Overlay exige click.
+`Poster` é um caminho opcional de imagem existente dentro de `ui/`.
+`actorID` vazio registra operação de sistema.
 
 As funções retornam somente após commit. `Before` guarda o canal/ACL anterior;
 `After` guarda o payload novo. `Before=nil` significa criação; `After=nil`, exclusão;
@@ -81,23 +85,81 @@ precisa estar em `ApprovedOrigins`. O backend nunca baixa nem faz proxy da super
 remota. Para BlueMap, a PR 5 fornece o destino configurado pelo administrador como
 uma declaração `channel` de origem `remote`.
 
-## Embeds inline
+## Frames e cards nativos
 
-`CreatePluginMessage` recebe a instalação do contexto interno do host, nunca do corpo
-de uma requisição humana. A instalação precisa de `send_messages`, `post_app_embeds`
-e escopo num canal `text`/`voice`. Um input `source_type: app` referencia somente seu
-próprio `app_surface_id` declarado como `embed`; no máximo um por mensagem. Humanos,
-webhooks, superfícies não declaradas e origens não aprovadas são recusados.
+`CreatePluginMessage` recebe a instalação do contexto interno do host. A instalação
+precisa de `send_messages`, `post_app_embeds` e escopo num canal `text`/`voice` para
+postar um frame (`source_type: app`). Ele referencia seu próprio `app_surface_id`,
+declarado como `embed`; no máximo um por mensagem. Humanos, webhooks, superfícies
+não declaradas e origens não aprovadas são recusados.
 
-O histórico guarda a referência, nunca a entrada executável. Na leitura, a entrada é
-resolvida contra os metadados atuais. Disable/remove mantém o card com `available=false`
-e sem `entry`, `url` ou `embed_url` executável. Miniatura opcional usa o fluxo de mídia
-SSRF-safe existente. Persistência futura pertence ao `app_storage` da PR 5, sem bridge
-ou SDK privilegiado na página.
+O autor declara o frame no manifest fornecido pela PR 5:
 
-O OpenAPI documenta o contrato completo de isolamento, clipping, uma superfície ativa
-por vez, links externos com confirmação e fallback por plataforma. Não são implementados
-frontend, runtime de plugins ou descoberta nesta PR.
+```toml
+[[surfaces]]
+kind = "embed"
+id = "resultado"
+entry = "ui/result.html"
+size = { width = 480, height = 320 }
+load = "click"
+display = "overlay"
+poster = "ui/result-poster.webp"
+```
+
+`size` é obrigatório e limitado ao máximo configurado do servidor (padrão 560×420).
+Em inline, o cliente reduz proporcionalmente à largura da timeline. Em overlay,
+size só dimensiona o card da timeline; o popup cobre a área do chat com as margens
+das pills, sem esse limite autoral. Overlay é sempre aberto ao clique. O cliente
+desenha a barra fina com identidade do autor, título opcional e fechar; Esc, fechar
+e voltar no mobile encerram; trocar de canal destrói a superfície.
+
+`load=click` mostra o poster ou card neutro com título até o clique, sem ícone de
+play de vídeo. `load=visible` inicia ao entrar na área visível, somente em inline.
+Uma única superfície fica ativa entre apps e rich-link players: a mais recentemente
+ativada/visível vence; as demais mostram seus posters. Inline usa o clipping existente
+e é destruído ao sair da tela/trocar de canal. O isolamento/CORS da UI não muda.
+
+Poster é validado como PNG/JPEG/GIF/WebP/SVG existente em `ui/`, sem traversal ou
+symlinks; no payload vira URL da rota pública de UI. O input da mensagem aceita
+somente `source_type=app`, `app_surface_id` e `title` opcional (256 caracteres Unicode).
+Tamanho, load, display e poster vêm da declaração, nunca de overrides na mensagem.
+
+```json
+{
+  "id": "<embed_id>",
+  "source_type": "app",
+  "surface": {"app_installation_id": "<installation_id>", "id": "resultado"},
+  "entry": "/apps/<installation_id>/ui/result.html",
+  "size": {"width": 480, "height": 320},
+  "load": "click",
+  "display": "overlay",
+  "poster": "/apps/<installation_id>/ui/result-poster.webp",
+  "title": "Resultado da rodada"
+}
+```
+
+Não há header extra de provedor: o frame não carrega nome, avatar, provider, author,
+thumbnail nem objeto `app` de canal. A mensagem continua tendo sua autoria normal.
+O envelope mantém somente `id`/`source_type`; os demais campos são os do exemplo,
+com `title` e `poster` opcionais. Entry remota continua sujeita a HTTPS/origens aprovadas.
+
+O histórico guarda referência, size/load/display e caminho relativo do poster,
+nunca a entry executável. Na leitura, entry é resolvida contra metadados atuais.
+Disable/remove omite entry/poster, mantendo a referência, políticas e título como
+card inerte. Um frame antigo que exceda um teto posteriormente reduzido também não
+é lançado. A 019 usa `app_width`/`app_height` inteiros positivos, `app_load`,
+`app_display` e `app_poster`; o CHECK também rejeita overlay+visible. O máximo
+configurável é aplicado pelo serviço, não fixado no SQL.
+
+**Cards customizados nativos continuam disponíveis para apps sem mudança**: título,
+descrição, imagem, cor, fields e demais dados seguem o fluxo existente com
+`source_type=custom`, sem exigir `post_app_embeds`. Para texto/imagem sem conteúdo web,
+use esses cards; os campos nativos não são aceitos no frame.
+
+O OpenAPI documenta o contrato completo de isolamento, links com confirmação e
+fallback por plataforma. Não são implementados frontend, runtime, botões ou
+`app_invalidate` nesta correção. Persistência futura da página pertence ao
+`app_storage` da PR 5, sem bridge/SDK privilegiado.
 
 ## Migration do fork
 

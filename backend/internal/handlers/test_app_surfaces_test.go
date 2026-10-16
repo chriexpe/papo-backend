@@ -59,7 +59,7 @@ func newHandlerSurfaces(t *testing.T, ownerID string) (models.AppInstallation, h
 
 	source := handlerSurfaceSource{a.ID: {Directory: dir, Digest: "digest-v1", Enabled: true, Surfaces: []services.AppSurfaceDeclaration{
 		{ID: "map", Kind: "channel", DefaultName: "app_" + randHex(4), Source: "bundled", Entry: "ui/index.html"},
-		{ID: "result", Kind: "embed", Source: "bundled", Entry: "ui/result.html", FrameWidth: 480, FrameHeight: 320},
+		{ID: "result", Kind: "embed", Source: "bundled", Entry: "ui/result.html", Size: models.AppSurfaceSize{Width: 480, Height: 320}},
 	}}}
 	services.SetPluginSurfaceSource(source)
 	t.Cleanup(func() { services.SetPluginSurfaceSource(nil) })
@@ -496,4 +496,79 @@ func TestAppUIOpaqueOriginAssets(t *testing.T) {
 	if rec := do(t, e, http.MethodGet, "/apps/"+a.ID+"/ui/index.html", nil, nil); rec.Code != 404 {
 		t.Fatal("configuração inválida", rec.Code)
 	}
+}
+
+// TestAppFrameReadPayload confirma o contrato HTTP, poster público e inércia sem header de provedor.
+func TestAppFrameReadPayload(t *testing.T) {
+	cleanServers(context.Background())
+	e := newApp()
+	id, token := registerAndLogin(t, e)
+	createServerFor(t, id)
+	a, source := newHandlerSurfaces(t, id)
+	b := source[a.ID]
+	b.Surfaces[1].Load = "visible"
+	b.Surfaces[1].Poster = "ui/image.png"
+	source[a.ID] = b
+	ch := createChannelFor(t, "frame_"+randHex(4))
+	scopeAppViaRoute(t, e, token, a.ID, ch.ID)
+	message, _, err := services.CreatePluginMessage(context.Background(), a.ID, ch.ID, "", "", "", nil, []services.EmbedInput{{SourceType: "app", AppSurfaceID: "result", Title: "Resultado"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "/channels/" + ch.ID + "/messages"
+	readFrame := func(live bool) {
+		t.Helper()
+		rec := do(t, e, http.MethodGet, target, nil, authCookie(token))
+		if rec.Code != 200 {
+			t.Fatal(rec.Code, rec.Body.String())
+		}
+		var response struct {
+			Messages []struct {
+				ID     string                       `json:"id"`
+				Embeds []map[string]json.RawMessage `json:"embeds"`
+			}
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, m := range response.Messages {
+			if m.ID != message.ID {
+				continue
+			}
+			found = true
+			frame := m.Embeds[0]
+			allowed := map[string]bool{"id": true, "source_type": true, "surface": true, "entry": true, "size": true, "load": true, "display": true, "poster": true, "title": true}
+			for key := range frame {
+				if !allowed[key] {
+					t.Fatal("campo extra", key)
+				}
+			}
+			if string(frame["load"]) != `"visible"` || string(frame["display"]) != `"inline"` || string(frame["size"]) != `{"width":480,"height":320}` {
+				t.Fatal(frame)
+			}
+			_, entry := frame["entry"]
+			_, poster := frame["poster"]
+			if entry != live || poster != live {
+				t.Fatal("estado de execução", frame)
+			}
+			if live {
+				var posterURL string
+				json.Unmarshal(frame["poster"], &posterURL)
+				if posterURL != "/apps/"+a.ID+"/ui/image.png" {
+					t.Fatal(posterURL)
+				}
+				if image := do(t, e, http.MethodGet, posterURL, nil, nil); image.Code != 200 || !strings.HasPrefix(image.Header().Get("Content-Type"), "image/png") {
+					t.Fatal(image.Code, image.Header())
+				}
+			}
+		}
+		if !found {
+			t.Fatal("mensagem ausente")
+		}
+	}
+	readFrame(true)
+	b.Enabled = false
+	source[a.ID] = b
+	readFrame(false)
 }

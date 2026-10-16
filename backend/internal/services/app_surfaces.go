@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"net"
 	"net/url"
@@ -172,14 +173,19 @@ func validateAppSurfaces(ctx context.Context, b PluginSurfaceBundle, surfaces []
 			return nil, ErrInvalidInput
 		}
 		if s.Kind == "embed" {
-			if s.FrameWidth == 0 {
-				s.FrameWidth = 480
+			if s.Load == "" {
+				s.Load = "click"
 			}
-			if s.FrameHeight == 0 {
-				s.FrameHeight = 320
+			if s.Display == "" {
+				s.Display = "inline"
 			}
-			if s.FrameWidth < 1 || s.FrameWidth > 1920 || s.FrameHeight < 1 || s.FrameHeight > 1080 {
-				return nil, ErrInvalidInput
+			if err := validateAppFramePolicy(s.Size, s.Load, s.Display); err != nil {
+				return nil, err
+			}
+			if s.Poster != "" {
+				if err := validateAppPoster(b, s.Poster); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
@@ -308,4 +314,22 @@ func AppChannelState(ctx context.Context, id string) (models.Channel, error) {
 		ch.App, err = channelAppPayload(ctx, id)
 	}
 	return ch, err
+}
+
+// validateAppFramePolicy aplica o teto configurável ao frame ou card de overlay.
+func validateAppFramePolicy(size models.AppSurfaceSize, load, display string) error {
+	cfg := config.LoadConfig()
+	if size.Width < 1 || size.Height < 1 || size.Width > cfg.AppEmbedMaxWidth || size.Height > cfg.AppEmbedMaxHeight || int64(size.Width) > 2147483647 || int64(size.Height) > 2147483647 {
+		return fmt.Errorf("%w: size deve ter dimensões positivas, até %dx%d", ErrInvalidInput, cfg.AppEmbedMaxWidth, cfg.AppEmbedMaxHeight)
+	}
+	if load != "click" && load != "visible" {
+		return fmt.Errorf("%w: load deve ser click ou visible", ErrInvalidInput)
+	}
+	if display != "inline" && display != "overlay" {
+		return fmt.Errorf("%w: display deve ser inline ou overlay", ErrInvalidInput)
+	}
+	if display == "overlay" && load != "click" {
+		return fmt.Errorf("%w: overlay exige load=click", ErrInvalidInput)
+	}
+	return nil
 }

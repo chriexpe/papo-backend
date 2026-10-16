@@ -4508,9 +4508,10 @@ components:
            informa dispositivo não suportado. Nunca enfraquecer o isolamento.
 
         Canal app ocupa o painel abaixo do cabeçalho, sem timeline/composer/toggle.
-        Inline app embed inicia como card, ativa ao clique, fica na mensagem com
-        clipping e é destruído ao sair da tela ou trocar de canal. Há apenas uma
-        superfície ativa entre apps e players rich-link; ativar uma destrói a outra.
+        Frames usam size/load/display/poster conforme AppFrameEmbed: inline ativa na
+        mensagem; overlay abre popup no chat apenas ao clique. Não há header extra
+        de provedor no frame. Há apenas uma superfície ativa entre apps e players
+        rich-link; a mais recentemente ativada/visível vence.
         Sair do canal destrói a página; cabeçalho e gestos ficam fora do WebView.
         Instalação desabilitada mantém embeds históricos inertes, sem entry executável.
         channel_create/channel_update/channel_delete são publicados pelo chamador
@@ -4522,7 +4523,7 @@ components:
         source:
           type: string
           enum: [bundled, remote]
-          description: Sempre presente em canais app; pode faltar no card inerte de um plugin removido.
+          description: Origem da superfície do canal app (frames têm schema próprio).
         entry:
           type: string
           description: URL aprovada ou /apps/<id>/ui/...; ausente quando indisponível.
@@ -5230,41 +5231,115 @@ components:
             (pending quando a moderação está desativada).
 
     Embed:
+      oneOf:
+        - {$ref: '#/components/schemas/NativeEmbed'}
+        - {$ref: '#/components/schemas/AppFrameEmbed'}
+      discriminator:
+        propertyName: source_type
+        mapping:
+          link: '#/components/schemas/NativeEmbed'
+          custom: '#/components/schemas/NativeEmbed'
+          app: '#/components/schemas/AppFrameEmbed'
+    AppSurfaceSize:
       type: object
+      additionalProperties: false
+      required: [width, height]
       description: >
-        Embed de mensagem. source_type: 'link' (preview automático de link,
-        obtido por fetch e reutilizado pelo cache por URL normalizada) ou
-        'custom' (embed enviado pela mensagem, dono do próprio registro), ou 'app'
-        (referência à superfície embed declarada pelo plugin proprietário). Para app,
-        o estado atual resolve entry em app; disable/remove mantém available=false
-        e remove entry/url/embed_url executáveis.
-        fetch_method: 'opengraph' (parser OpenGraph), 'oembed' (provedor
-        allowlistado) ou 'manual' (embed customizado).
-
-        A mídia é referenciada internamente: a imagem da thumbnail é servida
-        por GET /embeds/{embed_id} (image_data) e o vídeo por
-        GET /embeds/{embed_id}/video (relay autenticado com suporte a Range).
-
-        Player: `video` tem duas formas. Vídeo direto (og:video ou embed
-        customizado) traz `mime_type` de vídeo e é reproduzido pelo relay. Para
-        o provedor de iframe allowlistado (YouTube), `video.url` é a página de
-        embed `https://www.youtube.com/embed/<id>` e `mime_type` não vem: o
-        cliente renderiza iframe somente quando a URL casa exatamente com esse
-        padrão (derivado por padrão hardcoded do backend a partir da URL do
-        link, nunca do campo `html` da resposta oEmbed) e não chama o relay.
+        Dimensões autorais obrigatórias, inteiros positivos. O serviço aplica
+        APP_EMBED_MAX_WIDTH e APP_EMBED_MAX_HEIGHT (padrão 560 e 420).
+        O cliente reduz proporcionalmente à largura da timeline. Em overlay,
+        size define somente o card; o popup usa a área do chat, sem esse limite autoral.
+      properties:
+        width: {type: integer, minimum: 1}
+        height: {type: integer, minimum: 1}
+    AppSurfaceReference:
+      type: object
+      additionalProperties: false
+      required: [app_installation_id, id]
       properties:
         app_installation_id: {type: string, format: uuid}
-        app_surface_id: {type: string}
-        frame_width: {type: integer, minimum: 1, maximum: 1920}
-        frame_height: {type: integer, minimum: 1, maximum: 1080}
-        app:
-          $ref: '#/components/schemas/AppChannel'
+        id: {type: string}
+    AppFrameEmbed:
+      type: object
+      additionalProperties: false
+      required: [id, source_type, surface, size, load, display]
+      description: |
+        Um frame por mensagem, declarado pelo plugin proprietário. Sem header de
+        provedor: não contém nome, avatar, provider, author ou metadados de card nativo.
+        A autoria continua na mensagem, fora do frame. Só há title se enviado pelo app.
+        Entry é resolvida contra a superfície declarada e origens aprovadas atuais.
+        Disable/remove torna o frame inerte omitindo entry e poster; referência,
+        size/load/display persistidos e title permanecem. Um teto reduzido também
+        impede lançar frames históricos que agora excedem o máximo.
+
+        load=click (padrão) mostra poster ou card neutro com title até o clique,
+        sem botão de play de vídeo. load=visible ativa ao entrar na área visível.
+        display=inline (padrão) ativa na mensagem com clipping; sair da tela ou
+        trocar de canal destrói a superfície. display=overlay exige load=click:
+        abre popup na área do chat, com margens das pills; size só dimensiona o card.
+        O cliente desenha a barra com identidade do autor, title opcional e fechar;
+        Esc, botão de fechar e gesto de voltar fecham; trocar de canal destrói.
+        Em todos os modos uma única superfície vive entre apps e rich-link players;
+        a mais recentemente ativada/visível vence e as outras mostram o poster.
+        Aplicam-se os requisitos de isolamento e fallback documentados em AppChannel.
+      oneOf:
+        - properties:
+            display: {enum: [inline]}
+        - properties:
+            display: {enum: [overlay]}
+            load: {enum: [click]}
+      properties:
+        id: {type: string, format: uuid}
+        source_type: {type: string, enum: [app]}
+        surface: {$ref: '#/components/schemas/AppSurfaceReference'}
+        entry:
+          type: string
+          description: Destino aprovado; ausente quando inerte.
+        size: {$ref: '#/components/schemas/AppSurfaceSize'}
+        load: {type: string, enum: [click, visible], default: click}
+        display: {type: string, enum: [inline, overlay], default: inline}
+        poster:
+          type: string
+          description: URL /apps/<id>/ui/... da imagem declarada; ausente quando não definida ou inerte.
+        title: {type: string, maxLength: 256}
+    AppEmbedSurfaceDeclaration:
+      type: object
+      required: [id, kind, source, entry, size]
+      description: >
+        Metadados fornecidos pela PR 5 a partir de plugin.toml. Poster opcional deve
+        ser imagem existente confinada a ui/, sem traversal/symlinks. Formatos
+        PNG/JPEG/GIF/WebP/SVG são validados. frame_width/frame_height foram substituídos
+        por size. Load padrão click; display padrão inline; overlay+visible é rejeitado.
+      oneOf:
+        - properties:
+            display: {enum: [inline]}
+        - required: [display]
+          properties:
+            display: {enum: [overlay]}
+            load: {enum: [click]}
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [embed]}
+        source: {type: string, enum: [bundled, remote]}
+        entry: {type: string}
+        size: {$ref: '#/components/schemas/AppSurfaceSize'}
+        load: {type: string, enum: [click, visible], default: click}
+        display: {type: string, enum: [inline, overlay], default: inline}
+        poster: {type: string, example: ui/poster.png}
+    NativeEmbed:
+      type: object
+      description: >
+        Embeds nativos existentes: link (preview automático reutilizado por cache)
+        ou custom (card com título, descrição, imagem e demais campos nativos).
+        Continuam disponíveis a apps sem alteração no formato ou comportamento.
+        Mídias seguem o fluxo de armazenamento e relay autenticado já existente.
+      properties:
         id:
           type: string
           format: uuid
         source_type:
           type: string
-          enum: [link, custom, app]
+          enum: [link, custom]
         fetch_method:
           type: string
           enum: [opengraph, oembed, manual]
@@ -5459,15 +5534,16 @@ components:
     EmbedInput:
       type: object
       description: >
-        Embed customizado por padrão. source_type=app exige app_surface_id de uma
-        superfície embed declarada pelo próprio plugin. Somente remetentes app com
-        send_messages e post_app_embeds podem enviar um app embed por mensagem em
-        canal text/voice escopado. Humanos/webhooks são recusados. Entry, frame e
-        origem vêm da declaração aprovada, nunca da mensagem; url, video e author
-        são recusados nesse input. Thumbnail opcional usa o fluxo de mídia SSRF-safe
-        já existente. Envio de plugin usa CreatePluginMessage no host da PR 5, sem token.
-        Fetch_method, cache_key e referências internas de mídia não são controláveis.
-        Limites de texto/mídia seguem os embeds customizados, incluindo soma total.
+        Cards customizados mantêm o formato e comportamento existentes, inclusive
+        para apps. Para source_type=app, somente app_surface_id e title opcional
+        (máximo 256 caracteres Unicode) são aceitos além do discriminador.
+        É obrigatório send_messages + post_app_embeds, com um frame por mensagem
+        em canal text/voice escopado. Size/load/display/poster vêm da superfície
+        declarada, nunca de overrides na mensagem. Campos de card nativo como
+        imagem, thumbnail, descrição, author, fields, footer e cor são recusados
+        no frame; use source_type=custom para esses cards. Envio interno pela PR 5
+        usa CreatePluginMessage, sem token de plugin. Humanos/webhooks não podem
+        postar frames. Os limites existentes de texto e número de embeds continuam.
       properties:
         source_type: {type: string, enum: [custom, app], default: custom}
         app_surface_id:
@@ -5475,6 +5551,7 @@ components:
           description: Obrigatório somente para app; ID da superfície embed do próprio plugin.
         title:
           type: string
+          maxLength: 256
         description:
           type: string
         url:

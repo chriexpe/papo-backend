@@ -19,6 +19,8 @@ type Config struct {
 	HMACSecret        string
 	BaseURL           string
 	AppsOrigin        string
+	AppEmbedMaxWidth  int
+	AppEmbedMaxHeight int
 	MaxUsernameLength int
 	MinPasswordLength int
 	MaxPasswordLength int
@@ -141,6 +143,8 @@ func LoadConfig() *Config {
 		HMACSecret:        getEnv("HMAC_SECRET", ""),
 		BaseURL:           getEnv("BASE_URL", "https://papo.com/"),
 		AppsOrigin:        getEnv("APPS_ORIGIN", ""),
+		AppEmbedMaxWidth:  getEnvInt("APP_EMBED_MAX_WIDTH", 560),
+		AppEmbedMaxHeight: getEnvInt("APP_EMBED_MAX_HEIGHT", 420),
 		MaxUsernameLength: getEnvInt("MAX_USERNAME_LENGTH", 16),
 		MinPasswordLength: getEnvInt("MIN_PASSWORD_LENGTH", 8),
 		MaxPasswordLength: getEnvInt("MAX_PASSWORD_LENGTH", 64),
