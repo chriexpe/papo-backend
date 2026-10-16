@@ -24,7 +24,7 @@ type AppEvent struct {
 const appEventReader = `FROM app_installations a
  JOIN app_channel_scopes s ON s.app_installation_id=a.id
  JOIN channels c ON c.id=s.channel_id
- WHERE s.channel_id=$1 AND a.revoked_at IS NULL
+ WHERE s.channel_id=$1 AND a.revoked_at IS NULL AND a.kind='remote'
  AND a.capabilities @> '{"read_messages":true}'::jsonb AND c.type IN ('text','voice')`
 
 // CreateAppEventInTx grava somente quando há um leitor, na transação da mutação.

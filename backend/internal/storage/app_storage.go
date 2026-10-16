@@ -31,7 +31,7 @@ func MutateAppStorage(ctx context.Context, id, key string, value json.RawMessage
 	}
 	defer tx.Rollback()
 	var active string
-	if err = tx.QueryRowContext(ctx, "SELECT id FROM app_installations WHERE id=$1 AND kind='wasm' AND revoked_at IS NULL FOR UPDATE", id).Scan(&active); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM app_installations WHERE id=$1 AND kind='plugin' AND state='enabled' AND capabilities @> '{"private_storage":true}'::jsonb AND revoked_at IS NULL FOR UPDATE`, id).Scan(&active); err != nil {
 		return AppStorageEntry{}, mapStorageError(err)
 	}
 	if remove {
@@ -59,16 +59,4 @@ func MutateAppStorage(ctx context.Context, id, key string, value json.RawMessage
 		return e, err
 	}
 	return e, tx.Commit()
-}
-
-// SetAppArtifact troca o artefato somente em uma instalação Wasm ativa.
-func SetAppArtifact(ctx context.Context, id, sha, digest string) error {
-	r, err := GetDB().ExecContext(ctx, "UPDATE app_installations SET artifact_sha=$2,artifact_digest=$3 WHERE id=$1 AND kind='wasm' AND revoked_at IS NULL", id, sha, digest)
-	if err != nil {
-		return err
-	}
-	if n, _ := r.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
