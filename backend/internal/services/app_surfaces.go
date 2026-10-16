@@ -217,6 +217,16 @@ func ReconcileAppChannels(ctx context.Context, actorID, installationID string, s
 	}
 	RecordAudit(ctx, AuditEntry{ActorID: actorID, Action: ActionAppUpdate, EntityType: EntityApp, EntityID: &installationID, Metadata: map[string]any{"surfaces": len(validated)}})
 	normalizeAppChanges(changes)
+	for i := range changes {
+		if ch := changes[i].After; ch != nil && ch.App != nil {
+			ch.App.UserActions = append([]models.AppUserAction(nil), b.UserActions...)
+			for j := range ch.App.UserActions {
+				if ch.App.UserActions[j].Icon != "" {
+					ch.App.UserActions[j].Icon = "/apps/" + installationID + "/" + ch.App.UserActions[j].Icon
+				}
+			}
+		}
+	}
 	return changes, nil
 }
 

@@ -220,6 +220,17 @@ def main():
             assert request("POST", "/interactions", {"app_installation_id": app_id, "channel_id": channel["id"], "kind": "button", "message_id": game_message["id"], "component_id": "revanche"})[0] == 202
             assert rpc(player_token, "game.state")["game"]["winner"] == ""
             print("PASS: message components and opens overlay; Revanche resets persisted game")
+            _, only, _ = request("POST", "/plugins/reference/trigger", {"request": {
+                "method": "message.send", "channel_id": channel["id"],
+                "components": [[{"id": "abrir", "label": "Jogar", "style": "primary", "opens": "result", "disabled": False}]],
+            }})
+            assert only["ok"] and only["result"]["content"] is None
+            only_id = only["result"]["id"]
+            _, cleared, _ = request("POST", "/plugins/reference/trigger", {"request": {
+                "method": "message.edit", "channel_id": channel["id"], "message_id": only_id, "components": [],
+            }})
+            assert cleared["ok"] and not cleared["result"].get("components")
+            print("PASS: buttons-only message and explicit component removal")
             request("POST", "/plugins/reference/trigger", {"request": {"method": "kv.put", "key": "counter", "value": 42}})
             stop()
             start()

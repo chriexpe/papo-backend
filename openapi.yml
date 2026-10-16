@@ -4792,7 +4792,7 @@ components:
         Regras de isolamento obrigatórias (§9.1):
         1. WebView exclusiva e perfil não persistente, sem compartilhar cookies,
            armazenamento ou cache com contextos que acessam a API Papo.
-        2. Não injetar sessão, JWT, cookies, headers ou tokens na URL.
+        2. Não injetar sessão, JWT ou cookies. Só o ticket de launch de uso único vai no fragmento da URL.
         3. Não registrar bridge, IPC, callbacks nativos ou scripts injetados.
         4. Remote exige HTTPS, origem aprovada e host diferente de BASE_URL;
            validação de embed mais rejeição a localhost/redes privadas/reservadas,
@@ -4948,6 +4948,7 @@ components:
         message_id:
           type: string
           format: uuid
+          nullable: true
         channel_id:
           type: string
           format: uuid

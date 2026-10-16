@@ -471,3 +471,20 @@ func TestAppTicketConcurrentReplay(t *testing.T) {
 		t.Fatal("trocas aceitas", success)
 	}
 }
+
+// TestAppActionsInChannelSnapshots entrega ações também no channel_create, sem esperar refetch.
+func TestAppActionsInChannelSnapshots(t *testing.T) {
+	m, u, ch := managerFixture(t, false)
+	var snapshot *models.AppChannel
+	m.Effects.Channels = func(_ context.Context, changes []AppChannelChange) {
+		for _, v := range changes {
+			if v.After != nil && v.After.App != nil {
+				snapshot = v.After.App
+			}
+		}
+	}
+	a := enableReference(t, m, u, ch)
+	if snapshot == nil || len(snapshot.UserActions) != 1 || snapshot.UserActions[0].ID != "convidar" || snapshot.UserActions[0].Icon != "/apps/"+a.ID+"/ui/image.svg" {
+		t.Fatal("ações ausentes no snapshot", snapshot)
+	}
+}
