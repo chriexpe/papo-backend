@@ -93,6 +93,7 @@ func CreateChannelHandler(baseURL string, c echo.Context) error {
 }
 
 type updateChannelRequest struct {
+	Type  *string `json:"type"`
 	Name  string  `json:"name"`
 	Topic *string `json:"topic"`
 }
@@ -120,6 +121,11 @@ func UpdateChannelHandler(baseURL string, c echo.Context) error {
 			"invalid-param", "Parâmetro inválido", "corpo da requisição inválido")
 	}
 
+	if req.Type != nil {
+		if err := services.ValidateChannelTypeChange(c.Request().Context(), channelID, *req.Type); err != nil {
+			return appChannelProblem(baseURL, c, err)
+		}
+	}
 	channel, err := services.UpdateChannel(c.Request().Context(), userID, channelID, req.Name, req.Topic)
 	switch {
 	case errors.Is(err, services.ErrInvalidInput):
@@ -141,12 +147,13 @@ func UpdateChannelHandler(baseURL string, c echo.Context) error {
 	}
 
 	// Distribui a edição aos clientes conectados (evento channel_update).
-	websocket.GetHub().Broadcast(websocket.ChannelUpdateOutbound{
+	broadcastChannelMetadata(c, channel, websocket.ChannelUpdateOutbound{
 		Type:      websocket.EventTypeChannelUpdate,
 		ChannelID: channel.ID,
 		Name:      channel.Name,
 		Position:  channel.Position,
 		Topic:     channel.Topic,
+		App:       channel.App,
 	})
 
 	return c.JSON(http.StatusOK, channel)
@@ -169,6 +176,8 @@ func DeleteChannelHandler(baseURL string, c echo.Context) error {
 
 	err := services.DeleteChannel(c.Request().Context(), userID, channelID)
 	switch {
+	case errors.Is(err, services.ErrAppChannelManaged):
+		return appChannelProblem(baseURL, c, err)
 	case errors.Is(err, services.ErrChannelNotFound):
 		return utils.SendProblem(c, baseURL, http.StatusNotFound,
 			"not-found", "Recurso não encontrado", "canal não encontrado")
@@ -272,6 +281,7 @@ func UpdateChannelPermissionsHandler(baseURL string, c echo.Context) error {
 			"internal", "Erro interno", "falha ao atualizar as permissões do canal")
 	}
 
+	broadcastAppChannelMetadata(c, channelID)
 	return c.JSON(http.StatusOK, updateChannelPermissionsResponse{
 		ChannelID:   channelID,
 		RoleID:      roleID,
@@ -330,12 +340,13 @@ func ChangeChannelPositionHandler(baseURL string, c echo.Context) error {
 
 	// Distribui a mudança de posição aos clientes conectados
 	// (evento channel_update).
-	websocket.GetHub().Broadcast(websocket.ChannelUpdateOutbound{
+	broadcastChannelMetadata(c, channel, websocket.ChannelUpdateOutbound{
 		Type:      websocket.EventTypeChannelUpdate,
 		ChannelID: channel.ID,
 		Name:      channel.Name,
 		Position:  channel.Position,
 		Topic:     channel.Topic,
+		App:       channel.App,
 	})
 
 	return c.JSON(http.StatusOK, channel)
@@ -361,5 +372,6 @@ func DeleteChannelRoleHandler(baseURL string, c echo.Context) error {
 		utils.Errorf("request_id=%s falha ao remover role do canal: %v", c.Request().Header.Get(echo.HeaderXRequestID), err)
 		return utils.SendProblem(c, baseURL, http.StatusInternalServerError, "internal", "Erro interno", "falha ao remover role do canal")
 	}
+	broadcastAppChannelMetadata(c, channelID)
 	return c.NoContent(http.StatusNoContent)
 }

@@ -132,7 +132,7 @@ func GetAppAvatarHandler(baseURL string, c echo.Context) error {
 
 	media, filePath, err := services.GetAppAvatar(c.Request().Context(), appID)
 	switch {
-	case errors.Is(err, services.ErrChannelViewNotFound), errors.Is(err, services.ErrAppNotFound),
+	case errors.Is(err, services.ErrAppNotFound),
 		errors.Is(err, services.ErrAvatarNotFound),
 		errors.Is(err, services.ErrMediaNotFound):
 		return utils.SendProblem(c, baseURL, http.StatusNotFound,
@@ -183,13 +183,11 @@ func GetAppAvatarHandler(baseURL string, c echo.Context) error {
 // mantêm a atribuição.
 func DeleteAppHandler(baseURL string, c echo.Context) error {
 	actor, _ := c.Get(middleware.UserIDContextKey).(string)
-	channels, err := services.RevokeAppWithViewChannels(c.Request().Context(), actor, c.Param("app_id"))
+	channels, err := services.RevokeAppWithChannelChanges(c.Request().Context(), actor, c.Param("app_id"))
 	if err != nil {
 		return appProblem(c, baseURL, err)
 	}
-	for _, channel := range channels {
-		broadcastChannelViewsUpdate(c, channel)
-	}
+	BroadcastAppChannelChanges(c.Request().Context(), channels)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -200,7 +198,7 @@ func appProblem(c echo.Context, baseURL string, err error) error {
 	case errors.Is(err, services.ErrAppUnauthorized):
 		return utils.SendProblem(c, baseURL, http.StatusUnauthorized,
 			"unauthorized", "Não autorizado", "app inválido")
-	case errors.Is(err, services.ErrChannelViewNotFound), errors.Is(err, services.ErrAppNotFound),
+	case errors.Is(err, services.ErrAppNotFound),
 		errors.Is(err, services.ErrChannelNotFound),
 		errors.Is(err, services.ErrMessageNotFound):
 		return utils.SendProblem(c, baseURL, http.StatusNotFound,
@@ -385,7 +383,6 @@ func RemoveAppScopeHandler(baseURL string, c echo.Context) error {
 	if err := services.RemoveAppScope(c.Request().Context(), actor, c.Param("app_id"), c.Param("channel_id")); err != nil {
 		return appProblem(c, baseURL, err)
 	}
-	broadcastChannelViewsUpdate(c, c.Param("channel_id"))
 	return c.NoContent(http.StatusNoContent)
 }
 
