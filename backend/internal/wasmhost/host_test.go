@@ -54,6 +54,9 @@ func TestBoundaries(t *testing.T) {
 			if err == nil {
 				t.Fatal("guest malicioso aceito")
 			}
+			if op == "loop" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatal("timeout perdeu a causa", err)
+			}
 			out, err := h.Invoke(context.Background(), "healthy", b, []byte(`{"ok":true}`), echoCall)
 			if err != nil || string(out) != `{"ok":true}` {
 				t.Fatalf("host afetado: %s %v", out, err)

@@ -280,6 +280,12 @@ func (h *Host) Invoke(parent context.Context, id string, artifact, input []byte,
 	}()
 	ctx, cancel := context.WithTimeout(parent, h.limits.Deadline)
 	defer cancel()
+	// Conserva a causa de timeout para a resposta curta da ponte, inclusive após forced close.
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = errors.Join(err, ctx.Err())
+		}
+	}()
 	select {
 	case s.gate <- struct{}{}:
 		gateHeld = true
