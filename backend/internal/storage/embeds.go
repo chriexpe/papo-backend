@@ -41,7 +41,7 @@ func embedColumns(alias string) string {
 		alias + ".footer_icon, fm.mime_type, fm.size_bytes, " +
 		alias + ".cache_key, " +
 		alias + ".created_at, " +
-		alias + ".fetched_at, " + alias + ".app_installation_id, " + alias + ".app_surface_id, " + alias + ".frame_width, " + alias + ".frame_height"
+		alias + ".fetched_at, " + alias + ".app_installation_id, " + alias + ".app_surface_id, " + alias + ".app_width, " + alias + ".app_height, " + alias + ".app_load, " + alias + ".app_display, " + alias + ".app_poster"
 }
 
 // embedMediaJoins faz o join com a tabela media (LEFT: embed sem mídia é
@@ -56,10 +56,13 @@ func embedMediaJoins(alias string) string {
 // embedRow é a forma plana de uma row de embeds. embedFromRow monta o
 // models.Embed (autor/thumbnail/image/video/footer compostos) a partir dela.
 type embedRow struct {
+	AppLoad           *string
+	AppDisplay        *string
+	AppPoster         *string
 	AppInstallationID *string
 	AppSurfaceID      *string
-	FrameWidth        *int
-	FrameHeight       *int
+	AppWidth          *int
+	AppHeight         *int
 	ID                string
 	SourceType        string
 	FetchMethod       string
@@ -145,7 +148,7 @@ func scanEmbedRowTargets(r *embedRow) []any {
 		&r.CacheKey,
 		&r.CreatedAt,
 		&r.FetchedAt,
-		&r.AppInstallationID, &r.AppSurfaceID, &r.FrameWidth, &r.FrameHeight,
+		&r.AppInstallationID, &r.AppSurfaceID, &r.AppWidth, &r.AppHeight, &r.AppLoad, &r.AppDisplay, &r.AppPoster,
 	}
 }
 
@@ -175,7 +178,7 @@ func embedMedia(hash *string, mimeType *string, sizeBytes *int64, width *int, he
 // embedFromRow converte a row plana em models.Embed.
 func embedFromRow(r embedRow) models.Embed {
 	embed := models.Embed{
-		AppInstallationID: r.AppInstallationID, AppSurfaceID: r.AppSurfaceID, FrameWidth: r.FrameWidth, FrameHeight: r.FrameHeight,
+		AppInstallationID: r.AppInstallationID, AppSurfaceID: r.AppSurfaceID, AppWidth: r.AppWidth, AppHeight: r.AppHeight, AppLoad: r.AppLoad, AppDisplay: r.AppDisplay, AppPoster: r.AppPoster,
 		ID:          r.ID,
 		SourceType:  r.SourceType,
 		FetchMethod: r.FetchMethod,
@@ -394,7 +397,7 @@ func UpsertLinkEmbed(ctx context.Context, e models.Embed) (models.Embed, error) 
 		        u.image_media, u.image_width, u.image_height, im.mime_type, im.size_bytes,
 		        u.video_url, u.video_type, u.video_width, u.video_height,
 		        u.embed_url, u.footer_text, u.footer_icon, fm.mime_type, fm.size_bytes,
-		        u.cache_key, u.created_at, u.fetched_at, NULL::uuid, NULL::text, NULL::integer, NULL::integer
+		        u.cache_key, u.created_at, u.fetched_at, NULL::uuid, NULL::text, NULL::integer, NULL::integer, NULL::text, NULL::text, NULL::text
 		 FROM upserted u
 		 LEFT JOIN media am ON am.sha_hash = u.author_media
 		 LEFT JOIN media tm ON tm.sha_hash = u.thumbnail_media
@@ -442,9 +445,9 @@ func CreateCustomEmbed(ctx context.Context, e models.Embed, fields []models.Embe
  AND capabilities->>'send_messages'='true' AND capabilities->>'post_app_embeds'='true' FOR SHARE`, e.AppInstallationID).Scan(&active); err != nil {
 			return models.Embed{}, mapStorageError(err)
 		}
-		columns = strings.TrimSuffix(columns, ")") + ",app_installation_id,app_surface_id,frame_width,frame_height)"
-		values = strings.TrimSuffix(values, ")") + ",$27,$28,$29,$30)"
-		args = append(args, e.AppInstallationID, e.AppSurfaceID, e.FrameWidth, e.FrameHeight)
+		columns = strings.TrimSuffix(columns, ")") + ",app_installation_id,app_surface_id,app_width,app_height,app_load,app_display,app_poster)"
+		values = strings.TrimSuffix(values, ")") + ",$27,$28,$29,$30,$31,$32,$33)"
+		args = append(args, e.AppInstallationID, e.AppSurfaceID, e.AppWidth, e.AppHeight, e.AppLoad, e.AppDisplay, e.AppPoster)
 	}
 	row := tx.QueryRowContext(ctx,
 		"INSERT INTO embeds "+columns+" VALUES "+values+" RETURNING id",

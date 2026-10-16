@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Embed representa a tabela embeds: o preview automático de um link
 // (source_type='link', reutilizado pelo cache por URL normalizada em
@@ -14,20 +17,28 @@ import "time"
 // → tabela media); os bytes são servidos por GET /embeds/:embed_id (imagem) e
 // GET /embeds/:embed_id/video (relay de vídeo). Campos ausentes são omitidos.
 type Embed struct {
-	AppInstallationID *string     `json:"app_installation_id,omitempty"`
-	AppSurfaceID      *string     `json:"app_surface_id,omitempty"`
-	FrameWidth        *int        `json:"frame_width,omitempty"`
-	FrameHeight       *int        `json:"frame_height,omitempty"`
-	App               *AppChannel `json:"app,omitempty"`
-	ID                string      `json:"id"`
-	SourceType        string      `json:"source_type"`
-	FetchMethod       string      `json:"fetch_method"`
-	Provider          *string     `json:"provider,omitempty"`
-	SiteName          *string     `json:"site_name,omitempty"`
-	URL               *string     `json:"url,omitempty"`
-	Title             *string     `json:"title,omitempty"`
-	Description       *string     `json:"description,omitempty"`
-	Color             *string     `json:"color,omitempty"`
+	AppInstallationID *string              `json:"-"`
+	AppSurfaceID      *string              `json:"-"`
+	AppWidth          *int                 `json:"-"`
+	AppHeight         *int                 `json:"-"`
+	AppLoad           *string              `json:"-"`
+	AppDisplay        *string              `json:"-"`
+	AppPoster         *string              `json:"-"`
+	Surface           *AppSurfaceReference `json:"surface,omitempty"`
+	Entry             string               `json:"entry,omitempty"`
+	Size              *AppSurfaceSize      `json:"size,omitempty"`
+	Load              string               `json:"load,omitempty"`
+	Display           string               `json:"display,omitempty"`
+	Poster            string               `json:"poster,omitempty"`
+	ID                string               `json:"id"`
+	SourceType        string               `json:"source_type"`
+	FetchMethod       string               `json:"fetch_method"`
+	Provider          *string              `json:"provider,omitempty"`
+	SiteName          *string              `json:"site_name,omitempty"`
+	URL               *string              `json:"url,omitempty"`
+	Title             *string              `json:"title,omitempty"`
+	Description       *string              `json:"description,omitempty"`
+	Color             *string              `json:"color,omitempty"`
 
 	Author    *EmbedAuthor `json:"author,omitempty"`
 	Thumbnail *EmbedMedia  `json:"thumbnail,omitempty"`
@@ -103,4 +114,23 @@ type EmbedField struct {
 type EmbedMessageRef struct {
 	MessageID string
 	ChannelID string
+}
+
+// MarshalJSON mantém embeds nativos intactos e limita frames ao contrato sem header de provedor.
+func (e Embed) MarshalJSON() ([]byte, error) {
+	if e.SourceType == "app" {
+		return json.Marshal(struct {
+			ID         string               `json:"id"`
+			SourceType string               `json:"source_type"`
+			Surface    *AppSurfaceReference `json:"surface"`
+			Entry      string               `json:"entry,omitempty"`
+			Size       *AppSurfaceSize      `json:"size"`
+			Load       string               `json:"load"`
+			Display    string               `json:"display"`
+			Poster     string               `json:"poster,omitempty"`
+			Title      *string              `json:"title,omitempty"`
+		}{e.ID, e.SourceType, e.Surface, e.Entry, e.Size, e.Load, e.Display, e.Poster, e.Title})
+	}
+	type native Embed
+	return json.Marshal(native(e))
 }
