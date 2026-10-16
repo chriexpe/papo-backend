@@ -1263,7 +1263,8 @@ func TestListUsersRouteWithAuth(t *testing.T) {
 		t.Fatalf("PUT /users/:id retornou %d (corpo: %s)", putRec.Code, putRec.Body.String())
 	}
 
-	rec := do(t, e, http.MethodGet, "/users", nil, authCookie(token))
+	// A fixture recém-criada está na página mais recente, mesmo com outros usuários anteriores.
+	rec := do(t, e, http.MethodGet, "/users?order=desc", nil, authCookie(token))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("esperava status 200, obtive %d (corpo: %s)", rec.Code, rec.Body.String())
