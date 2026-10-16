@@ -63,11 +63,17 @@ manifest ou templates. Não lê nem emite cookies. Traversal, diretórios, symli
 extensões fora do allowlist são recusados. Instalação desabilitada/revogada: 404.
 
 Headers: `Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self'`
-mais somente origens aprovadas; nunca `allow-same-origin`. Também envia `nosniff`,
-`Referrer-Policy: no-referrer` e `Cross-Origin-Resource-Policy: same-origin`. ETag combina
+mais a origem explícita configurada (`APPS_ORIGIN`, ou origem de `BaseURL` quando ausente)
+e as origens remotas aprovadas; nunca `allow-same-origin`. A origem nunca vem de Host
+ou Forwarded da requisição. Também envia `nosniff`,
+`Referrer-Policy: no-referrer` e `Cross-Origin-Resource-Policy: cross-origin`. ETag combina
 digest do plugin e caminho; `Cache-Control: public, max-age=0, must-revalidate` revalida
 antes de reutilizar conteúdo. Respostas indisponíveis usam `no-store`.
-A API rejeita CORS para `Origin: null`, inclusive se a configuração incluir `*` ou `null`.
+Somente a UI estática envia `Access-Control-Allow-Origin: *`, sem
+`Access-Control-Allow-Credentials`, inclusive com o CORS global ativo e na revalidação
+304. Isso permite CSS, imagens, fontes, módulos JS e fetch de JSON a partir da origem
+opaca do sandbox. O restante da API continua rejeitando CORS para `Origin: null`,
+inclusive se a configuração incluir `*` ou `null`.
 
 Superfícies remotas exigem HTTPS, máximo 2.048 caracteres, host diferente de `BASE_URL`,
 sem localhost/redes privadas/reservadas, userinfo ou portas não padrão. O origin exato
