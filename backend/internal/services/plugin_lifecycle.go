@@ -222,6 +222,11 @@ func (m *PluginManager) Patch(ctx context.Context, actor, id string, o PluginOpt
 func (m *PluginManager) Trigger(parent context.Context, id string, input json.RawMessage) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
+	return m.callEvent(ctx, id, "on_trigger", input)
+}
+
+// callEvent compartilha fila, upgrade e quarentena entre todos os callbacks.
+func (m *PluginManager) callEvent(ctx context.Context, id, event string, input json.RawMessage) ([]byte, error) {
 	unlock, e := m.lock(ctx, id)
 	if e != nil {
 		return nil, e
@@ -262,7 +267,7 @@ func (m *PluginManager) Trigger(parent context.Context, id string, input json.Ra
 			return nil, e
 		}
 	}
-	out, e := m.invoke(ctx, a, b, "on_trigger", input)
+	out, e := m.invoke(ctx, a, b, event, input)
 	if errors.Is(e, plugins.ErrQuarantined) {
 		_ = m.quarantine(ctx, a)
 	}

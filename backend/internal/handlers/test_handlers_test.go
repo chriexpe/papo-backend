@@ -156,6 +156,7 @@ func newApp() *echo.Echo {
 	}
 	services.SetPluginSurfaceSource(pluginManager)
 	RegisterPluginRoutes(e, cfg.BaseURL, pluginManager)
+	RegisterAppInteractionRoutes(e, cfg.BaseURL, pluginManager)
 	return e
 }
 

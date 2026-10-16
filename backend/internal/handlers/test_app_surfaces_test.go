@@ -507,10 +507,12 @@ func TestAppFrameReadPayload(t *testing.T) {
 	a, source := newHandlerSurfaces(t, id)
 	b := source[a.ID]
 	b.Surfaces[1].Load = "visible"
-	b.Surfaces[1].Poster = "ui/image.png"
+	b.Surfaces[1].Poster = "ui/image.svg"
 	source[a.ID] = b
 	ch := createChannelFor(t, "frame_"+randHex(4))
-	scopeAppViaRoute(t, e, token, a.ID, ch.ID)
+	if err := services.AddAppScope(context.Background(), id, a.ID, ch.ID); err != nil {
+		t.Fatal(err)
+	}
 	message, _, err := services.CreatePluginMessage(context.Background(), a.ID, ch.ID, "", "", "", nil, []services.EmbedInput{{SourceType: "app", AppSurfaceID: "result", Title: "Resultado"}})
 	if err != nil {
 		t.Fatal(err)
@@ -555,10 +557,10 @@ func TestAppFrameReadPayload(t *testing.T) {
 			if live {
 				var posterURL string
 				json.Unmarshal(frame["poster"], &posterURL)
-				if posterURL != "/apps/"+a.ID+"/ui/image.png" {
+				if posterURL != "/apps/"+a.ID+"/ui/image.svg" {
 					t.Fatal(posterURL)
 				}
-				if image := do(t, e, http.MethodGet, posterURL, nil, nil); image.Code != 200 || !strings.HasPrefix(image.Header().Get("Content-Type"), "image/png") {
+				if image := do(t, e, http.MethodGet, posterURL, nil, nil); image.Code != 200 || !strings.HasPrefix(image.Header().Get("Content-Type"), "image/svg+xml") {
 					t.Fatal(image.Code, image.Header())
 				}
 			}

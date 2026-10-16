@@ -28,6 +28,7 @@ var ErrAppChannelManaged = errors.New("este canal pertence a um app; desative o 
 
 // PluginSurfaceBundle contém apenas metadados aprovados; não executa código do plugin.
 type PluginSurfaceBundle struct {
+	UserActions     []models.AppUserAction
 	Directory       string
 	Digest          string
 	Enabled         bool
@@ -288,6 +289,14 @@ func channelAppPayload(ctx context.Context, id string) (*models.AppChannel, erro
 		app.Available = false
 		app.Entry = ""
 		return app, nil
+	}
+	if b, e := ResolvePluginSurfaceBundle(ctx, app.AppInstallationID); e == nil {
+		app.UserActions = append([]models.AppUserAction(nil), b.UserActions...)
+		for i := range app.UserActions {
+			if app.UserActions[i].Icon != "" {
+				app.UserActions[i].Icon = "/apps/" + app.AppInstallationID + "/" + app.UserActions[i].Icon
+			}
+		}
 	}
 	if app.Source == "bundled" {
 		app.Entry = "/apps/" + app.AppInstallationID + "/" + app.Entry

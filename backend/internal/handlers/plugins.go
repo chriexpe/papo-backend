@@ -121,13 +121,16 @@ func pluginProblem(c echo.Context, baseURL string, err error) error {
 // PluginEffects usa os mesmos efeitos de mensagens e os snapshots de canais da PR 18.
 func PluginEffects() services.PluginEffects {
 	return services.PluginEffects{
+		Invite: func(ctx context.Context, v models.AppInvite) {
+			websocket.GetHub().BroadcastToUsers(websocket.NewNotificationOutbound{Type: websocket.EventTypeNewNotification, ID: v.ID, UserID: v.InviterID, Kind: "app_invite", AppInstallationID: v.InstallationID, Payload: v, ExpiresAt: &v.ExpiresAt}, map[string]bool{v.UserID: true})
+		},
 		Channels:   BroadcastAppChannelChanges,
 		Invalidate: BroadcastAppInvalidation,
 		Created: func(ctx context.Context, m models.MessageWithAttachment, owner string) {
 			publishCreatedMessageCtx(ctx, "plugin", m, owner)
 		},
 		Edited: func(ctx context.Context, m models.MessageWithAttachment, owner string) {
-			broadcastChannelEventCtx(ctx, "plugin", m.ChannelID, websocket.MessageEditOutbound{Type: websocket.EventTypeMessageEdit, ID: m.ID, ChannelID: m.ChannelID, Content: derefString(m.Content), EditedAt: derefTime(m.EditedAt)})
+			broadcastChannelEventCtx(ctx, "plugin", m.ChannelID, websocket.MessageEditOutbound{Type: websocket.EventTypeMessageEdit, ID: m.ID, ChannelID: m.ChannelID, Content: derefString(m.Content), EditedAt: derefTime(m.EditedAt), Components: &m.Components})
 			broadcastMessageEmbedsUpdate(ctx, "plugin", m.ChannelID, m.ID)
 			go processEditedMessageEmbeds(context.Background(), "plugin", m.ChannelID, m.ID, owner, derefString(m.Content), m.Embeds)
 		},

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"net/url"
+	"papo/internal/models"
 	"path"
 	"regexp"
 	"strings"
@@ -31,8 +32,9 @@ type Manifest struct {
 	Runtime struct {
 		MaxMemoryMB int `toml:"max_memory_mb" json:"max_memory_mb"`
 	} `toml:"runtime" json:"runtime"`
-	Settings []Setting `toml:"settings" json:"settings"`
-	Surfaces []Surface `toml:"surfaces" json:"surfaces"`
+	UserActions []models.AppUserAction `toml:"user_actions" json:"user_actions"`
+	Settings    []Setting              `toml:"settings" json:"settings"`
+	Surfaces    []Surface              `toml:"surfaces" json:"surfaces"`
 }
 
 // Setting declara um valor visível no consentimento; channel implica escopo explícito.
@@ -45,12 +47,16 @@ type Setting struct {
 
 // Surface aponta para um asset UI ou uma URL que será resolvida antes do consentimento.
 type Surface struct {
-	ID              string `toml:"id" json:"id"`
-	Kind            string `toml:"kind" json:"kind"`
-	DefaultName     string `toml:"default_name" json:"default_name,omitempty"`
-	Entry           string `toml:"entry" json:"entry,omitempty"`
-	EntryURL        string `toml:"entry_url" json:"entry_url,omitempty"`
-	EntryURLSetting string `toml:"entry_url_setting" json:"entry_url_setting,omitempty"`
+	ID              string                `toml:"id" json:"id"`
+	Kind            string                `toml:"kind" json:"kind"`
+	DefaultName     string                `toml:"default_name" json:"default_name,omitempty"`
+	Entry           string                `toml:"entry" json:"entry,omitempty"`
+	EntryURL        string                `toml:"entry_url" json:"entry_url,omitempty"`
+	EntryURLSetting string                `toml:"entry_url_setting" json:"entry_url_setting,omitempty"`
+	Size            models.AppSurfaceSize `toml:"size" json:"size"`
+	Load            string                `toml:"load" json:"load"`
+	Display         string                `toml:"display" json:"display"`
+	Poster          string                `toml:"poster" json:"poster"`
 	Frame           struct {
 		Width  int `toml:"width" json:"width"`
 		Height int `toml:"height" json:"height"`
@@ -143,8 +149,36 @@ func Parse(data []byte, c Config) (Manifest, error) {
 		if s.Kind == "channel" && (!displayName(s.DefaultName) || utf8.RuneCountInString(s.DefaultName) > 100) {
 			return m, fmt.Errorf("nome do canal inválido")
 		}
+		if s.Load != "" && s.Load != "click" && s.Load != "visible" {
+			return m, fmt.Errorf("load inválido")
+		}
+		if s.Display != "" && s.Display != "inline" && s.Display != "overlay" {
+			return m, fmt.Errorf("display inválido")
+		}
+		if s.Display == "overlay" && s.Load == "visible" {
+			return m, fmt.Errorf("overlay exige click")
+		}
+		if s.Size.Width < 0 || s.Size.Height < 0 || s.Size.Width > 1920 || s.Size.Height > 1080 {
+			return m, fmt.Errorf("size inválido")
+		}
+		if s.Poster != "" && (!SafePath(s.Poster) || !strings.HasPrefix(s.Poster, "ui/")) {
+			return m, fmt.Errorf("poster inválido")
+		}
 		if s.Frame.Width < 0 || s.Frame.Width > 1920 || s.Frame.Height < 0 || s.Frame.Height > 1080 {
 			return m, fmt.Errorf("frame inválido")
+		}
+	}
+	seen = map[string]bool{}
+	if len(m.UserActions) > 20 {
+		return m, fmt.Errorf("ações demais")
+	}
+	for _, a := range m.UserActions {
+		if !identifier.MatchString(a.ID) || seen[a.ID] || !displayName(a.Label) || utf8.RuneCountInString(a.Label) > 80 {
+			return m, fmt.Errorf("ação inválida")
+		}
+		seen[a.ID] = true
+		if a.Icon != "" && (!SafePath(a.Icon) || !strings.HasPrefix(a.Icon, "ui/") || !imageExtension(a.Icon)) {
+			return m, fmt.Errorf("ícone inválido")
 		}
 	}
 	for _, s := range m.RemoteOrigins {
@@ -246,6 +280,15 @@ func validDefault(s Setting) bool {
 		}
 		_, e := HTTPSOrigin(v)
 		return e == nil
+	}
+	return false
+}
+
+// imageExtension mantém ícones de ações limitados a imagens estáticas da UI.
+func imageExtension(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico":
+		return true
 	}
 	return false
 }

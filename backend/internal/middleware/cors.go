@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
@@ -22,6 +23,9 @@ func CORS(origins []string) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		handler := cors(next)
 		return func(c echo.Context) error {
+			if strings.HasPrefix(c.Path(), "/apps/") && (strings.HasSuffix(c.Path(), "/session") || strings.HasSuffix(c.Path(), "/rpc")) {
+				return next(c)
+			}
 			if c.Request().Header.Get(echo.HeaderOrigin) == "null" {
 				// Nunca refletir a origem opaca, nem com wildcard ou configuração explícita.
 				if c.Request().Method == http.MethodOptions {

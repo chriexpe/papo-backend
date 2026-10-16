@@ -632,6 +632,7 @@ func publishCreatedMessageCtx(ctx context.Context, requestID string, message mod
 		CreatedAt:         message.CreatedAt,
 		ReplyTo:           message.ReplyTo,
 		Attachments:       message.Attachments,
+		Components:        message.Components,
 	})
 	broadcastDirectConversationUpdates(ctx, message.ChannelID)
 

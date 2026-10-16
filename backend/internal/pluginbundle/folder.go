@@ -162,8 +162,16 @@ func Load(ctx context.Context, dir string, c Config, validate Validator) (Bundle
 		return b, fmt.Errorf("id difere da pasta")
 	}
 	for _, s := range b.Manifest.Surfaces {
+		if s.Poster != "" && !contains(files, s.Poster) {
+			return b, fmt.Errorf("poster inexistente: %s", s.Poster)
+		}
 		if s.Entry != "" && !contains(files, s.Entry) {
 			return b, fmt.Errorf("entry inexistente: %s", s.Entry)
+		}
+	}
+	for _, a := range b.Manifest.UserActions {
+		if a.Icon != "" && !contains(files, a.Icon) {
+			return b, fmt.Errorf("ícone inexistente: %s", a.Icon)
 		}
 	}
 	if validate != nil {

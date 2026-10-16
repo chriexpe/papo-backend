@@ -16,17 +16,21 @@ import (
 
 // pluginRequest não aceita identidade nem namespace fornecido pelo guest.
 type pluginRequest struct {
-	Method            string          `json:"method"`
-	Key               string          `json:"key"`
-	Value             json.RawMessage `json:"value"`
-	Path              string          `json:"path"`
-	Offset            int64           `json:"offset"`
-	Length            int64           `json:"length"`
-	ChannelID         string          `json:"channel_id"`
-	MessageID         string          `json:"message_id"`
-	Content           string          `json:"content"`
-	ExternalMessageID string          `json:"external_message_id"`
-	Embeds            []EmbedInput    `json:"embeds"`
+	Components        *[][]models.AppButton `json:"components"`
+	ToUserID          string                `json:"to_user_id"`
+	Text              string                `json:"text"`
+	Data              json.RawMessage       `json:"data"`
+	Method            string                `json:"method"`
+	Key               string                `json:"key"`
+	Value             json.RawMessage       `json:"value"`
+	Path              string                `json:"path"`
+	Offset            int64                 `json:"offset"`
+	Length            int64                 `json:"length"`
+	ChannelID         string                `json:"channel_id"`
+	MessageID         string                `json:"message_id"`
+	Content           string                `json:"content"`
+	ExternalMessageID string                `json:"external_message_id"`
+	Embeds            []EmbedInput          `json:"embeds"`
 }
 
 // hostCall recarrega estado, grants e digest antes de cada efeito e leitura de asset.
@@ -79,36 +83,77 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, data []byte) ([
 			}
 			result, e = storage.MutateAppStorage(ctx, id, req.Key, req.Value, req.Method == "kv.delete")
 		}
+	case "invite.send":
+		result, e = m.SendAppInvite(ctx, a, req.ToUserID, req.Text, req.Data)
 	case "message.send":
-		if len(req.Embeds) > 1 {
-			return pluginResponse(nil, ErrInvalidEmbed)
+		if req.Components != nil {
+			if e = ValidateAppButtons(ctx, id, *req.Components); e != nil {
+				return pluginResponse(nil, e)
+			}
 		}
+
+		frames := 0
 		for _, embed := range req.Embeds {
-			if embed.SourceType != "app" {
+			if embed.SourceType == "app" {
+				frames++
+			}
+			if embed.SourceType != "app" && embed.SourceType != "custom" {
 				return pluginResponse(nil, ErrInvalidEmbed)
 			}
 		}
+		if frames > 1 {
+			return pluginResponse(nil, ErrInvalidEmbed)
+		}
 		var msg models.MessageWithAttachment
 		var created bool
+		if req.Components != nil && len(*req.Components) > 0 {
+			ctx = context.WithValue(ctx, appButtonsKey{}, true)
+		}
 		msg, created, e = CreatePluginMessage(ctx, id, req.ChannelID, req.ExternalMessageID, req.Content, "", nil, req.Embeds)
+		if e == nil && created && req.Components != nil {
+			e = storage.SaveAppComponents(ctx, id, req.ChannelID, msg.ID, *req.Components)
+		}
 		if e == nil {
+			comps, err := storage.AppComponents(ctx, []string{msg.ID})
+			if err != nil {
+				return pluginResponse(nil, err)
+			}
+			msg.Components = comps[msg.ID]
 			result = msg
 			if created && m.Effects.Created != nil {
 				m.Effects.Created(ctx, msg, a.CreatedBy)
 			}
 		}
 	case "message.edit":
-		if len(req.Embeds) > 1 {
-			return pluginResponse(nil, ErrInvalidEmbed)
+		if req.Components != nil {
+			if e = ValidateAppButtons(ctx, id, *req.Components); e != nil {
+				return pluginResponse(nil, e)
+			}
 		}
+
+		frames := 0
 		for _, embed := range req.Embeds {
-			if embed.SourceType != "app" {
+			if embed.SourceType == "app" {
+				frames++
+			}
+			if embed.SourceType != "app" && embed.SourceType != "custom" {
 				return pluginResponse(nil, ErrInvalidEmbed)
 			}
 		}
+		if frames > 1 {
+			return pluginResponse(nil, ErrInvalidEmbed)
+		}
 		var msg models.MessageWithAttachment
 		msg, e = EditAppMessage(ctx, a, req.ChannelID, req.MessageID, req.Content, req.Embeds)
+		if e == nil && req.Components != nil {
+			e = storage.SaveAppComponents(ctx, id, req.ChannelID, msg.ID, *req.Components)
+		}
 		if e == nil {
+			comps, err := storage.AppComponents(ctx, []string{msg.ID})
+			if err != nil {
+				return pluginResponse(nil, err)
+			}
+			msg.Components = comps[msg.ID]
 			result = msg
 			if m.Effects.Edited != nil {
 				m.Effects.Edited(ctx, msg, a.CreatedBy)

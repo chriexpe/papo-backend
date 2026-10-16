@@ -29,6 +29,7 @@ var ErrPluginConsent = errors.New("consentimento desatualizado; gere e aprove um
 
 // PluginEffects mantém transportes na camada de handlers, inclusive no hot reload.
 type PluginEffects struct {
+	Invite     func(context.Context, models.AppInvite)
 	Invalidate func(context.Context, string)
 	Channels   func(context.Context, []AppChannelChange)
 	Created    func(context.Context, models.MessageWithAttachment, string)
@@ -335,7 +336,7 @@ func (m *PluginManager) Resolve(ctx context.Context, id string) (PluginSurfaceBu
 			return PluginSurfaceBundle{}, ErrPermissionDenied
 		}
 	}
-	return PluginSurfaceBundle{Directory: b.Directory, Digest: b.Digest, Enabled: true, ApprovedOrigins: origins, Surfaces: surfaces}, nil
+	return PluginSurfaceBundle{Directory: b.Directory, Digest: b.Digest, Enabled: true, ApprovedOrigins: origins, Surfaces: surfaces, UserActions: b.Manifest.UserActions}, nil
 }
 
 // quarantine mantém canais existentes e torna superfícies/host calls indisponíveis.
@@ -384,6 +385,9 @@ func consentEqual(a, b string) bool {
 }
 
 func (m *PluginManager) invalidate(ctx context.Context, id string) {
+	if e := storage.RevokeAppUI(ctx, id); e != nil {
+		utils.Errorf("falha ao revogar sessões UI: %v", e)
+	}
 	if m.Effects.Invalidate != nil {
 		m.Effects.Invalidate(ctx, id)
 	}

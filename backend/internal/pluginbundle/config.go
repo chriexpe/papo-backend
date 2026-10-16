@@ -19,7 +19,7 @@ type Config struct {
 
 // LoadConfig rejeita limites inválidos em vez de ampliar permissões silenciosamente.
 func LoadConfig() (Config, error) {
-	c := Config{Directory: "plugins", WasmBytes: 16 << 20, FolderBytes: 64 << 20, ManifestBytes: 64 << 10, AssetBytes: 4 << 20, IconBytes: 2 << 20, ReadBytes: 32 << 10, Files: 512, DefaultMemoryMB: 16, MaxMemoryMB: 64, Allowed: []string{"send_messages", "read_messages", "post_app_embeds", "private_storage"}}
+	c := Config{Directory: "plugins", WasmBytes: 16 << 20, FolderBytes: 64 << 20, ManifestBytes: 64 << 10, AssetBytes: 4 << 20, IconBytes: 2 << 20, ReadBytes: 32 << 10, Files: 512, DefaultMemoryMB: 16, MaxMemoryMB: 64, Allowed: []string{"send_messages", "read_messages", "post_app_embeds", "private_storage", "send_invites"}}
 	if s := os.Getenv("PLUGINS_DIR"); s != "" {
 		c.Directory = s
 	}
@@ -92,7 +92,7 @@ func (c Config) PermissionAllowed(p string) bool {
 // knownPermission fecha o universo das capacidades do manifest v1.
 func knownPermission(p string) bool {
 	switch p {
-	case "send_messages", "read_messages", "post_app_embeds", "private_storage":
+	case "send_messages", "read_messages", "post_app_embeds", "private_storage", "send_invites":
 		return true
 	}
 	return false

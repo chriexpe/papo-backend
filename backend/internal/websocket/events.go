@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"encoding/json"
 	"time"
 
 	"papo/internal/models"
@@ -178,10 +179,11 @@ type ScreenShareStopInbound struct {
 // ReplyTo é a mensagem referenciada (null quando a mensagem não é uma
 // resposta); pode apontar para uma mensagem já excluída (apontador pendente).
 type MessageOutbound struct {
-	Type      EventType `json:"type"`
-	ID        string    `json:"id"`
-	ChannelID string    `json:"channel_id"`
-	AuthorID  string    `json:"author_id"`
+	Components [][]models.AppButton `json:"components,omitempty"`
+	Type       EventType            `json:"type"`
+	ID         string               `json:"id"`
+	ChannelID  string               `json:"channel_id"`
+	AuthorID   string               `json:"author_id"`
 	// WebhookID/ExternalAuthor estão presentes somente em mensagens enviadas
 	// por webhook (author_id vazio nesse caso).
 	AppInstallationID *string                    `json:"app_installation_id,omitempty"`
@@ -195,11 +197,12 @@ type MessageOutbound struct {
 
 // MessageEditOutbound é o evento de edição de mensagem distribuído aos clientes.
 type MessageEditOutbound struct {
-	Type      EventType `json:"type"`
-	ID        string    `json:"id"`
-	ChannelID string    `json:"channel_id"`
-	Content   string    `json:"content"`
-	EditedAt  time.Time `json:"edited_at"`
+	Components *[][]models.AppButton `json:"components,omitempty"`
+	Type       EventType             `json:"type"`
+	ID         string                `json:"id"`
+	ChannelID  string                `json:"channel_id"`
+	Content    string                `json:"content"`
+	EditedAt   time.Time             `json:"edited_at"`
 }
 
 // MessageDeleteOutbound é o evento de exclusão de mensagem distribuído aos clientes.
@@ -371,11 +374,15 @@ type ErrorOutbound struct {
 // quando a configuração 'all' gera evento sem row); UserID é o autor da
 // mensagem; MessageContent é o conteúdo truncado a 512 caracteres.
 type NewNotificationOutbound struct {
-	Type           EventType `json:"type"`
-	ID             string    `json:"id"`
-	UserID         string    `json:"user_id"`
-	MessageID      string    `json:"message_id"`
-	MessageContent string    `json:"message_content"`
+	Kind              string     `json:"kind,omitempty"`
+	AppInstallationID string     `json:"app_installation_id,omitempty"`
+	Payload           any        `json:"payload,omitempty"`
+	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
+	Type              EventType  `json:"type"`
+	ID                string     `json:"id"`
+	UserID            string     `json:"user_id"`
+	MessageID         string     `json:"message_id"`
+	MessageContent    string     `json:"message_content"`
 }
 
 // AppInvalidateOutbound requires destroying live surfaces and fetching fresh payloads.
@@ -383,4 +390,16 @@ type NewNotificationOutbound struct {
 type AppInvalidateOutbound struct {
 	Type              EventType `json:"type"`
 	AppInstallationID string    `json:"app_installation_id"`
+}
+
+// MarshalJSON permite message_id nulo somente no novo tipo de convite.
+func (n NewNotificationOutbound) MarshalJSON() ([]byte, error) {
+	type plain NewNotificationOutbound
+	if n.Kind == "app_invite" {
+		return json.Marshal(struct {
+			plain
+			MessageID *string `json:"message_id"`
+		}{plain(n), nil})
+	}
+	return json.Marshal(plain(n))
 }

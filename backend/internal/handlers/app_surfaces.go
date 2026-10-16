@@ -77,6 +77,10 @@ func broadcastAppChannelMetadata(c echo.Context, id string) {
 
 // BroadcastAppInvalidation revokes live surfaces only for current readers of affected channels.
 func BroadcastAppInvalidation(ctx context.Context, installationID string) {
+	if err := storage.RevokeAppUI(ctx, installationID); err != nil {
+		utils.Errorf("falha ao revogar sessões UI: %v", err)
+		return
+	}
 	ids, err := storage.AppSurfaceChannelIDs(ctx, installationID)
 	if err != nil {
 		utils.Errorf("websocket: app invalidation lookup: %v", err)

@@ -140,7 +140,7 @@ func TestPluginConsentLifecycle(t *testing.T) {
 		OK     bool                         `json:"ok"`
 		Result models.MessageWithAttachment `json:"result"`
 	}
-	if json.Unmarshal(out, &result) != nil || !result.OK || len(result.Result.Embeds) != 1 || result.Result.Embeds[0].App == nil || !result.Result.Embeds[0].App.Available {
+	if json.Unmarshal(out, &result) != nil || !result.OK || len(result.Result.Embeds) != 1 || result.Result.Embeds[0].Surface == nil || result.Result.Embeds[0].Entry == "" {
 		t.Fatalf("embed: %s", out)
 	}
 	if result.Result.Content == nil || !strings.Contains(*result.Result.Content, "asset.read") {
@@ -191,9 +191,12 @@ func TestPluginConsentLifecycle(t *testing.T) {
 	if ok, _ := storage.AppHasScope(testCtx(), a.ID, ch.ID); ok {
 		t.Fatal("escopo sobreviveu disable")
 	}
-	embed := result.Result.Embeds[0]
-	decorateAppEmbed(testCtx(), &embed)
-	if embed.App.Available || embed.App.Entry != "" {
+	items, err := ListMessageEmbeds(testCtx(), []string{result.Result.ID})
+	if err != nil || len(items[result.Result.ID]) != 1 {
+		t.Fatal(items, err)
+	}
+	embed := items[result.Result.ID][0]
+	if embed.Entry != "" {
 		t.Fatal("embed desativado ativo")
 	}
 	a2 := enableReference(t, restarted, u, ch)

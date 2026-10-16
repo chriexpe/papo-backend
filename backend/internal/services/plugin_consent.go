@@ -195,7 +195,10 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 	}
 	p.Origins = sorted(p.Origins)
 	for _, s := range b.Manifest.Surfaces {
-		d := AppSurfaceDeclaration{ID: s.ID, Kind: s.Kind, DefaultName: s.DefaultName, Source: "bundled", Entry: s.Entry, FrameWidth: s.Frame.Width, FrameHeight: s.Frame.Height}
+		d := AppSurfaceDeclaration{ID: s.ID, Kind: s.Kind, DefaultName: s.DefaultName, Source: "bundled", Entry: s.Entry, Size: s.Size, Load: s.Load, Display: s.Display, Poster: s.Poster}
+		if d.Size.Width == 0 && d.Size.Height == 0 {
+			d.Size = models.AppSurfaceSize{Width: s.Frame.Width, Height: s.Frame.Height}
+		}
 		if s.EntryURL != "" {
 			d.Source = "remote"
 			d.Entry = s.EntryURL
@@ -280,7 +283,7 @@ func expanded(next, old []string) bool {
 
 // capabilities converte somente grants conhecidos para os checks comuns do REST.
 func capabilities(p []string) models.AppCapabilities {
-	return models.AppCapabilities{SendMessages: has(p, "send_messages"), ReadMessages: has(p, "read_messages"), PostAppEmbeds: has(p, "post_app_embeds"), PrivateStorage: has(p, "private_storage")}
+	return models.AppCapabilities{SendMessages: has(p, "send_messages"), ReadMessages: has(p, "read_messages"), PostAppEmbeds: has(p, "post_app_embeds"), PrivateStorage: has(p, "private_storage"), SendInvites: has(p, "send_invites")}
 }
 
 // jsonValue mantém uma representação SQL/JSON canônica sem expor objetos mutáveis.

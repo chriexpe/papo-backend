@@ -143,8 +143,13 @@ func ListMessagesOrdered(ctx context.Context, channelID, userID string, since *t
 	if err != nil {
 		return models.MessageList{}, err
 	}
+	componentsByMessage, err := storage.AppComponents(ctx, messageIDs)
+	if err != nil {
+		return models.MessageList{}, err
+	}
 	for i := range messages {
 		messages[i].Embeds = embedsByMessage[messages[i].ID]
+		messages[i].Components = componentsByMessage[messages[i].ID]
 		messages[i].Reactions = reactionCounts[messages[i].ID]
 		messages[i].UserReactions = userReactions[messages[i].ID]
 		setAttachmentThumbnails(&messages[i].Attachments, thumbnails)
@@ -287,7 +292,7 @@ func createMessageAs(ctx context.Context, channelID string, sender messageSender
 	if utf8.RuneCountInString(content) > maxMessageContentLength {
 		return models.MessageWithAttachment{}, false, ErrInvalidInput
 	}
-	if content == "" && len(attachments) == 0 && len(embeds) == 0 {
+	if content == "" && len(attachments) == 0 && len(embeds) == 0 && ctx.Value(appButtonsKey{}) != true {
 		return models.MessageWithAttachment{}, false, ErrInvalidInput
 	}
 	if len(attachments) > maxAttachmentsPerMessage {
@@ -1276,8 +1281,13 @@ func ListPinnedMessages(ctx context.Context, channelID, userID string) (models.P
 	if err != nil {
 		return models.PinnedMessageList{}, err
 	}
+	componentsByMessage, err := storage.AppComponents(ctx, messageIDs)
+	if err != nil {
+		return models.PinnedMessageList{}, err
+	}
 	for i := range messages {
 		messages[i].Embeds = embedsByMessage[messages[i].ID]
+		messages[i].Components = componentsByMessage[messages[i].ID]
 		messages[i].Reactions = reactionCounts[messages[i].ID]
 		messages[i].UserReactions = userReactions[messages[i].ID]
 		setAttachmentThumbnails(&messages[i].Attachments, thumbnails)
