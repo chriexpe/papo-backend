@@ -2866,15 +2866,19 @@ paths:
         fontes, texto e módulos Wasm dentro de ui/.
 
         Headers obrigatórios (§9.1.4):
-        Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self' <origem-de-BaseURL>
-        (origem explícita da configuração BaseURL, sem caminho, mais origens HTTPS aprovadas; nunca allow-same-origin).
+        Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self' <origem servida>
+        (origem explícita extraída de APPS_ORIGIN ou BaseURL, nunca do Host/Forwarded
+        da requisição; acrescenta as origens remotas aprovadas; nunca allow-same-origin).
         X-Content-Type-Options: nosniff
         Referrer-Policy: no-referrer
         Cross-Origin-Resource-Policy: cross-origin
-        Access-Control-Allow-Origin: * (somente esta rota; sem Access-Control-Allow-Credentials).
+        Access-Control-Allow-Origin: *
+        Access-Control-Allow-Credentials: ausente (mesmo com o CORS global habilitado)
         ETag: derivado do digest do plugin e do caminho do asset.
         Cache-Control: public, max-age=0, must-revalidate (revalida o digest em cada uso).
-        Indisponibilidade responde no-store. A API nunca permite Origin: null,
+        Os mesmos headers de isolamento/CORS acompanham respostas 304. UI estática permite
+        a leitura por páginas de origem opaca, inclusive fontes, módulos JS e fetch().
+        Indisponibilidade responde no-store. O restante da API nunca permite Origin: null,
         mesmo quando CORS_ORIGINS contiver wildcard ou null.
       parameters:
         - {name: installation_id, in: path, required: true, schema: {type: string, format: uuid}}
@@ -2891,7 +2895,7 @@ paths:
             X-Content-Type-Options: {schema: {type: string, enum: [nosniff]}}
             Referrer-Policy: {schema: {type: string, enum: [no-referrer]}}
             Cross-Origin-Resource-Policy: {schema: {type: string, enum: [cross-origin]}}
-            Access-Control-Allow-Origin: {schema: {type: string, enum: ["*"]}}
+            Access-Control-Allow-Origin: {schema: {type: string, enum: ['*']}}
             ETag: {schema: {type: string}}
             Cache-Control: {schema: {type: string}}
           content:
@@ -4490,8 +4494,9 @@ components:
            validação de embed mais rejeição a localhost/redes privadas/reservadas,
            inclusive DNS. Backend nunca faz proxy da superfície remota. Bundled
            aceita somente /apps/<instalação ativa>/ui/ com sandbox allow-scripts
-           allow-forms, sem allow-same-origin, default-src 'self' <origem-de-BaseURL> mais origens
-           aprovadas e headers da rota UI. Essa é a única exceção de URL Papo
+           allow-forms, sem allow-same-origin, default-src 'self' mais a origem servida
+           configurada e origens aprovadas. Assets estáticos usam CORP cross-origin e
+           CORS * sem credenciais; somente essa rota permite leitura pela origem opaca. Essa é a única exceção de URL Papo
            aceita pelo cliente, somente quando recebida num payload autorizado.
            API nunca aceita null no CORS. Origem opaca não tem localStorage/IndexedDB.
         5. Travar navegação à origem, inclusive redirects/scripts. Negar popups,

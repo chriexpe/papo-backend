@@ -69,6 +69,7 @@ func newHandlerSurfaces(t *testing.T, ownerID string) (models.AppInstallation, h
 // TestAppUIStaticRoute cobre isolamento, cookies ignorados, cache, desativação e confinamento.
 func TestAppUIStaticRoute(t *testing.T) {
 	t.Setenv("BASE_URL", "https://papo.com:8443/proxy/")
+	t.Setenv("APPS_ORIGIN", "")
 	cleanServers(context.Background())
 	e := newApp()
 	id, _ := registerAndLogin(t, e)
@@ -408,5 +409,68 @@ func TestAppChannelTypingRejected(t *testing.T) {
 	}
 	if err := json.Unmarshal(readWSMessage(t, conn), &event); err != nil || event.Type != "error" {
 		t.Fatal(event, err)
+	}
+}
+
+// TestAppUIOpaqueOriginAssets cobre recursos reais, CORS global e origens vindas da configuração.
+func TestAppUIOpaqueOriginAssets(t *testing.T) {
+	t.Setenv("BASE_URL", "https://papo.example:8443/api/")
+	t.Setenv("APPS_ORIGIN", "")
+	cleanServers(context.Background())
+	id, _ := registerAndLogin(t, newApp())
+	a, source := newHandlerSurfaces(t, id)
+	b := source[a.ID]
+	b.ApprovedOrigins = []string{"https://8.8.8.8"}
+	source[a.ID] = b
+	for _, served := range []struct{ name, apps, origin string }{
+		{"base_url", "", "https://papo.example:8443"},
+		{"apps_origin", "https://apps.example:9443/", "https://apps.example:9443"},
+	} {
+		t.Run(served.name, func(t *testing.T) {
+			t.Setenv("APPS_ORIGIN", served.apps)
+			e := newApp()
+			services.SetPluginSurfaceSource(source)
+			e.Use(middleware.CORS([]string{"https://client.example"}))
+			for _, asset := range []struct{ file, mime string }{
+				{"index.html", "text/html"}, {"result.html", "text/html"}, {"style.css", "text/css"}, {"main.mjs", "javascript"},
+				{"image.svg", "image/svg+xml"}, {"fixture.ttf", "font/ttf"}, {"data.json", "application/json"},
+			} {
+				for _, origin := range []string{"null", "https://client.example"} {
+					target := "/apps/" + a.ID + "/ui/" + asset.file
+					req := httptest.NewRequest(http.MethodGet, target, nil)
+					req.Header.Set("Origin", origin)
+					req.Host = "untrusted-host.example"
+					req.Header.Set("X-Forwarded-Host", "untrusted-forwarded.example")
+					rec := httptest.NewRecorder()
+					e.ServeHTTP(rec, req)
+					if rec.Code != 200 {
+						t.Fatalf("%s: %d %s", asset.file, rec.Code, rec.Body.String())
+					}
+					headers := rec.Header()
+					want := "sandbox allow-scripts allow-forms; default-src 'self' " + served.origin + " https://8.8.8.8"
+					if headers.Get("Content-Security-Policy") != want || headers.Get("Cross-Origin-Resource-Policy") != "cross-origin" || headers.Get("Access-Control-Allow-Origin") != "*" || headers.Get("Access-Control-Allow-Credentials") != "" || headers.Get("Set-Cookie") != "" {
+						t.Fatalf("%s Origin=%s: %v", asset.file, origin, headers)
+					}
+					if !strings.Contains(headers.Get("Content-Type"), asset.mime) || rec.Body.Len() == 0 {
+						t.Fatal(asset.file, headers.Get("Content-Type"))
+					}
+					// A mesma política é necessária na revalidação, não somente na primeira carga.
+					req = httptest.NewRequest(http.MethodGet, target, nil)
+					req.Header.Set("Origin", origin)
+					req.Header.Set("If-None-Match", headers.Get("ETag"))
+					cached := httptest.NewRecorder()
+					e.ServeHTTP(cached, req)
+					if cached.Code != 304 || cached.Header().Get("Access-Control-Allow-Origin") != "*" || cached.Header().Get("Access-Control-Allow-Credentials") != "" || cached.Header().Get("Cross-Origin-Resource-Policy") != "cross-origin" || cached.Header().Get("Content-Security-Policy") != want {
+						t.Fatal(asset.file, cached.Code, cached.Header())
+					}
+				}
+			}
+		})
+	}
+	t.Setenv("APPS_ORIGIN", "https://apps.example/; script-src *")
+	e := newApp()
+	services.SetPluginSurfaceSource(source)
+	if rec := do(t, e, http.MethodGet, "/apps/"+a.ID+"/ui/index.html", nil, nil); rec.Code != 404 {
+		t.Fatal("configuração inválida", rec.Code)
 	}
 }

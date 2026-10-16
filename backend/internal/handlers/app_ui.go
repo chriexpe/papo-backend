@@ -18,11 +18,11 @@ import (
 func AppUIHandler(baseURL string, c echo.Context) error {
 	notFound := func() error { return c.NoContent(http.StatusNotFound) }
 	c.Response().Header().Set("Cache-Control", "no-store")
+	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+	c.Response().Header().Del("Access-Control-Allow-Credentials")
 	c.Response().Header().Set("X-Content-Type-Options", "nosniff")
 	c.Response().Header().Set("Referrer-Policy", "no-referrer")
 	c.Response().Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
-	c.Response().Header().Set("Access-Control-Allow-Origin", "*")
-	c.Response().Header().Del("Access-Control-Allow-Credentials")
 	c.Response().Header().Set("Content-Security-Policy", "sandbox allow-scripts allow-forms; default-src 'self'")
 	b, err := services.ResolvePluginSurfaceBundle(c.Request().Context(), c.Param("app_id"))
 	if err != nil || b.Directory == "" {
