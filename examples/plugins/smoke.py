@@ -118,6 +118,9 @@ def main():
             headers = subprocess.check_output(["curl", "-fsS", "-D", "-", "-o", str(Path(work) / "ui.html"), ui], text=True)
             assert "sandbox allow-scripts allow-forms" in headers and "allow-same-origin" not in headers
             assert "nosniff" in headers and "no-referrer" in headers and "Set-Cookie:" not in headers
+            assert "Cross-Origin-Resource-Policy: cross-origin" in headers
+            assert "Access-Control-Allow-Origin: *" in headers and "Access-Control-Allow-Credentials:" not in headers
+            assert "default-src 'self' " + base in headers
             print("PASS: curl UI without cookie; response headers follow:")
             print(headers.strip())
             request("POST", "/plugins/reference/trigger", {"request": {"method": "kv.put", "key": "counter", "value": 42}})

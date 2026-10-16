@@ -268,3 +268,16 @@ confere o embed, executa curl público e imprime os headers. Reinicia o processo
 confere KV, desabilita ambos, verifica que os canais sumiram e que a UI retorna
 404. Encerra o servidor e remove apenas a pasta temporária criada pelo smoke.
 O banco fica disponível para inspeção e deve ser removido pelo chamador.
+
+### Smoke dos assets de UI bundled
+
+As páginas `index.html` e `result.html` do plugin de referência compartilham CSS,
+um módulo JS, uma imagem SVG, uma fonte TTF mínima própria do fixture e um JSON
+lido por `fetch()`. O status visível e o título
+`PAPO_RESOURCE_CHECK: CSS module image font fetch OK` só aparecem depois de o
+módulo verificar CSS aplicado, imagem decodificada, fonte carregada e JSON lido.
+O título permite observar o resultado por API nativa sem injetar scripts ou bridge.
+
+Verificado em WPE 2.54.1 com sessão efêmera, backend local e Postgres 16 migrado
+com goose: as duas páginas e todos os recursos retornaram 200, e ambas chegaram
+ao título de sucesso. WebView2 não estava disponível neste host.

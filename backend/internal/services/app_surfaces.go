@@ -243,7 +243,11 @@ func CanTypeChannel(ctx context.Context, channelID, userID string) error {
 }
 
 // PluginUICSP valida as origens aprovadas antes de compor o header de sandbox opaco.
-func PluginUICSP(ctx context.Context, b PluginSurfaceBundle) (string, error) {
+func PluginUICSP(ctx context.Context, b PluginSurfaceBundle, baseURL string) (string, error) {
+	served, err := url.Parse(baseURL)
+	if err != nil || (served.Scheme != "https" && served.Scheme != "http") || served.Hostname() == "" || served.User != nil || strings.ContainsAny(baseURL, "\r\n\t ;") {
+		return "", ErrInvalidInput
+	}
 	origins := make([]string, 0, len(b.ApprovedOrigins))
 	for _, raw := range b.ApprovedOrigins {
 		normalized, err := validateRemoteSurfaceURL(ctx, raw, config.LoadConfig().BaseURL)
@@ -256,7 +260,7 @@ func PluginUICSP(ctx context.Context, b PluginSurfaceBundle) (string, error) {
 		}
 		origins = append(origins, utils.OriginURL(u))
 	}
-	policy := "sandbox allow-scripts allow-forms; default-src 'self'"
+	policy := "sandbox allow-scripts allow-forms; default-src 'self' " + utils.OriginURL(served)
 	if len(origins) > 0 {
 		policy += " " + strings.Join(origins, " ")
 	}

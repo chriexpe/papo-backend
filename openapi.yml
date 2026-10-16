@@ -2866,11 +2866,12 @@ paths:
         fontes, texto e módulos Wasm dentro de ui/.
 
         Headers obrigatórios (§9.1.4):
-        Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self'
-        (acrescenta somente origens HTTPS aprovadas; nunca allow-same-origin).
+        Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self' <origem-de-BaseURL>
+        (origem explícita da configuração BaseURL, sem caminho, mais origens HTTPS aprovadas; nunca allow-same-origin).
         X-Content-Type-Options: nosniff
         Referrer-Policy: no-referrer
-        Cross-Origin-Resource-Policy: same-origin
+        Cross-Origin-Resource-Policy: cross-origin
+        Access-Control-Allow-Origin: * (somente esta rota; sem Access-Control-Allow-Credentials).
         ETag: derivado do digest do plugin e do caminho do asset.
         Cache-Control: public, max-age=0, must-revalidate (revalida o digest em cada uso).
         Indisponibilidade responde no-store. A API nunca permite Origin: null,
@@ -2889,7 +2890,8 @@ paths:
             Content-Security-Policy: {schema: {type: string}}
             X-Content-Type-Options: {schema: {type: string, enum: [nosniff]}}
             Referrer-Policy: {schema: {type: string, enum: [no-referrer]}}
-            Cross-Origin-Resource-Policy: {schema: {type: string, enum: [same-origin]}}
+            Cross-Origin-Resource-Policy: {schema: {type: string, enum: [cross-origin]}}
+            Access-Control-Allow-Origin: {schema: {type: string, enum: ["*"]}}
             ETag: {schema: {type: string}}
             Cache-Control: {schema: {type: string}}
           content:
@@ -4488,7 +4490,7 @@ components:
            validação de embed mais rejeição a localhost/redes privadas/reservadas,
            inclusive DNS. Backend nunca faz proxy da superfície remota. Bundled
            aceita somente /apps/<instalação ativa>/ui/ com sandbox allow-scripts
-           allow-forms, sem allow-same-origin, default-src 'self' mais origens
+           allow-forms, sem allow-same-origin, default-src 'self' <origem-de-BaseURL> mais origens
            aprovadas e headers da rota UI. Essa é a única exceção de URL Papo
            aceita pelo cliente, somente quando recebida num payload autorizado.
            API nunca aceita null no CORS. Origem opaca não tem localStorage/IndexedDB.

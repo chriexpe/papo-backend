@@ -42,11 +42,21 @@ func newHandlerSurfaces(t *testing.T, ownerID string) (models.AppInstallation, h
 	if err := os.Mkdir(filepath.Join(dir, "ui"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	for file, data := range map[string]string{"ui/index.html": "<html><script>document.title='app'</script></html>", "ui/result.html": "<p>resultado</p>", "ui/main.js": "window.app=true;", "plugin.wasm": "\x00asm\x01\x00\x00\x00", "secret.txt": "segredo fora de ui"} {
+	for _, file := range []string{"index.html", "result.html", "style.css", "main.mjs", "image.svg", "fixture.ttf", "data.json"} {
+		data, err := os.ReadFile(filepath.Join("../../../examples/plugins/reference/ui", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "ui", file), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for file, data := range map[string]string{"plugin.wasm": "\x00asm\x01\x00\x00\x00", "secret.txt": "segredo fora de ui"} {
 		if err := os.WriteFile(filepath.Join(dir, file), []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	source := handlerSurfaceSource{a.ID: {Directory: dir, Digest: "digest-v1", Enabled: true, Surfaces: []services.AppSurfaceDeclaration{
 		{ID: "map", Kind: "channel", DefaultName: "app_" + randHex(4), Source: "bundled", Entry: "ui/index.html"},
 		{ID: "result", Kind: "embed", Source: "bundled", Entry: "ui/result.html", FrameWidth: 480, FrameHeight: 320},
@@ -58,22 +68,35 @@ func newHandlerSurfaces(t *testing.T, ownerID string) (models.AppInstallation, h
 
 // TestAppUIStaticRoute cobre isolamento, cookies ignorados, cache, desativação e confinamento.
 func TestAppUIStaticRoute(t *testing.T) {
+	t.Setenv("BASE_URL", "https://papo.com:8443/proxy/")
 	cleanServers(context.Background())
 	e := newApp()
 	id, _ := registerAndLogin(t, e)
 	a, source := newHandlerSurfaces(t, id)
+	e.Use(middleware.CORS([]string{"*"}))
 	path := "/apps/" + a.ID + "/ui/"
 	rec := do(t, e, http.MethodGet, path+"index.html", nil, nil)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<html>") {
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<!doctype html>") {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	for name, want := range map[string]string{"Content-Security-Policy": "sandbox allow-scripts allow-forms; default-src 'self'", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "same-origin", "Cache-Control": "public, max-age=0, must-revalidate"} {
+	for name, want := range map[string]string{"Content-Security-Policy": "sandbox allow-scripts allow-forms; default-src 'self' https://papo.com:8443", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "cross-origin", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=0, must-revalidate"} {
 		if got := rec.Header().Get(name); got != want {
 			t.Fatalf("%s: %q", name, got)
 		}
 	}
 	if rec.Header().Get("Set-Cookie") != "" || rec.Header().Get("ETag") == "" {
 		t.Fatal(rec.Header())
+	}
+	for _, origin := range []string{"null", "https://client.example"} {
+		for _, asset := range []string{"index.html", "style.css", "main.mjs", "image.svg", "fixture.ttf", "data.json"} {
+			req := httptest.NewRequest(http.MethodGet, path+asset, nil)
+			req.Header.Set("Origin", origin)
+			out := httptest.NewRecorder()
+			e.ServeHTTP(out, req)
+			if out.Code != 200 || out.Header().Get("Access-Control-Allow-Origin") != "*" || out.Header().Get("Access-Control-Allow-Credentials") != "" || out.Header().Get("Cross-Origin-Resource-Policy") != "cross-origin" {
+				t.Fatalf("asset %s origin %s: %d %v %s", asset, origin, out.Code, out.Header(), out.Body.String())
+			}
+		}
 	}
 	tag := rec.Header().Get("ETag")
 	rec = do(t, e, http.MethodGet, path+"index.html", nil, authCookie("sessao-invalida"))
@@ -117,7 +140,7 @@ func TestAppUIStaticRoute(t *testing.T) {
 	b.ApprovedOrigins = []string{"https://8.8.8.8"}
 	source[a.ID] = b
 	rec = do(t, e, http.MethodGet, path+"index.html", nil, nil)
-	if rec.Code != 200 || rec.Header().Get("Content-Security-Policy") != "sandbox allow-scripts allow-forms; default-src 'self' https://8.8.8.8" {
+	if rec.Code != 200 || rec.Header().Get("Content-Security-Policy") != "sandbox allow-scripts allow-forms; default-src 'self' https://papo.com:8443 https://8.8.8.8" {
 		t.Fatal(rec.Code, rec.Header())
 	}
 	b.Enabled = false

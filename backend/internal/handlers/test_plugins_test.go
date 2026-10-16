@@ -108,7 +108,7 @@ func TestPluginRoutes(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("UI %d %s", rec.Code, rec.Body.String())
 	}
-	for name, want := range map[string]string{"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "same-origin"} {
+	for name, want := range map[string]string{"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "cross-origin", "Access-Control-Allow-Origin": "*"} {
 		if rec.Header().Get(name) != want {
 			t.Fatal(name, rec.Header())
 		}

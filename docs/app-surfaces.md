@@ -62,9 +62,12 @@ Serve somente arquivos estáticos de `ui/`, nunca dados por usuário, código do
 manifest ou templates. Não lê nem emite cookies. Traversal, diretórios, symlinks e
 extensões fora do allowlist são recusados. Instalação desabilitada/revogada: 404.
 
-Headers: `Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self'`
+Headers: `Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self' <origem-de-BaseURL>`
 mais somente origens aprovadas; nunca `allow-same-origin`. Também envia `nosniff`,
-`Referrer-Policy: no-referrer` e `Cross-Origin-Resource-Policy: same-origin`. ETag combina
+`Referrer-Policy: no-referrer` e `Cross-Origin-Resource-Policy: cross-origin`.
+Somente esta rota envia `Access-Control-Allow-Origin: *`, sem credenciais, para assets
+de documentos sandbox com origem opaca. A origem explícita vem de `BaseURL`, nunca
+de Host/Origin da requisição. ETag combina
 digest do plugin e caminho; `Cache-Control: public, max-age=0, must-revalidate` revalida
 antes de reutilizar conteúdo. Respostas indisponíveis usam `no-store`.
 A API rejeita CORS para `Origin: null`, inclusive se a configuração incluir `*` ou `null`.
