@@ -57,7 +57,7 @@ jobs:
           curl -fL --retry 3 https://github.com/tinygo-org/tinygo/releases/download/v0.43.0/tinygo0.43.0.linux-amd64.tar.gz -o /tmp/tinygo.tar.gz
           echo "ca9fc6d055e3889462dea4450a2e42a92242d88b5c362a7ec39bdb563413d78a  /tmp/tinygo.tar.gz" | sha256sum -c -
           tar -xzf /tmp/tinygo.tar.gz -C /tmp
-          TINYGO=/tmp/tinygo/bin/tinygo ../examples/wasm-reference/build.sh
+          TINYGO=/tmp/tinygo/bin/tinygo ../examples/plugins/build.sh
 
       - name: Build
         run: go build -v ./...

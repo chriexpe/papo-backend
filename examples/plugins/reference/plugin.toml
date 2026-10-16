@@ -1,0 +1,28 @@
+manifest_version = 1
+id = "reference"
+name = "Plugin de referência"
+version = "1.0.0"
+min_papo_api = 1
+
+[permissions]
+request = ["send_messages", "post_app_embeds", "private_storage"]
+
+[runtime]
+max_memory_mb = 16
+
+[[settings]]
+key = "target_channel"
+type = "channel"
+required = true
+
+[[surfaces]]
+id = "home"
+kind = "channel"
+default_name = "plugin-reference"
+entry = "ui/index.html"
+
+[[surfaces]]
+id = "result"
+kind = "embed"
+entry = "ui/result.html"
+frame = { width = 480, height = 320 }

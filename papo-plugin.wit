@@ -1,0 +1,35 @@
+package papo:plugin@1.0.0;
+
+// Contrato core Wasm do papo-core-v1, não o ABI canônico do Component Model.
+// Offsets são relativos à memória linear exportada "memory". Payloads são JSON UTF-8.
+interface host-core {
+    // Import binário: papo_host_v1.call(i32,i32,i32,i32) -> i32.
+    // Retorna tamanho necessário; se excede capacity, não escreve nem repete efeitos.
+    call: func(request-ptr: u32, request-len: u32, output-ptr: u32, capacity: u32) -> u32;
+}
+
+interface guest-core {
+    // O guest inicializa com _initialize() uma vez em cada instância.
+    alloc: func(length: u32) -> u32;
+    free: func(ptr: u32);
+    // Invocations: on_enable(settings), on_disable(), on_trigger(input).
+    // JSON: {"type":...,"settings":{...},"input":...}.
+    // Retorno: (output_ptr << 32) | output_len. Host copia e libera os buffers.
+    // Resposta: {"ok":true,"result":...} ou {"ok":false,"error":{"code":...}}.
+    invoke: func(ptr: u32, length: u32) -> u64;
+}
+
+// Os nomes de imports/exports binários são os documentados acima; SDKs fazem a ponte.
+world papo-core-v1 {
+    import papo-host-v1: host-core;
+    export guest-core;
+}
+
+// Host requests JSON (identidade sempre implícita, nunca vinda do guest):
+// asset.read: {method,path,offset,length}, resposta result.data em base64.
+// kv.get / kv.put / kv.delete: {method,key,value?}.
+// message.send: {method,channel_id,content,external_message_id?,embeds?}.
+// embeds: no máximo um {source_type:"app",app_surface_id:<próprio id>,title?...}.
+// message.edit / message.delete: {method,channel_id,message_id,content?,embeds?}.
+// log: {method,content}; time.now: {method}.
+// on_event é deliberadamente reservado para um commit posterior.
