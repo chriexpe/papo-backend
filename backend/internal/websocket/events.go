@@ -14,6 +14,7 @@ const (
 	EventTypeMessageEdit         EventType = "message_edit"
 	EventTypeMessageDelete       EventType = "message_delete"
 	EventTypeMessagePin          EventType = "message_pin"
+	EventTypeAppInvalidate       EventType = "app_invalidate"
 	EventTypeChannelCreate       EventType = "channel_create"
 	EventTypeChannelUpdate       EventType = "channel_update"
 	EventTypeChannelDelete       EventType = "channel_delete"
@@ -375,4 +376,11 @@ type NewNotificationOutbound struct {
 	UserID         string    `json:"user_id"`
 	MessageID      string    `json:"message_id"`
 	MessageContent string    `json:"message_content"`
+}
+
+// AppInvalidateOutbound requires destroying live surfaces and fetching fresh payloads.
+// It never grants authority or automatically reactivates historical embeds.
+type AppInvalidateOutbound struct {
+	Type              EventType `json:"type"`
+	AppInstallationID string    `json:"app_installation_id"`
 }

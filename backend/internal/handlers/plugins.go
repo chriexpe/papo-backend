@@ -121,7 +121,8 @@ func pluginProblem(c echo.Context, baseURL string, err error) error {
 // PluginEffects usa os mesmos efeitos de mensagens e os snapshots de canais da PR 18.
 func PluginEffects() services.PluginEffects {
 	return services.PluginEffects{
-		Channels: BroadcastAppChannelChanges,
+		Channels:   BroadcastAppChannelChanges,
+		Invalidate: BroadcastAppInvalidation,
 		Created: func(ctx context.Context, m models.MessageWithAttachment, owner string) {
 			publishCreatedMessageCtx(ctx, "plugin", m, owner)
 		},

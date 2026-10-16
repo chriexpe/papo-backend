@@ -133,3 +133,24 @@ func ReconcileAppChannels(ctx context.Context, id string, surfaces []models.AppS
 	}
 	return changes, nil
 }
+
+// AppSurfaceChannelIDs includes historical inline embeds, even without an app channel.
+// Call before deleting app channels; authorization remains the caller's responsibility.
+func AppSurfaceChannelIDs(ctx context.Context, installationID string) ([]string, error) {
+	rows, err := GetDB().QueryContext(ctx, `SELECT channel_id FROM app_channels WHERE app_installation_id=$1
+ UNION SELECT m.channel_id FROM embeds e JOIN message_embeds me ON me.embed_id=e.id
+ JOIN messages m ON m.id=me.message_id WHERE e.app_installation_id=$1`, installationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

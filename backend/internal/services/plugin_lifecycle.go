@@ -77,6 +77,7 @@ func (m *PluginManager) apply(ctx context.Context, actor string, b pluginbundle.
 	if e != nil {
 		return a, e
 	}
+	m.invalidate(ctx, a.ID)
 	m.Host.Reset(a.ID)
 	transitionCtx := context.WithValue(ctx, pluginTransitionKey{}, a.ID)
 	changes, e := ReconcileAppChannels(transitionCtx, actor, a.ID, p.Surfaces)
@@ -92,6 +93,7 @@ func (m *PluginManager) apply(ctx context.Context, actor string, b pluginbundle.
 	if e != nil {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
+		m.invalidate(cleanup, a.ID)
 		changes, removeErr := DeleteAppChannels(cleanup, actor, a.ID)
 		m.emit(cleanup, changes)
 		stateErr := storage.SetPluginState(cleanup, a.ID, "disabled")
@@ -134,6 +136,9 @@ func (m *PluginManager) disableLocked(ctx context.Context, a models.AppInstallat
 	}
 	// Fecha autoridade antes de notificar exclusões; nenhum timeout deixa grants ativos.
 	stateErr := storage.SetPluginState(cleanup, a.ID, state)
+	if stateErr == nil {
+		m.invalidate(cleanup, a.ID)
+	}
 	changes, channelErr := DeleteAppChannels(cleanup, actor, a.ID)
 	m.emit(cleanup, changes)
 	m.Host.Reset(a.ID)

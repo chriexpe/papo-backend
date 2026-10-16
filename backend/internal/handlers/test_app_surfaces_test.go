@@ -220,7 +220,7 @@ func assertNoAppChannelEvent(t *testing.T, conn *ws.Conn) {
 			Type websocket.EventType `json:"type"`
 		}
 		json.Unmarshal(data, &event)
-		if event.Type == websocket.EventTypeChannelCreate || event.Type == websocket.EventTypeChannelUpdate || event.Type == websocket.EventTypeChannelDelete {
+		if event.Type == websocket.EventTypeChannelCreate || event.Type == websocket.EventTypeChannelUpdate || event.Type == websocket.EventTypeChannelDelete || event.Type == websocket.EventTypeAppInvalidate {
 			t.Fatal("canal privado vazou", string(data))
 		}
 	}
@@ -229,7 +229,7 @@ func assertNoAppChannelEvent(t *testing.T, conn *ws.Conn) {
 // TestAppChannelEvents cobre os hooks e as rotas de gestão com eventos restritos aos leitores.
 func TestAppChannelEvents(t *testing.T) {
 	go websocket.GetHub().Run()
-	for _, trigger := range []string{"create", "reconcile", "rename", "move", "permissions", "delete_hook", "revoke"} {
+	for _, trigger := range []string{"create", "reconcile", "rename", "move", "permissions", "delete_hook", "revoke", "invalidate"} {
 		t.Run(trigger, func(t *testing.T) {
 			cleanServers(context.Background())
 			e := newApp()
@@ -275,6 +275,9 @@ func TestAppChannelEvents(t *testing.T) {
 			defer ownerConn.Close()
 			kind := websocket.EventTypeChannelUpdate
 			switch trigger {
+			case "invalidate":
+				BroadcastAppInvalidation(context.Background(), a.ID)
+				kind = websocket.EventTypeAppInvalidate
 			case "create":
 				BroadcastAppChannelChanges(context.Background(), changes)
 				kind = websocket.EventTypeChannelCreate
@@ -320,6 +323,26 @@ func TestAppChannelEvents(t *testing.T) {
 				kind = websocket.EventTypeChannelDelete
 			}
 			for _, conn := range []*ws.Conn{readerConn, ownerConn} {
+				if kind == websocket.EventTypeAppInvalidate {
+					for {
+						event := readWSMessage(t, conn)
+						var payload struct {
+							Type websocket.EventType `json:"type"`
+							ID   string              `json:"app_installation_id"`
+						}
+						if err := json.Unmarshal(event, &payload); err != nil {
+							t.Fatal(err)
+						}
+						if payload.Type == websocket.EventTypePresenceUpdate || payload.Type == websocket.EventTypePresenceSync {
+							continue
+						}
+						if payload.Type != websocket.EventTypeAppInvalidate || payload.ID != a.ID {
+							t.Fatalf("invalidation: %s", event)
+						}
+						break
+					}
+					continue
+				}
 				event := readAppChannelEvent(t, conn, kind, ch.ID)
 				if kind != websocket.EventTypeChannelDelete {
 					var app models.AppChannel

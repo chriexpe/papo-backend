@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"papo/internal/models"
 	"papo/internal/services"
+	"papo/internal/storage"
 	"papo/internal/utils"
 	"papo/internal/websocket"
 )
@@ -72,4 +73,29 @@ func broadcastAppChannelMetadata(c echo.Context, id string) {
 	if ch.Type == "app" {
 		BroadcastAppChannelChanges(c.Request().Context(), []services.AppChannelChange{{Before: &ch, After: &ch}})
 	}
+}
+
+// BroadcastAppInvalidation revokes live surfaces only for current readers of affected channels.
+func BroadcastAppInvalidation(ctx context.Context, installationID string) {
+	ids, err := storage.AppSurfaceChannelIDs(ctx, installationID)
+	if err != nil {
+		utils.Errorf("websocket: app invalidation lookup: %v", err)
+		return
+	}
+	hub := websocket.GetHub()
+	online := hub.OnlineUserIDs()
+	recipients := map[string]bool{}
+	for _, id := range ids {
+		allowed, err := services.ChannelReaders(ctx, id, online)
+		if err != nil {
+			utils.Errorf("websocket: app invalidation ACL: %v", err)
+			continue
+		}
+		for user, ok := range allowed {
+			if ok {
+				recipients[user] = true
+			}
+		}
+	}
+	hub.BroadcastToUsers(websocket.AppInvalidateOutbound{Type: websocket.EventTypeAppInvalidate, AppInstallationID: installationID}, recipients)
 }

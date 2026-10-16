@@ -490,3 +490,46 @@ func TestPluginQuotaConcurrent(t *testing.T) {
 		t.Fatal("quota concorrente violada", success, quota)
 	}
 }
+
+// Inline-only installations must notify readers even without an app channel.
+func TestPluginInvalidationWithoutAppChannel(t *testing.T) {
+	m, u, ch := managerFixture(t, false)
+	a := enableReference(t, m, u, ch)
+	if _, err := m.Trigger(testCtx(), "reference", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DeleteAppChannels(testCtx(), u.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := storage.AppSurfaceChannelIDs(testCtx(), a.ID)
+	found := false
+	for _, id := range ids {
+		if id == ch.ID {
+			found = true
+		}
+	}
+	if err != nil || !found {
+		t.Fatalf("inline-only audience: %v %v", ids, err)
+	}
+	var states []string
+	m.Effects.Invalidate = func(ctx context.Context, id string) {
+		if id != a.ID {
+			t.Errorf("wrong installation %s", id)
+		}
+		current, err := storage.GetApp(ctx, id)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		states = append(states, current.PluginState)
+	}
+	if err := m.quarantine(testCtx(), a); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Disable(testCtx(), u.ID, "reference"); err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 2 || states[0] != "quarantined" || states[1] != "disabled" {
+		t.Fatalf("notifications after authority closes: %v", states)
+	}
+}

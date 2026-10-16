@@ -29,10 +29,11 @@ var ErrPluginConsent = errors.New("consentimento desatualizado; gere e aprove um
 
 // PluginEffects mantém transportes na camada de handlers, inclusive no hot reload.
 type PluginEffects struct {
-	Channels func(context.Context, []AppChannelChange)
-	Created  func(context.Context, models.MessageWithAttachment, string)
-	Edited   func(context.Context, models.MessageWithAttachment, string)
-	Deleted  func(context.Context, string, string)
+	Invalidate func(context.Context, string)
+	Channels   func(context.Context, []AppChannelChange)
+	Created    func(context.Context, models.MessageWithAttachment, string)
+	Edited     func(context.Context, models.MessageWithAttachment, string)
+	Deleted    func(context.Context, string, string)
 }
 
 // DiscoveredPlugin apresenta erros sem executar ou habilitar candidatos inválidos.
@@ -347,6 +348,7 @@ func (m *PluginManager) quarantine(ctx context.Context, a models.AppInstallation
 			return e
 		}
 	}
+	m.invalidate(ctx, a.ID)
 	RecordAudit(ctx, AuditEntry{Action: ActionAppUpdate, EntityType: EntityApp, EntityID: &a.ID, Metadata: map[string]any{"state": "quarantined"}})
 	return nil
 }
@@ -379,4 +381,10 @@ func (m *PluginManager) consentToken(actor string, p PluginPreview) string {
 // consentEqual não revela correspondências parciais de um consentimento.
 func consentEqual(a, b string) bool {
 	return len(a) == 64 && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func (m *PluginManager) invalidate(ctx context.Context, id string) {
+	if m.Effects.Invalidate != nil {
+		m.Effects.Invalidate(ctx, id)
+	}
 }

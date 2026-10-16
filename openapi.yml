@@ -2812,6 +2812,7 @@ paths:
         | `new_notification` | unicast  | `{ type: "new_notification", id, user_id, message_id, message_content }` (id: row de notificação ou UUID efêmero quando a configuração all gera evento sem row; user_id: autor da mensagem; message_content: truncado a 512 caracteres) |
         | `channel_create` | outbound  | `{ type: "channel_create", channel_id, name, channel_type, position, topic?, app? }` (topic: null para canais category) |
         | `channel_update` | outbound  | `{ type: "channel_update", channel_id, name, position, topic?, app? }`                               |
+        | `app_invalidate` | outbound | `{ type: "app_invalidate", app_installation_id }`. Revoga imediatamente superfícies vivas e invalida payloads locais dessa instalação em disable, remoção, quarantine e substituição de aprovação. Enviado somente aos leitores atuais de um canal app ou de um canal com embed dessa instalação (inclusive plugins sem canal app), antes da exclusão dos canais. Exige payload REST novo antes de reativar; nunca concede disponibilidade. |
         | `channel_delete` | outbound  | `{ type: "channel_delete", channel_id }`                                               |
         | `typing`         | inbound   | `{ type: "typing", channel_id }`                                                        |
         | `typing`         | outbound  | `{ type: "typing", channel_id, user_id, is_typing }`                                    |
