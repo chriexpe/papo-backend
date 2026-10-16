@@ -4,9 +4,9 @@ import "time"
 
 // AppCapabilities limita as operações da instalação aos canais autorizados.
 type AppCapabilities struct {
-	SendMessages bool `json:"send_messages"`
-	ReadMessages bool `json:"read_messages"`
-	AttachViews  bool `json:"attach_views"`
+	SendMessages  bool `json:"send_messages"`
+	ReadMessages  bool `json:"read_messages"`
+	PostAppEmbeds bool `json:"post_app_embeds"`
 }
 
 // AppInstallation representa uma identidade de máquina pertencente ao servidor.
