@@ -63,6 +63,9 @@ func CreateAppHandler(baseURL string, c echo.Context) error {
 			"invalid-param", "Parâmetro inválido", "JSON inválido")
 	}
 
+	if req.Kind != "remote" {
+		return appProblem(c, baseURL, services.ErrInvalidInput)
+	}
 	app, token, err := services.CreateApp(c.Request().Context(), actor, req.AppKey, req.Kind, req.Name, req.Capabilities)
 	if err != nil {
 		return appProblem(c, baseURL, err)

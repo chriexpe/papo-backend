@@ -613,9 +613,14 @@ func broadcastDirectConversationUpdates(ctx context.Context, channelID string) {
 // webhook). Todos os clientes veem o mesmo fluxo de eventos: message,
 // embeds, moderação de attachments e notificações.
 func publishCreatedMessage(c echo.Context, message models.MessageWithAttachment, actorID string) {
+	publishCreatedMessageCtx(c.Request().Context(), c.Request().Header.Get(echo.HeaderXRequestID), message, actorID)
+}
+
+// publishCreatedMessageCtx compartilha o mesmo pipeline com callbacks de plugins sem contexto Echo.
+func publishCreatedMessageCtx(ctx context.Context, requestID string, message models.MessageWithAttachment, actorID string) {
 	// Distribui a nova mensagem aos clientes autorizados a ler o canal
 	// (evento message).
-	broadcastChannelEvent(c, message.ChannelID, websocket.MessageOutbound{
+	broadcastChannelEventCtx(ctx, requestID, message.ChannelID, websocket.MessageOutbound{
 		Type:              websocket.EventTypeMessage,
 		ID:                message.ID,
 		ChannelID:         message.ChannelID,
@@ -628,7 +633,7 @@ func publishCreatedMessage(c echo.Context, message models.MessageWithAttachment,
 		ReplyTo:           message.ReplyTo,
 		Attachments:       message.Attachments,
 	})
-	broadcastDirectConversationUpdates(c.Request().Context(), message.ChannelID)
+	broadcastDirectConversationUpdates(ctx, message.ChannelID)
 
 	// Enfileira os attachments na moderação assíncrona de imagens
 	// (nudez/gore): o worker processa em background e, se blocked, exclui a
@@ -640,7 +645,7 @@ func publishCreatedMessage(c echo.Context, message models.MessageWithAttachment,
 	// Embeds customizados já estão gravados: distribui message_embeds_update com
 	// a lista atual da mensagem (os link embeds ainda serão processados).
 	if len(message.Embeds) > 0 {
-		broadcastChannelEvent(c, message.ChannelID, websocket.MessageEmbedsUpdateOutbound{
+		broadcastChannelEventCtx(ctx, requestID, message.ChannelID, websocket.MessageEmbedsUpdateOutbound{
 			Type:      websocket.EventTypeMessageEmbedsUpdate,
 			ChannelID: message.ChannelID,
 			MessageID: message.ID,
@@ -650,7 +655,6 @@ func publishCreatedMessage(c echo.Context, message models.MessageWithAttachment,
 
 	// Processa os link embeds do content em background (o crawl não bloqueia a
 	// resposta); eles chegam via WS message_embeds_update.
-	requestID := c.Request().Header.Get(echo.HeaderXRequestID)
 	go processNewMessageEmbeds(context.Background(), requestID, message.ChannelID, message.ID, actorID, derefString(message.Content), message.Embeds)
 
 	// Dispara as notificações da mensagem em background (menções, replies e

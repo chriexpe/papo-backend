@@ -5,6 +5,7 @@ import (
 	"papo/internal/config"
 	"papo/internal/middleware"
 	"papo/internal/plugins"
+	"papo/internal/services"
 
 	"github.com/labstack/echo/v4"
 )
@@ -351,11 +352,11 @@ func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) *appgateway.Registry {
 	management := e.Group("/apps", middleware.JWTMiddleware, middleware.RequireManageApps())
 	management.POST("", func(c echo.Context) error { return CreateAppHandler(cfg.BaseURL, c) })
 	management.GET("", func(c echo.Context) error { return ListAppsHandler(cfg.BaseURL, c) })
-	management.PATCH("/:app_id", func(c echo.Context) error { return UpdateAppHandler(cfg.BaseURL, c) })
-	management.DELETE("/:app_id", func(c echo.Context) error { return DeleteAppHandler(cfg.BaseURL, c) })
+	management.PATCH("/:app_id", func(c echo.Context) error { return UpdateAppHandler(cfg.BaseURL, c) }, remoteManagementOnly)
+	management.DELETE("/:app_id", func(c echo.Context) error { return DeleteAppHandler(cfg.BaseURL, c) }, remoteManagementOnly)
 	management.POST("/:app_id/token", func(c echo.Context) error { return RotateAppTokenHandler(cfg.BaseURL, c) })
-	management.PUT("/:app_id/channels/:channel_id", func(c echo.Context) error { return AddAppScopeHandler(cfg.BaseURL, c) })
-	management.DELETE("/:app_id/channels/:channel_id", func(c echo.Context) error { return RemoveAppScopeHandler(cfg.BaseURL, c) })
+	management.PUT("/:app_id/channels/:channel_id", func(c echo.Context) error { return AddAppScopeHandler(cfg.BaseURL, c) }, remoteManagementOnly)
+	management.DELETE("/:app_id/channels/:channel_id", func(c echo.Context) error { return RemoveAppScopeHandler(cfg.BaseURL, c) }, remoteManagementOnly)
 	e.GET("/apps/:app_id/avatar", func(c echo.Context) error { return GetAppAvatarHandler(cfg.BaseURL, c) })
 	execution := e.Group("/app", appAuthentication(cfg.BaseURL))
 	execution.GET("/gateway", func(c echo.Context) error { return AppGatewayHandler(c, gateway) })
@@ -366,9 +367,14 @@ func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) *appgateway.Registry {
 	return gateway
 }
 
-// RegisterPluginRoutes compartilha JWT e manage_apps com a gestão das instalações.
-func RegisterPluginRoutes(e *echo.Echo, baseURL string, host plugins.PluginHost) {
-	g := e.Group("/apps", middleware.JWTMiddleware, middleware.RequireManageApps())
-	g.PUT("/:app_id/artifact", func(c echo.Context) error { return UploadPluginHandler(baseURL, host, c) }, middleware.BodyLimit(plugins.MaxArtifact, nil))
-	g.POST("/:app_id/trigger", func(c echo.Context) error { return TriggerPluginHandler(baseURL, host, c) }, middleware.BodyLimit(plugins.MaxPayload, nil))
+// RegisterPluginRoutes expõe somente descoberta e consentimento; não há upload de artefatos.
+func RegisterPluginRoutes(e *echo.Echo, baseURL string, m *services.PluginManager) {
+	g := e.Group("/plugins", middleware.JWTMiddleware, middleware.RequireManageApps())
+	g.GET("", func(c echo.Context) error { return PluginHandler(baseURL, m, "list", c) })
+	g.POST("/rescan", func(c echo.Context) error { return PluginHandler(baseURL, m, "rescan", c) })
+	for _, action := range []string{"preview", "enable", "disable", "trigger"} {
+		a := action
+		g.POST("/:id/"+a, func(c echo.Context) error { return PluginHandler(baseURL, m, a, c) }, middleware.BodyLimit(plugins.MaxPayload, nil))
+	}
+	g.PATCH("/:id", func(c echo.Context) error { return PluginHandler(baseURL, m, "patch", c) }, middleware.BodyLimit(plugins.MaxPayload, nil))
 }

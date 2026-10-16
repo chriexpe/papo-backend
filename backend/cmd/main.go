@@ -15,6 +15,7 @@ import (
 	"papo/internal/handlers"
 	"papo/internal/middleware"
 	"papo/internal/moderation"
+	"papo/internal/pluginbundle"
 	"papo/internal/push"
 	"papo/internal/services"
 	"papo/internal/storage"
@@ -182,7 +183,7 @@ func main() {
 	// (POST /webhooks/:webhook_id/messages) são dispensados aqui e usam o
 	// próprio limite de upload (110MB) registrado na rota.
 	e.Use(middleware.BodyLimit(middleware.MaxJSONBodySize, func(c echo.Context) bool {
-		return c.Path() == "/apps/:app_id/artifact" || c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
+		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
 	}))
 
 	e.GET("/health", handlers.HealthHandler)
@@ -200,7 +201,24 @@ func main() {
 		return
 	}
 	defer pluginHost.Close(context.Background())
-	handlers.RegisterPluginRoutes(e, cfg.BaseURL, pluginHost)
+	pluginConfig, err := pluginbundle.LoadConfig()
+	if err != nil {
+		utils.Fatal(err.Error())
+	}
+	pluginManager, err := services.NewPluginManager(pluginConfig, pluginHost, handlers.PluginEffects())
+	if err != nil {
+		utils.Fatal(err.Error())
+	}
+	services.SetPluginSurfaceSource(pluginManager)
+	pluginCtx, stopPlugins := context.WithCancel(context.Background())
+	defer stopPlugins()
+	if err = pluginManager.Rescan(pluginCtx); err != nil {
+		utils.Fatal(err.Error())
+	}
+	pluginWatchDone := make(chan struct{})
+	go func() { defer close(pluginWatchDone); pluginManager.Watch(pluginCtx) }()
+	defer func() { stopPlugins(); <-pluginWatchDone }()
+	handlers.RegisterPluginRoutes(e, cfg.BaseURL, pluginManager)
 	appGateway := handlers.RegisterAppRoutes(e, cfg)
 	defer appGateway.Shutdown()
 	handlers.RegisterAttachmentRoutes(e, cfg)
@@ -227,6 +245,7 @@ func main() {
 	defer cancel()
 
 	// Conexões promovidas a WebSocket não são encerradas por http.Server.Shutdown.
+	stopPlugins()
 	appGateway.Shutdown()
 	if err := e.Shutdown(ctx); err != nil {
 		utils.Fatal("Falha ao desligar o servidor: " + err.Error())
