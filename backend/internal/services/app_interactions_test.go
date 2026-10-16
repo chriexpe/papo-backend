@@ -122,6 +122,22 @@ func TestAppInteractionsGame(t *testing.T) {
 	if _, e = m.LaunchAppUI(testCtx(), u.ID, a.ID, LaunchInput{SurfaceID: "result", ChannelID: text.ID, MessageID: msg.ID}); e != nil {
 		t.Fatal("opens", e)
 	}
+	// An opens-only message has no frame metadata. Return the authorized
+	// declaration so the client never guesses a URL.
+	if _, e = storage.GetDB().Exec(`DELETE FROM message_embeds WHERE message_id=$1`, msg.ID); e != nil {
+		t.Fatal(e)
+	}
+	launch, e := m.LaunchAppUI(testCtx(), u.ID, a.ID, LaunchInput{SurfaceID: "result", ChannelID: text.ID, MessageID: msg.ID})
+	if e != nil {
+		t.Fatal(e)
+	}
+	surface, ok := launch["surface"].(models.AppChannel)
+	if !ok || surface.SurfaceID != "result" || surface.Entry != "/apps/"+a.ID+"/ui/result.html" || launch["display"] != "overlay" {
+		t.Fatalf("opens-only launch: %+v", launch)
+	}
+	if _, e = m.LaunchAppUI(testCtx(), u.ID, a.ID, LaunchInput{SurfaceID: "missing", ChannelID: text.ID, MessageID: msg.ID}); e == nil {
+		t.Fatal("undeclared launch")
+	}
 	edited := false
 	m.Effects.Edited = func(_ context.Context, msg models.MessageWithAttachment, _ string) { edited = len(msg.Components) == 1 }
 	if _, e = m.Interact(testCtx(), u.ID, InteractionInput{InstallationID: a.ID, Kind: "button", ChannelID: text.ID, MessageID: msg.ID, ComponentID: "revanche"}); e != nil || !edited {

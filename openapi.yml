@@ -6820,13 +6820,29 @@ components:
     AppLaunchResult:
       type: object
       additionalProperties: false
-      required: []
+      required: [ticket, expires_at, surface]
       properties:
         ticket:
           type: string
         expires_at:
           type: string
           format: date-time
+        surface:
+          $ref: '#/components/schemas/AppChannel'
+        display:
+          type: string
+          enum: [inline, overlay, '']
+        load:
+          type: string
+        size:
+          type: object
+          properties:
+            width:
+              type: integer
+            height:
+              type: integer
+        poster:
+          type: string
     AppUISession:
       type: object
       additionalProperties: false
