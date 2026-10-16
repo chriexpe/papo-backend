@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	ws "github.com/gorilla/websocket"
+	"golang.org/x/image/font/gofont/goregular"
+	"image"
+	"image/png"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +46,18 @@ func newHandlerSurfaces(t *testing.T, ownerID string) (models.AppInstallation, h
 	if err := os.Mkdir(filepath.Join(dir, "ui"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	for file, data := range map[string]string{"ui/index.html": "<html><script>document.title='app'</script></html>", "ui/result.html": "<p>resultado</p>", "ui/main.js": "window.app=true;", "plugin.wasm": "\x00asm\x01\x00\x00\x00", "secret.txt": "segredo fora de ui"} {
+	var picture bytes.Buffer
+	if err := png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	for file, data := range map[string]string{
+		"ui/index.html": `<html><head><link rel="stylesheet" href="style.css"><script type="module" src="main.mjs"></script></head><body><img src="image.png"><p id="result">App</p></body></html>`,
+		"ui/style.css":  `@font-face {font-family:Fixture;src:url('font.ttf')} body {font-family:Fixture}`,
+		"ui/main.mjs":   `const data = await fetch('./data.json').then(r => r.json()); document.querySelector('#result').textContent = data.title;`,
+		"ui/image.png":  picture.String(), "ui/font.ttf": string(goregular.TTF), "ui/data.json": `{"title":"Superfície bundled"}`,
+		"ui/result.html": "<p>resultado</p>", "ui/main.js": "window.app=true;",
+		"plugin.wasm": "\x00asm\x01\x00\x00\x00", "secret.txt": "segredo fora de ui",
+	} {
 		if err := os.WriteFile(filepath.Join(dir, file), []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -58,6 +73,8 @@ func newHandlerSurfaces(t *testing.T, ownerID string) (models.AppInstallation, h
 
 // TestAppUIStaticRoute cobre isolamento, cookies ignorados, cache, desativação e confinamento.
 func TestAppUIStaticRoute(t *testing.T) {
+	t.Setenv("BASE_URL", "https://papo.com/")
+	t.Setenv("APPS_ORIGIN", "")
 	cleanServers(context.Background())
 	e := newApp()
 	id, _ := registerAndLogin(t, e)
@@ -67,7 +84,7 @@ func TestAppUIStaticRoute(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<html>") {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	for name, want := range map[string]string{"Content-Security-Policy": "sandbox allow-scripts allow-forms; default-src 'self'", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "same-origin", "Cache-Control": "public, max-age=0, must-revalidate"} {
+	for name, want := range map[string]string{"Content-Security-Policy": "sandbox allow-scripts allow-forms; default-src 'self' https://papo.com", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "cross-origin", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=0, must-revalidate"} {
 		if got := rec.Header().Get(name); got != want {
 			t.Fatalf("%s: %q", name, got)
 		}
@@ -117,7 +134,7 @@ func TestAppUIStaticRoute(t *testing.T) {
 	b.ApprovedOrigins = []string{"https://8.8.8.8"}
 	source[a.ID] = b
 	rec = do(t, e, http.MethodGet, path+"index.html", nil, nil)
-	if rec.Code != 200 || rec.Header().Get("Content-Security-Policy") != "sandbox allow-scripts allow-forms; default-src 'self' https://8.8.8.8" {
+	if rec.Code != 200 || rec.Header().Get("Content-Security-Policy") != "sandbox allow-scripts allow-forms; default-src 'self' https://papo.com https://8.8.8.8" {
 		t.Fatal(rec.Code, rec.Header())
 	}
 	b.Enabled = false
@@ -379,5 +396,66 @@ func TestAppChannelTypingRejected(t *testing.T) {
 	}
 	if err := json.Unmarshal(readWSMessage(t, conn), &event); err != nil || event.Type != "error" {
 		t.Fatal(event, err)
+	}
+}
+
+// TestAppUIOpaqueOriginAssets cobre recursos reais, CORS global e origens vindas da configuração.
+func TestAppUIOpaqueOriginAssets(t *testing.T) {
+	t.Setenv("BASE_URL", "https://papo.example:8443/api/")
+	t.Setenv("APPS_ORIGIN", "")
+	cleanServers(context.Background())
+	id, _ := registerAndLogin(t, newApp())
+	a, source := newHandlerSurfaces(t, id)
+	b := source[a.ID]
+	b.ApprovedOrigins = []string{"https://8.8.8.8"}
+	source[a.ID] = b
+	for _, served := range []struct{ name, apps, origin string }{
+		{"base_url", "", "https://papo.example:8443"},
+		{"apps_origin", "https://apps.example:9443/", "https://apps.example:9443"},
+	} {
+		t.Run(served.name, func(t *testing.T) {
+			t.Setenv("APPS_ORIGIN", served.apps)
+			e := newApp()
+			e.Use(middleware.CORS([]string{"https://client.example"}))
+			for _, asset := range []struct{ file, mime string }{
+				{"index.html", "text/html"}, {"style.css", "text/css"}, {"main.mjs", "javascript"},
+				{"image.png", "image/png"}, {"font.ttf", "font/ttf"}, {"data.json", "application/json"},
+			} {
+				for _, origin := range []string{"null", "https://client.example"} {
+					target := "/apps/" + a.ID + "/ui/" + asset.file
+					req := httptest.NewRequest(http.MethodGet, target, nil)
+					req.Header.Set("Origin", origin)
+					req.Host = "untrusted-host.example"
+					req.Header.Set("X-Forwarded-Host", "untrusted-forwarded.example")
+					rec := httptest.NewRecorder()
+					e.ServeHTTP(rec, req)
+					if rec.Code != 200 {
+						t.Fatalf("%s: %d %s", asset.file, rec.Code, rec.Body.String())
+					}
+					headers := rec.Header()
+					want := "sandbox allow-scripts allow-forms; default-src 'self' " + served.origin + " https://8.8.8.8"
+					if headers.Get("Content-Security-Policy") != want || headers.Get("Cross-Origin-Resource-Policy") != "cross-origin" || headers.Get("Access-Control-Allow-Origin") != "*" || headers.Get("Access-Control-Allow-Credentials") != "" || headers.Get("Set-Cookie") != "" {
+						t.Fatalf("%s Origin=%s: %v", asset.file, origin, headers)
+					}
+					if !strings.Contains(headers.Get("Content-Type"), asset.mime) || rec.Body.Len() == 0 {
+						t.Fatal(asset.file, headers.Get("Content-Type"))
+					}
+					// A mesma política é necessária na revalidação, não somente na primeira carga.
+					req = httptest.NewRequest(http.MethodGet, target, nil)
+					req.Header.Set("Origin", origin)
+					req.Header.Set("If-None-Match", headers.Get("ETag"))
+					cached := httptest.NewRecorder()
+					e.ServeHTTP(cached, req)
+					if cached.Code != 304 || cached.Header().Get("Access-Control-Allow-Origin") != "*" || cached.Header().Get("Access-Control-Allow-Credentials") != "" || cached.Header().Get("Cross-Origin-Resource-Policy") != "cross-origin" || cached.Header().Get("Content-Security-Policy") != want {
+						t.Fatal(asset.file, cached.Code, cached.Header())
+					}
+				}
+			}
+		})
+	}
+	t.Setenv("APPS_ORIGIN", "https://apps.example/; script-src *")
+	e := newApp()
+	if rec := do(t, e, http.MethodGet, "/apps/"+a.ID+"/ui/index.html", nil, nil); rec.Code != 404 {
+		t.Fatal("configuração inválida", rec.Code)
 	}
 }
