@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -25,9 +26,10 @@ type Limits struct {
 }
 
 // DefaultLimits limita trabalho compilado, instâncias vivas e espera por instalação.
-func DefaultLimits() Limits { return Limits{4, 8, 1024, 3, 64 << 20, time.Second} }
+func DefaultLimits() Limits { return Limits{4, 8, 1024, 3, 128 << 20, time.Second} }
 
 type compiled struct {
+	runtime     wazero.Runtime
 	module      wazero.CompiledModule
 	cost, users int
 	used        uint64
@@ -45,6 +47,7 @@ type invocation struct {
 // Host coordena cache, concorrência e quarentena sem reusar instâncias guest.
 type Host struct {
 	runtime  wazero.Runtime
+	runtimes map[int]wazero.Runtime
 	limits   Limits
 	slots    chan struct{}
 	compiler chan struct{}
@@ -60,22 +63,35 @@ func New(ctx context.Context, l Limits) (*Host, error) {
 	if l.Concurrency < 1 || l.Queue < 0 || l.Installations < 1 || l.Failures < 1 || l.CacheBytes < 1 || l.Deadline <= 0 {
 		return nil, fmt.Errorf("limites inválidos")
 	}
-	r := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithMemoryLimitPages(256).WithCloseOnContextDone(true))
-	h := &Host{runtime: r, limits: l, slots: make(chan struct{}, l.Concurrency), compiler: make(chan struct{}, 1), cache: map[string]*compiled{}, states: map[string]*installation{}}
-	// A whitelist de artefatos permite somente fd_write e random_get.
-	allowed := r.NewHostModuleBuilder("wasi_snapshot_preview1")
-	exporter := wasi_snapshot_preview1.NewFunctionExporter()
-	exporter.ExportFunctions(allowed)
-	// O módulo padrão não concede FS, env ou sockets; a validação rejeita outros imports.
-	if _, err := allowed.Instantiate(ctx); err != nil {
-		r.Close(ctx)
-		return nil, err
+	h := &Host{limits: l, slots: make(chan struct{}, l.Concurrency), compiler: make(chan struct{}, 1), cache: map[string]*compiled{}, states: map[string]*installation{}, runtimes: map[int]wazero.Runtime{}}
+	r, e := h.newRuntime(ctx, 16)
+	if e != nil {
+		return nil, e
 	}
-	if _, err := r.NewHostModuleBuilder("papo_host_v1").NewFunctionBuilder().WithFunc(h.call).Export("call").Instantiate(ctx); err != nil {
-		r.Close(ctx)
-		return nil, err
-	}
+	h.runtime = r
+	h.runtimes[16] = r
 	return h, nil
+}
+
+// newRuntime mantém memória limitada por configuração; admissão e cache continuam globais.
+func (h *Host) newRuntime(ctx context.Context, mb int) (wazero.Runtime, error) {
+	if mb < 1 || mb > 256 {
+		return nil, plugins.ErrInvalidArtifact
+	}
+	r := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithMemoryLimitPages(uint32(mb*16)).WithCloseOnContextDone(true))
+	allowed := r.NewHostModuleBuilder("wasi_snapshot_preview1")
+	wasi_snapshot_preview1.NewFunctionExporter().ExportFunctions(allowed)
+	// encoding/json do TinyGo referencia clock/args; argumentos ficam vazios e relógio nega acesso.
+	allowed.NewFunctionBuilder().WithFunc(func(context.Context, api.Module, uint32, uint64, uint32) uint32 { return 52 }).Export("clock_time_get")
+	if _, e := allowed.Instantiate(ctx); e != nil {
+		r.Close(ctx)
+		return nil, e
+	}
+	if _, e := r.NewHostModuleBuilder("papo_host_v1").NewFunctionBuilder().WithFunc(h.call).Export("call").Instantiate(ctx); e != nil {
+		r.Close(ctx)
+		return nil, e
+	}
+	return r, nil
 }
 
 // signature compara tipos de parâmetros e retornos sem aceitar coerções do ABI.
@@ -91,6 +107,8 @@ func validate(c wazero.CompiledModule) error {
 		ok := module == "papo_host_v1" && name == "call" && signature(f, []api.ValueType{i32, i32, i32, i32}, []api.ValueType{i32})
 		ok = ok || module == "wasi_snapshot_preview1" && name == "fd_write" && signature(f, []api.ValueType{i32, i32, i32, i32}, []api.ValueType{i32})
 		ok = ok || module == "wasi_snapshot_preview1" && name == "random_get" && signature(f, []api.ValueType{i32, i32}, []api.ValueType{i32})
+		ok = ok || module == "wasi_snapshot_preview1" && (name == "args_get" || name == "args_sizes_get") && signature(f, []api.ValueType{i32, i32}, []api.ValueType{i32})
+		ok = ok || module == "wasi_snapshot_preview1" && name == "clock_time_get" && signature(f, []api.ValueType{i32, i64, i32}, []api.ValueType{i32})
 		if !ok {
 			return plugins.ErrInvalidArtifact
 		}
@@ -107,14 +125,14 @@ func validate(c wazero.CompiledModule) error {
 
 // acquire compila sob admissão global e mantém handles ativos fora da eviction.
 func (h *Host) acquire(ctx context.Context, data []byte) (*compiled, error) {
-	if len(data) == 0 || len(data) > plugins.MaxArtifact {
+	if len(data) == 0 || len(data) > plugins.ArtifactLimit() {
 		return nil, plugins.ErrInvalidArtifact
 	}
 	if err := preflight(data); err != nil {
 		return nil, err
 	}
 	sum := sha256.Sum256(data)
-	digest := hex.EncodeToString(sum[:])
+	digest := fmt.Sprintf("%d:%s", plugins.MemoryLimit(ctx), hex.EncodeToString(sum[:]))
 	// A espera por compilação também respeita o contexto; não segura o lock do scheduler.
 	select {
 	case h.compiler <- struct{}{}:
@@ -130,7 +148,7 @@ func (h *Host) acquire(ctx context.Context, data []byte) (*compiled, error) {
 		h.mu.Unlock()
 		return c, nil
 	}
-	cost := max(1<<20, len(data)*16)
+	cost := max(1<<20, len(data)*4)
 	for h.budget+cost > h.limits.CacheBytes {
 		var victim string
 		var oldest *compiled
@@ -148,7 +166,21 @@ func (h *Host) acquire(ctx context.Context, data []byte) (*compiled, error) {
 		h.budget -= oldest.cost
 	}
 	h.mu.Unlock()
-	c, err := h.runtime.CompileModule(ctx, data)
+	mb := plugins.MemoryLimit(ctx)
+	h.mu.Lock()
+	r := h.runtimes[mb]
+	h.mu.Unlock()
+	if r == nil {
+		var e error
+		r, e = h.newRuntime(ctx, mb)
+		if e != nil {
+			return nil, e
+		}
+		h.mu.Lock()
+		h.runtimes[mb] = r
+		h.mu.Unlock()
+	}
+	c, err := r.CompileModule(ctx, data)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", plugins.ErrInvalidArtifact, err)
 	}
@@ -158,7 +190,7 @@ func (h *Host) acquire(ctx context.Context, data []byte) (*compiled, error) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	entry := &compiled{module: c, cost: cost, users: 1, used: h.tick}
+	entry := &compiled{runtime: r, module: c, cost: cost, users: 1, used: h.tick}
 	h.cache[digest] = entry
 	h.budget += cost
 	return entry, nil
@@ -236,6 +268,12 @@ func (h *Host) Invoke(parent context.Context, id string, artifact, input []byte,
 	gateHeld := false
 	defer func() {
 		h.leave(id, s, ran, ran && err != nil)
+		h.mu.Lock()
+		quarantined := s.failures >= h.limits.Failures
+		h.mu.Unlock()
+		if quarantined && err != nil {
+			err = errors.Join(err, plugins.ErrQuarantined)
+		}
 		if gateHeld {
 			<-s.gate
 		}
@@ -268,7 +306,7 @@ func (h *Host) Invoke(parent context.Context, id string, artifact, input []byte,
 	defer h.release(c)
 	ran = true
 	ctx = context.WithValue(ctx, invocationKey{}, &invocation{call: call})
-	m, err := h.runtime.InstantiateModule(ctx, c.module, wazero.NewModuleConfig().WithName("").WithStartFunctions("_initialize"))
+	m, err := c.runtime.InstantiateModule(ctx, c.module, wazero.NewModuleConfig().WithName("").WithStartFunctions("_initialize"))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", plugins.ErrExecution, err)
 	}
@@ -357,4 +395,14 @@ func (h *Host) Reset(id string) {
 }
 
 // Close fecha o runtime depois que o servidor drenou requisições.
-func (h *Host) Close(ctx context.Context) error { return h.runtime.Close(ctx) }
+func (h *Host) Close(ctx context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var first error
+	for _, r := range h.runtimes {
+		if e := r.Close(ctx); e != nil && first == nil {
+			first = e
+		}
+	}
+	return first
+}
