@@ -213,7 +213,7 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 		}
 		p.Surfaces = append(p.Surfaces, d)
 	}
-	p.Surfaces, e = validateAppSurfaces(ctx, PluginSurfaceBundle{ApprovedOrigins: p.Origins}, p.Surfaces)
+	p.Surfaces, e = validateAppSurfaces(ctx, PluginSurfaceBundle{Directory: b.Directory, ApprovedOrigins: p.Origins}, p.Surfaces)
 	if e != nil {
 		return p, e
 	}
