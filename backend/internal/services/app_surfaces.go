@@ -286,6 +286,14 @@ func PluginUICSP(ctx context.Context, b PluginSurfaceBundle, baseURL string) (st
 	if len(origins) > 0 {
 		policy += " " + strings.Join(origins, " ")
 	}
+	// Avatares públicos podem vir de BASE_URL quando os assets usam APPS_ORIGIN.
+	base, e := url.Parse(baseURL)
+	if e != nil || base.Hostname() == "" || base.User != nil || (base.Scheme != "http" && base.Scheme != "https") || strings.ContainsAny(base.Host, "\\;\"'<> \t\r\n") {
+		return "", ErrInvalidInput
+	}
+	if utils.OriginURL(base) != utils.OriginURL(served) {
+		policy += "; img-src 'self' " + strings.Join(origins, " ") + " " + utils.OriginURL(base) + "/users/"
+	}
 	return policy, nil
 }
 

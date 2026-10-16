@@ -3,6 +3,26 @@ package papo:plugin@1.0.0;
 // Contrato core Wasm do papo-core-v1, não o ABI canônico do Component Model.
 // Offsets são relativos à memória linear exportada "memory". Payloads são JSON UTF-8.
 interface host-core {
+    // Projeção JSON fechada: {id,username,display_name,avatar_url}.
+    // avatar_url é sempre /users/<id>/avatar; nenhum campo privado é permitido.
+    record user-profile {
+        id: string,
+        username: string,
+        display-name: string,
+        avatar-url: string,
+    }
+    // Quota efetiva da gestão (JSON usa snake_case).
+    record storage-quota {
+        max-keys: u32,
+        max-total-bytes: u32,
+        max-value-bytes: u32,
+    }
+    // Override administrativo parcial; zero explícito herda o padrão global.
+    record storage-quota-override {
+        max-keys: option<u32>,
+        max-total-bytes: option<u32>,
+        max-value-bytes: option<u32>,
+    }
     // Import binário: papo_host_v1.call(i32,i32,i32,i32) -> i32.
     // Retorna tamanho necessário; se excede capacity, não escreve nem repete efeitos.
     call: func(request-ptr: u32, request-len: u32, output-ptr: u32, capacity: u32) -> u32;
@@ -12,7 +32,9 @@ interface guest-core {
     // O guest inicializa com _initialize() uma vez em cada instância.
     alloc: func(length: u32) -> u32;
     free: func(ptr: u32);
-    // Invocations: on_enable(settings), on_disable(), on_trigger(input).
+    // Invocations: on_enable, on_disable, on_trigger, on_interaction e on_ui_call.
+    // Os callbacks humanos incluem input.user (user-profile) do chamador verificado.
+    // user_action também inclui input.target_user, além dos IDs legados.
     // JSON: {"type":...,"settings":{...},"input":...}.
     // Retorno: (output_ptr << 32) | output_len. Host copia e libera os buffers.
     // Resposta: {"ok":true,"result":...} ou {"ok":false,"error":{"code":...}}.
@@ -31,5 +53,13 @@ world papo-core-v1 {
 // message.send: {method,channel_id,content,external_message_id?,embeds?}.
 // embeds: no máximo um {source_type:"app",app_surface_id:<próprio id>,title?...}.
 // message.edit / message.delete: {method,channel_id,message_id,content?,embeds?}.
+// users.resolve: {method:"users.resolve",ids:[UUID,...]} -> result:[user-profile,...].
+// Até 50 IDs; somente leitores atuais de canal app próprio ou escopo do plugin.
+// Negados, banidos e inexistentes são omitidos de forma indistinguível; sem duplicatas.
+// Rate limit por instalação; sem nova capacidade e sem acesso a perfis completos.
+// components: até duas linhas de cinco botões {id,label,style,disabled,opens?}.
+// invite.send: {method,to_user_id,text,data}; só em callbacks humanos com send_invites.
+// input on_interaction: {interaction_id,kind,user_id,user,channel_id,message_id?,component_id?,action_id?,target_user_id?,target_user?}.
+// input on_ui_call: {user_id,user,channel_id,session_id,method,params,invite?}.
 // log: {method,content}; time.now: {method}.
 // on_event é deliberadamente reservado para um commit posterior.

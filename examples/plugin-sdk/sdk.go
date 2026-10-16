@@ -87,14 +87,16 @@ func invoke(p, n uint32) uint64 {
 
 // Interaction contém somente identidades verificadas pelo servidor.
 type Interaction struct {
-	InteractionID string `json:"interaction_id"`
-	Kind          string `json:"kind"`
-	UserID        string `json:"user_id"`
-	ChannelID     string `json:"channel_id"`
-	MessageID     string `json:"message_id,omitempty"`
-	ComponentID   string `json:"component_id,omitempty"`
-	ActionID      string `json:"action_id,omitempty"`
-	TargetUserID  string `json:"target_user_id,omitempty"`
+	User          UserProfile  `json:"user"`
+	TargetUser    *UserProfile `json:"target_user,omitempty"`
+	InteractionID string       `json:"interaction_id"`
+	Kind          string       `json:"kind"`
+	UserID        string       `json:"user_id"`
+	ChannelID     string       `json:"channel_id"`
+	MessageID     string       `json:"message_id,omitempty"`
+	ComponentID   string       `json:"component_id,omitempty"`
+	ActionID      string       `json:"action_id,omitempty"`
+	TargetUserID  string       `json:"target_user_id,omitempty"`
 }
 
 // Invite é o contexto autorizado após aceitação do destinatário.
@@ -106,6 +108,7 @@ type Invite struct {
 
 // UICall nunca aceita identidade fornecida pela página.
 type UICall struct {
+	User      UserProfile     `json:"user"`
 	UserID    string          `json:"user_id"`
 	ChannelID string          `json:"channel_id"`
 	SessionID string          `json:"session_id"`
@@ -129,4 +132,28 @@ type Button struct {
 	Style    string `json:"style"`
 	Disabled bool   `json:"disabled"`
 	Opens    string `json:"opens,omitempty"`
+}
+
+// UserProfile é o único perfil público disponível ao plugin.
+type UserProfile struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	AvatarURL   string `json:"avatar_url"`
+}
+
+// ResolveUsers retorna somente perfis autorizados; ausentes e negados são omitidos.
+func ResolveUsers(ids []string) ([]UserProfile, error) {
+	b, e := Call(map[string]any{"method": "users.resolve", "ids": ids})
+	if e != nil {
+		return nil, e
+	}
+	var out struct {
+		OK     bool          `json:"ok"`
+		Result []UserProfile `json:"result"`
+	}
+	if json.Unmarshal(b, &out) != nil || !out.OK {
+		return nil, errors.New("resolução de usuários recusada")
+	}
+	return out.Result, nil
 }

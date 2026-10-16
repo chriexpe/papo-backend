@@ -43,5 +43,10 @@ export async function connect({ baseURL, installationId, pollingMs = 1500 } = {}
     addEventListener('pagehide', stop, { once: true });
     return stop;
   }
-  return { rpc, poll, sessionId: session.session_id, pollingMs };
+  // Perfis usam caminho relativo ao servidor, mesmo se a página estiver em outro diretório.
+  function avatarURL(user) {
+    if (!/^\/users\/[0-9a-f-]{36}\/avatar$/i.test(user.avatar_url)) throw new Error('Avatar de usuário inválido');
+    return new URL(user.avatar_url, baseURL).href;
+  }
+  return { rpc, poll, avatarURL, sessionId: session.session_id, pollingMs };
 }

@@ -471,6 +471,9 @@ func TestAppUIOpaqueOriginAssets(t *testing.T) {
 					}
 					headers := rec.Header()
 					want := "sandbox allow-scripts allow-forms; default-src 'self' " + served.origin + " https://8.8.8.8"
+					if served.apps != "" {
+						want += "; img-src 'self' " + served.origin + " https://8.8.8.8 https://papo.example:8443/users/"
+					}
 					if headers.Get("Content-Security-Policy") != want || headers.Get("Cross-Origin-Resource-Policy") != "cross-origin" || headers.Get("Access-Control-Allow-Origin") != "*" || headers.Get("Access-Control-Allow-Credentials") != "" || headers.Get("Set-Cookie") != "" {
 						t.Fatalf("%s Origin=%s: %v", asset.file, origin, headers)
 					}

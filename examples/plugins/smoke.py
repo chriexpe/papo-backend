@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Smoke HTTP contra um banco NOVO, já migrado; não use um banco de produção."""
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ def main():
     parser.add_argument("--server", required=True, help="Binário backend compilado")
     parser.add_argument("--database-url", required=True, help="Banco descartável já migrado")
     parser.add_argument("--port", type=int, default=18085)
+    parser.add_argument("--avatar-browser", help="Verificador WPE nativo, opcional; recebe a URL somente por stdin")
     args = parser.parse_args()
     server = str(Path(args.server).resolve())
     base = f"http://127.0.0.1:{args.port}"
@@ -86,6 +88,10 @@ def main():
             username = discovered["username"]
             _, _, headers = request("POST", "/auth/login", {"username": username, "password": "SmokeLocal!12345"})
             cookie = headers["Set-Cookie"].split(";", 1)[0]
+            owner_id = discovered["id"]
+            image = base64.b64encode((Path(__file__).resolve().parent / "reference/icon.png").read_bytes()).decode()
+            request("PUT", f"/users/{owner_id}/avatar", {"avatar": image, "avatar_format": "PNG"})
+            request("PUT", f"/users/{owner_id}", {"nickname": "Jogador Um", "status": "online", "description": ""})
             request("POST", "/server", {"name": "Plugins smoke", "public": True})
             _, channel, _ = request("POST", "/channels", {"name": "plugin-messages", "type": "text"})
             _, catalog, _ = request("POST", "/plugins/rescan")
@@ -101,6 +107,9 @@ def main():
                 selection.update(consent=preview["consent"], expires_at=preview["expires_at"])
                 _, installed[plugin], _ = request("POST", f"/plugins/{plugin}/enable", selection)
                 assert installed[plugin]["kind"] == "plugin" and installed[plugin]["state"] == "enabled"
+            _, configured, _ = request("PATCH", "/plugins/reference", {"storage_quota": {"max_keys": 512, "max_total_bytes": 2097152, "max_value_bytes": 32768}})
+            assert configured["storage_quota"] == {"max_keys": 512, "max_total_bytes": 2097152, "max_value_bytes": 32768}
+            print("PASS: admin PATCH applies per-plugin storage quotas")
             _, channels, _ = request("GET", "/channels")
             apps = [c for c in channels["channels"] if c["type"] == "app"]
             assert len(apps) == 2
@@ -158,6 +167,10 @@ def main():
             _, player, _ = request("POST", "/auth/register", {"username": player_name, "password": "SmokeLocal!12345"})
             _, _, login_headers = request("POST", "/auth/login", {"username": player_name, "password": "SmokeLocal!12345"})
             player_cookie = login_headers["Set-Cookie"].split(";", 1)[0]
+            cookie = player_cookie
+            request("PUT", f"/users/{player['id']}/avatar", {"avatar": image, "avatar_format": "PNG"})
+            request("PUT", f"/users/{player['id']}", {"nickname": "Jogadora Dois", "status": "online", "description": ""})
+            cookie = owner_cookie
             app_id = installed["reference"]["id"]
             app_channel = next(c for c in apps if c["app"]["app_installation_id"] == app_id)
             assert app_channel["app"]["user_actions"][0]["id"] == "convidar"
@@ -198,6 +211,18 @@ def main():
                 assert result["ok"], result
                 return result["result"]
             assert rpc(player_token, "identity")["user_id"] == player["id"]
+            profiles = rpc(owner_token, "game.profiles")
+            assert {p["display_name"] for p in profiles} == {"Jogador Um", "Jogadora Dois"}
+            assert all(set(p) == {"id", "username", "display_name", "avatar_url"} for p in profiles)
+            for profile in profiles:
+                assert profile["avatar_url"] == f"/users/{profile['id']}/avatar"
+                req = urllib.request.Request(base + profile["avatar_url"], headers={"Origin": "null"})
+                with urllib.request.urlopen(req) as response:
+                    assert response.headers["Cross-Origin-Resource-Policy"] == "cross-origin"
+                    assert response.headers["Access-Control-Allow-Origin"] == "*"
+                    assert response.headers.get("Access-Control-Allow-Credentials") is None
+                    assert response.read().startswith(b"\x89PNG")
+            print("PASS: users.resolve returns four public fields; both avatars load by credentialless HTTP with CORP/CORS")
             assert rpc(owner_token, "game.state")["game"]["revision"] == 0
             started = time.perf_counter()
             moved = rpc(owner_token, "game.move", {"cell": 0, "revision": 0})
@@ -231,11 +256,32 @@ def main():
             }})
             assert cleared["ok"] and not cleared["result"].get("components")
             print("PASS: buttons-only message and explicit component removal")
+            if args.avatar_browser:
+                for surface, file in (("home", "index.html"), ("result", "result.html")):
+                    selection = {"surface_id": surface, "channel_id": app_channel["id"] if surface == "home" else channel["id"]}
+                    if surface == "result":
+                        selection["message_id"] = game_message["id"]
+                    _, ticket, _ = request("POST", f"/apps/{app_id}/launch", selection)
+                    page = base + f"/apps/{app_id}/ui/{file}#papo_ticket=" + ticket["ticket"]
+                    checked = subprocess.run([str(Path(args.avatar_browser).resolve())], input=page + "\n", text=True, capture_output=True, timeout=30)
+                    if checked.returncode:
+                        # O ticket não é exibido, nem em falha do verificador.
+                        raise AssertionError(f"WPE não confirmou avatares em {file}: código {checked.returncode}; " + checked.stderr.replace(ticket["ticket"], "[ticket]"))
+                    assert "PASS: WPE sandbox" in checked.stdout
+                    print(f"PASS: WPE real, contexto efêmero e CSP sandbox: nomes e dois avatares decodificados em {file}")
+            _, large, _ = request("POST", "/plugins/reference/trigger", {"request": {"method": "kv.put", "key": "large-quota", "value": "x" * 20000}})
+            assert large["ok"]
             request("POST", "/plugins/reference/trigger", {"request": {"method": "kv.put", "key": "counter", "value": 42}})
             stop()
             start()
             _, stored, _ = request("POST", "/plugins/reference/trigger", {"request": {"method": "kv.get", "key": "counter"}})
             assert stored["ok"] and stored["result"]["value"] == 42
+            _, catalog, _ = request("GET", "/plugins")
+            reference = next(p for p in catalog["plugins"] if p["id"] == "reference")
+            assert reference["installation"]["storage_quota"]["max_value_bytes"] == 32768
+            _, large, _ = request("POST", "/plugins/reference/trigger", {"request": {"method": "kv.get", "key": "large-quota"}})
+            assert large["ok"] and len(large["result"]["value"]) == 20000
+            print("PASS: 20 KiB host value and admin quota override persist across backend restart")
             print("PASS: full backend restart retains app_storage and installation metadata")
             for plugin in ("reference", "bluemap"):
                 assert request("POST", f"/plugins/{plugin}/disable")[0] == 204

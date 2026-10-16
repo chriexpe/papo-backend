@@ -210,7 +210,7 @@ Host calls (identidade sempre implícita, checks atuais de capacidade e escopo):
 
 Asset retorna `result.data` em base64, `offset` e `length`; leituras parciais permitem
 arquivos maiores até o teto de asset. KV exige `private_storage`: 256 chaves,
-1 MiB agregado de chave + JSON normalizado, chave de 1–200 bytes, valor até 16 KiB,
+1 MiB agregado de chave + JSON normalizado, chave de 1–200 bytes, valor padrão até 16 KiB (configurável),
 revisão incrementada em update (delete + put reinicia em 1). SQL serializa a quota.
 `message.send` usa `CreatePluginMessage` da #18, mesmo armazenamento/publicação de
 mensagens, capacidade send e escopo atual; até um embed da própria superfície
@@ -289,3 +289,26 @@ A origem explícita no CSP vem de `APPS_ORIGIN` (origem HTTP(S), sem caminho), o
 Host/Forwarded. O smoke HTTP também busca as duas páginas e cada asset real com
 `Origin: null`, verifica MIME, ausência de credenciais e CORS em 200 e 304.
 A execução HTTP não substitui a execução do módulo em uma WebView.
+
+
+## Quotas administrativas de app_storage
+
+Defaults globais: PLUGINS_STORAGE_MAX_KEYS=256,
+PLUGINS_STORAGE_MAX_TOTAL_BYTES=1048576 e PLUGINS_STORAGE_MAX_VALUE_BYTES=16384.
+Configuração inválida impede startup. Limites aceitos: 1–100000 chaves,
+1 byte–1 GiB total, 1 byte–64 KiB por valor, e valor <= total. O transporte
+papo-core-v1 conserva seu limite independente de 64 KiB por payload.
+
+Preview/enable e PATCH /plugins/:id aceitam `storage_quota` com max_keys,
+max_total_bytes e max_value_bytes opcionais. Ausência conserva o override atual;
+zero explícito herda o default global daquele campo. Respostas mostram quota
+efetiva em storage_quota e configuração persistida em storage_quota_overrides.
+O consentimento assinado inclui ambas. Overrides não podem vir do manifest,
+setting do guest ou RPC. PATCH exige manage_apps, como max_memory_mb.
+
+A mutation KV resolve os limites dentro da transação e lock da instalação,
+incluindo JSONB normalizado e bytes UTF-8 das chaves. A redução não apaga dados;
+novas escritas precisam caber e delete continua disponível. Reaprovação, restart
+e hot reload preservam o override. Migration 023 amplia o CHECK físico legado;
+down restaura o teto antigo para novas escritas com NOT VALID, preservando valores
+maiores já gravados. Up subsequente aceita esses valores novamente.

@@ -6230,6 +6230,10 @@ components:
       description: Identidade do servidor. created_by é histórico e propriedade de armazenamento; perder roles ou ser
         banido não desativa o app. Hash nunca é exposto.
       properties:
+        storage_quota:
+          $ref: '#/components/schemas/AppStorageQuota'
+        storage_quota_overrides:
+          $ref: '#/components/schemas/AppStorageQuotaOverride'
         id:
           type: string
           format: uuid
@@ -6575,6 +6579,8 @@ components:
       type: object
       additionalProperties: false
       properties:
+        storage_quota:
+          $ref: '#/components/schemas/AppStorageQuotaOverride'
         settings: {type: object, additionalProperties: true}
         permissions:
           type: array
@@ -6589,6 +6595,8 @@ components:
       type: object
       additionalProperties: false
       properties:
+        storage_quota:
+          $ref: '#/components/schemas/AppStorageQuotaOverride'
         settings: {type: object, additionalProperties: true}
         max_memory_mb: {type: integer, minimum: 1, maximum: 256}
         consent: {type: string, minLength: 64, maxLength: 64}
@@ -6597,6 +6605,10 @@ components:
       type: object
       required: [id, digest, version, name, settings, requested_permissions, permissions, blocked_permissions, scopes, explicit_scopes, origins, surfaces, max_memory_mb, revision, state, expires_at, consent]
       properties:
+        storage_quota:
+          $ref: '#/components/schemas/AppStorageQuota'
+        storage_quota_overrides:
+          $ref: '#/components/schemas/AppStorageQuotaOverride'
         id: {type: string}
         digest: {type: string, pattern: '^[0-9a-f]{64}$'}
         version: {type: string}
@@ -6851,3 +6863,105 @@ components:
         interaction_id:
           type: string
           format: uuid
+
+    AppUserProfile:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - username
+      - display_name
+      - avatar_url
+      description: Projeção pública mínima. Sem e-mail, IP, roles, status, hashes, banner
+        ou outros dados privados. display_name usa nickname, com fallback para username.
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+          pattern: ^/users/[0-9a-f-]{36}/avatar$
+          description: Caminho relativo ao servidor; endpoint público com CORS * sem credenciais
+            e CORP cross-origin.
+    AppStorageQuotaOverride:
+      type: object
+      additionalProperties: false
+      properties:
+        max_keys:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        max_total_bytes:
+          type: integer
+          minimum: 0
+          maximum: 1073741824
+        max_value_bytes:
+          type: integer
+          minimum: 0
+          maximum: 65536
+      description: 'Override administrativo parcial: ausente conserva o override atual;
+        zero volta ao default global. Não é metadado controlado pelo plugin. Não remove
+        dados existentes; escritas respeitam a quota atual sob lock SQL.'
+    AppStorageQuota:
+      type: object
+      required:
+      - max_keys
+      - max_total_bytes
+      - max_value_bytes
+      properties:
+        max_keys:
+          type: integer
+          default: 256
+        max_total_bytes:
+          type: integer
+          default: 1048576
+        max_value_bytes:
+          type: integer
+          default: 16384
+      description: 'Limites efetivos: defaults PLUGINS_STORAGE_MAX_KEYS/MAX_TOTAL_BYTES/MAX_VALUE_BYTES
+        mais overrides positivos. Bytes contam chave UTF-8 e JSONB normalizado; valor
+        não inclui chave. O transporte ABI mantém seu teto independente.'
+    AppUsersResolve:
+      type: object
+      additionalProperties: false
+      required:
+      - method
+      - ids
+      properties:
+        method:
+          type: string
+          enum:
+          - users.resolve
+        ids:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: uuid
+      description: Host call via papo_host_v1.call, não uma rota REST. Instalação plugin
+        habilitada. Omite negados, banidos e inexistentes sem distingui-los; inclui apenas
+        leitores de pelo menos um canal app próprio ou escopo atual. IDs duplicados são
+        deduplicados, preservando ordem. Limite padrão 120 chamadas/min por instalação,
+        PLUGINS_USERS_RESOLVE_PER_PLUGIN.
+    AppUsersResolveResult:
+      type: array
+      maxItems: 50
+      items:
+        $ref: '#/components/schemas/AppUserProfile'
+    AppHumanCallbackProfiles:
+      type: object
+      required:
+      - user
+      properties:
+        user:
+          $ref: '#/components/schemas/AppUserProfile'
+        target_user:
+          $ref: '#/components/schemas/AppUserProfile'
+      description: 'Campos aditivos de input em on_interaction/on_ui_call: user vem do
+        usuário autenticado, nunca de params ou request. target_user só existe em user_action.
+        user_id/target_user_id legados permanecem. Não são aceitos como identidade na
+        API de interações.'

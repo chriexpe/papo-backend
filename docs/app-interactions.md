@@ -128,3 +128,34 @@ Hot reload sem expansão também é aplicado na fronteira de uma chamada humana.
 A nova geração invalida a sessão do digest anterior; a UI precisa de novo launch.
 O contexto humano é retirado de on_enable/on_disable, inclusive quando o lifecycle
 acontece dentro de um hot reload iniciado por interação/RPC.
+
+
+## Perfis públicos e avatares
+
+Os callbacks humanos incluem `input.user: {id,username,display_name,avatar_url}`;
+user_action também inclui `target_user`. São perfis dos IDs verificados pelo host,
+nunca de params. IDs legados permanecem. display_name usa nickname não vazio,
+com fallback para username; avatar_url é `/users/<id>/avatar`.
+
+Host call `users.resolve {ids}` retorna `result: [perfil,...]`, até 50 IDs de entrada.
+Ausentes, banidos e usuários sem leitura de nenhum canal app próprio ou escopo
+atual são omitidos de maneira indistinguível. Outro canal público sem vínculo
+não concede visibilidade. Duplicatas são eliminadas, preservando ordem. A consulta
+seleciona somente esses quatro campos no SQL e reutiliza a ACL de leitura normal.
+Não exige uma nova capacidade e não concede acesso a mensagens. O limite é
+PLUGINS_USERS_RESOLVE_PER_PLUGIN=120 chamadas por minuto por instalação.
+
+O jogo usa game.profiles → users.resolve para os dois participantes e carrega nomes
+com textContent e avatares públicos com crossorigin=anonymous. O SDK fornece
+avatarURL(profile) para resolver o caminho relativo ao servidor. O endpoint público
+de avatar envia CORP cross-origin, CORS * sem credenciais e nosniff, inclusive com
+CORS global ativo. Quando APPS_ORIGIN difere de BASE_URL, o CSP permite imagens de
+BASE_URL/users/ sem abrir o restante da API. Falta de avatar mantém o nome visível.
+
+Verificação nativa opcional: compile `examples/plugins/verify-avatars-wpe.c` com
+`cc ... $(pkg-config --cflags --libs wpe-webkit-2.0 wpe-platform-headless-2.0)` e passe
+`--avatar-browser /caminho/verificador` ao smoke.py. Ele cria tickets distintos para
+index.html/result.html e os entrega ao processo por stdin, sem imprimir o segredo.
+WPE usa sessão efêmera, sem cookie Papo ou scripts injetados, e confirma o título
+PAPO_PLAYER_AVATARS_OK emitido pela própria página só após decode() e naturalWidth
+positivos nos dois avatares reais. Isso verifica carregamento sob CSP sandbox opaco.

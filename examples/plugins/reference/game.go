@@ -127,7 +127,7 @@ func uiCall(e sdk.Event) (json.RawMessage, error) {
 		return result(g), err
 	}
 	if in.Method == "identity" {
-		return result(map[string]string{"user_id": in.UserID, "channel_id": in.ChannelID, "session_id": in.SessionID}), nil
+		return result(map[string]any{"user_id": in.UserID, "user": in.User, "channel_id": in.ChannelID, "session_id": in.SessionID}), nil
 	}
 	g, err := loadGame()
 	if err != nil {
@@ -145,6 +145,12 @@ func uiCall(e sdk.Event) (json.RawMessage, error) {
 		}
 	}
 	switch in.Method {
+	case "game.profiles":
+		profiles, e := sdk.ResolveUsers(g.Players[:])
+		if e != nil {
+			return nil, e
+		}
+		return result(profiles), nil
 	case "game.state":
 		return result(map[string]any{"game": g, "user_id": in.UserID}), nil
 	case "game.move":

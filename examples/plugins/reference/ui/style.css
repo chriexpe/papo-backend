@@ -2,3 +2,5 @@
 
 @font-face{font-family:"Papo Fixture";src:url("fixture.ttf") format("truetype")}body{--fixture-css:loaded}.fixture-font{font-family:"Papo Fixture"}img{vertical-align:middle;margin-right:.5rem}
 #board{display:grid;grid-template-columns:repeat(3,64px);gap:6px;margin:1rem 0}#board button{width:64px;height:64px;font-size:2rem}#latency{display:block;font-size:.85rem}
+
+#players{display:flex;gap:1rem;flex-wrap:wrap}#players>span{display:flex;align-items:center;gap:.5rem}#players img{border-radius:50%;object-fit:cover}
