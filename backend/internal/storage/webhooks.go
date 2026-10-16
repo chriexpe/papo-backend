@@ -66,7 +66,7 @@ func CreateWebhook(ctx context.Context, channelID, name, creator, secretHash str
 // de aplicar o limite. O cursor composto evita perdas em timestamps iguais.
 func ListWebhooks(ctx context.Context, actorID string, since *time.Time, lastID string, orderAsc bool, limit int) ([]models.Webhook, error) {
 	query := "SELECT " + webhookColumns + ` FROM webhooks WHERE revoked_at IS NULL AND channel_id IN (
- SELECT c.id FROM channels c WHERE c.type <> 'dm' AND (
+ SELECT c.id FROM channels c WHERE c.type IN ('text','voice') AND (
   EXISTS (SELECT 1 FROM servers s WHERE s.owner_id = $1)
   OR c.permissions IS NULL OR c.permissions = '{}'::jsonb
   OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id

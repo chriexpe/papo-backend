@@ -128,13 +128,13 @@ func RotateAppToken(ctx context.Context, id, hash string) error {
 
 // RevokeApp revoga a credencial e remove escopos na mesma transação.
 func RevokeApp(ctx context.Context, id string) error {
-	_, err := RevokeAppWithViewChannels(ctx, id)
+	_, err := RevokeAppWithChannelChanges(ctx, id)
 	return err
 }
 
-// RevokeAppWithViewChannels captura os canais afetados sob o lock da instalação,
-// antes de apagar views e escopos; devolve os IDs somente depois do commit.
-func RevokeAppWithViewChannels(ctx context.Context, id string) ([]string, error) {
+// RevokeAppWithChannelChanges captura os canais afetados sob o lock da instalação,
+// antes de apagar canais e escopos; devolve snapshots somente depois do commit.
+func RevokeAppWithChannelChanges(ctx context.Context, id string) ([]models.AppChannelChange, error) {
 	tx, err := GetDB().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -147,25 +147,7 @@ func RevokeAppWithViewChannels(ctx context.Context, id string) ([]string, error)
 	if n, _ := r.RowsAffected(); n == 0 {
 		return nil, ErrNotFound
 	}
-	rows, err := tx.QueryContext(ctx, "DELETE FROM channel_app_views WHERE app_installation_id=$1 RETURNING channel_id", id)
-	if err != nil {
-		return nil, err
-	}
-	channels := make([]string, 0)
-	seen := make(map[string]bool)
-	for rows.Next() {
-		var channel string
-		if err := rows.Scan(&channel); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if !seen[channel] {
-			channels = append(channels, channel)
-			seen[channel] = true
-		}
-	}
-	err = rows.Err()
-	rows.Close()
+	changes, err := deleteAppChannelsInTx(ctx, tx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +161,7 @@ func RevokeAppWithViewChannels(ctx context.Context, id string) ([]string, error)
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return channels, nil
+	return changes, nil
 }
 
 // AddAppScope impede adicionar escopo após a revogação, inclusive em concorrência.
