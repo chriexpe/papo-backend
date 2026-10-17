@@ -19,7 +19,7 @@ func TestAppStorageConstraints(t *testing.T) {
 		kind  string
 		hash  *string
 		valid bool
-	}{{"remote", &hash, true}, {"remote", nil, false}, {"view", nil, true}, {"view", &hash, false}, {"wasm", nil, true}, {"wasm", &hash, false}, {"other", nil, false}} {
+	}{{"remote", &hash, true}, {"remote", nil, false}, {"plugin", nil, true}, {"plugin", &hash, false}, {"other", nil, false}} {
 		_, err := CreateApp(testCtx(), "key", tc.kind, "App", u.ID, models.AppCapabilities{}, tc.hash)
 		if (err == nil) != tc.valid {
 			t.Fatalf("kind=%s hash=%v: %v", tc.kind, tc.hash, err)
@@ -128,7 +128,7 @@ func TestAppStoragePagination(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
-		if _, err := CreateApp(testCtx(), "key", "view", "App", u.ID, models.AppCapabilities{}, nil); err != nil {
+		if _, err := CreateApp(testCtx(), "key", "plugin", "App", u.ID, models.AppCapabilities{}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
