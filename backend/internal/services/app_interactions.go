@@ -163,9 +163,6 @@ func (m *PluginManager) Interact(ctx context.Context, user string, in Interactio
 		return "", e
 	}
 	_, e = m.HumanCall(ctx, a.AppKey, "on_interaction", jsonValue(payload), appHuman{user, in.ChannelID})
-	if e == nil {
-		RecordAudit(ctx, AuditEntry{ActorID: user, Action: ActionAppInteraction, EntityType: EntityApp, EntityID: &in.InstallationID})
-	}
 	return id, e
 }
 
@@ -287,7 +284,6 @@ func (m *PluginManager) LaunchAppUI(ctx context.Context, user, id string, in Lau
 	if e = storage.SaveAppUIToken(ctx, t); e != nil {
 		return nil, e
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: user, Action: ActionAppUILaunch, EntityType: EntityApp, EntityID: &id})
 	entry := selected.Entry
 	poster := selected.Poster
 	if selected.Source == "bundled" {
@@ -361,7 +357,6 @@ func (m *PluginManager) ExchangeAppTicket(ctx context.Context, id, secret string
 	if e = storage.SaveAppUIToken(ctx, t); e != nil {
 		return nil, e
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: t.UserID, Action: ActionAppUISession, EntityType: EntityApp, EntityID: &id})
 	return map[string]any{"token": secret, "session_id": t.ID, "expires_at": t.ExpiresAt, "absolute_expires_at": t.AbsoluteExpiresAt}, nil
 }
 
@@ -402,7 +397,6 @@ func (m *PluginManager) AppRPC(ctx context.Context, id, secret, method string, p
 	if e = storage.TouchAppSession(ctx, t.ID, 30*time.Minute); e != nil {
 		return nil, ErrAppSession
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: t.UserID, Action: ActionAppUICall, EntityType: EntityApp, EntityID: &id, Metadata: map[string]any{"method": method}})
 	return out, nil
 }
 
@@ -502,11 +496,7 @@ func SetPluginInviteMute(ctx context.Context, user, id string, muted bool) error
 	if a.Kind != "plugin" {
 		return ErrInvalidInput
 	}
-	if e = storage.SetAppInviteMute(ctx, user, id, muted); e != nil {
-		return e
-	}
-	RecordAudit(ctx, AuditEntry{ActorID: user, Action: ActionAppInviteMute, EntityType: EntityApp, EntityID: &id})
-	return nil
+	return storage.SetAppInviteMute(ctx, user, id, muted)
 }
 
 // refreshHumanPlugin aplica hot reload na fronteira humana; novas versões revogam as sessões antigas.
