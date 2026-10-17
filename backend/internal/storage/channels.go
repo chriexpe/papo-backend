@@ -514,3 +514,22 @@ func GetChannelSummary(ctx context.Context, id string) (models.ChannelSummary, e
 
 	return summary, nil
 }
+
+// readableChannelIDs devolve um subselect com os ids dos canais de servidor
+// (não dm) que o usuário do placeholder userParam pode ler. É a mesma regra de
+// userHasChannelPermission com read_channel: o dono do servidor lê tudo,
+// canais sem permissões definidas são abertos e, nos demais, basta uma das
+// roles do usuário ter read_channel. Serve para filtrar listagens no SQL antes
+// da paginação.
+func readableChannelIDs(userParam string) string {
+	return "SELECT c.id FROM channels c WHERE c.type <> 'dm' AND (" +
+		"EXISTS (SELECT 1 FROM servers s WHERE s.owner_id = " + userParam + ") " +
+		"OR c.permissions IS NULL " +
+		"OR c.permissions = '{}'::jsonb " +
+		"OR EXISTS (" +
+		"SELECT 1 FROM user_roles ur " +
+		"JOIN roles r ON r.id = ur.role_id " +
+		"WHERE ur.user_id = " + userParam +
+		" AND (c.permissions -> r.id::text ->> 'read_channel') = 'true'" +
+		"))"
+}

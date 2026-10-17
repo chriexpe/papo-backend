@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -29,7 +28,7 @@ func scanWebhook(row rowScanner) (models.Webhook, error) {
 const MaxActiveWebhooksPerChannel = 50
 
 // ErrWebhookLimitReached indica que o canal já atingiu o teto de webhooks ativos.
-var ErrWebhookLimitReached = errors.New("limite de 50 webhooks ativos por canal atingido")
+var ErrWebhookLimitReached = fmt.Errorf("limite de %d webhooks ativos por canal atingido", MaxActiveWebhooksPerChannel)
 
 // CreateWebhook insere um webhook e persiste somente o hash do token.
 // O bloqueio do canal serializa contagem e inserção, inclusive entre processos.
@@ -65,13 +64,8 @@ func CreateWebhook(ctx context.Context, channelID, name, creator, secretHash str
 // ListWebhooks aplica a ACL de leitura (como SearchMessages) aos webhooks, antes
 // de aplicar o limite. O cursor composto evita perdas em timestamps iguais.
 func ListWebhooks(ctx context.Context, actorID string, since *time.Time, lastID string, orderAsc bool, limit int) ([]models.Webhook, error) {
-	query := "SELECT " + webhookColumns + ` FROM webhooks WHERE revoked_at IS NULL AND channel_id IN (
- SELECT c.id FROM channels c WHERE c.type <> 'dm' AND (
-  EXISTS (SELECT 1 FROM servers s WHERE s.owner_id = $1)
-  OR c.permissions IS NULL OR c.permissions = '{}'::jsonb
-  OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-   WHERE ur.user_id = $1 AND (c.permissions -> r.id::text ->> 'read_channel') = 'true')
- ))`
+	query := "SELECT " + webhookColumns + " FROM webhooks WHERE revoked_at IS NULL AND channel_id IN (" +
+		readableChannelIDs("$1") + ")"
 	args := []any{actorID}
 	op, order := "<", "DESC"
 	if orderAsc {
