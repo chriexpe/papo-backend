@@ -34,7 +34,10 @@ func CreateApp(ctx context.Context, key, kind, name, actor string, caps models.A
 	if err != nil {
 		return models.AppInstallation{}, err
 	}
-	return scanApp(GetDB().QueryRowContext(ctx, "INSERT INTO app_installations (app_key,kind,name,created_by,capabilities,secret_hash) VALUES ($1,$2,$3,$4,$5,$6) RETURNING "+appColumns, key, kind, name, actor, string(data), hash))
+	return scanApp(GetDB().QueryRowContext(ctx,
+		"INSERT INTO app_installations (app_key, kind, name, created_by, capabilities, secret_hash) "+
+			"VALUES ($1, $2, $3, $4, $5, $6) RETURNING "+appColumns,
+		key, kind, name, actor, string(data), hash))
 }
 
 // GetApp busca inclusive instalações revogadas para preservar a identidade.
@@ -45,7 +48,10 @@ func GetApp(ctx context.Context, id string) (models.AppInstallation, error) {
 // GetActiveAppByHash resolve exclusivamente credenciais remotas ativas.
 func GetActiveAppByHash(ctx context.Context, hash string) (models.AppInstallation, string, error) {
 	var stored string
-	a, err := scanApp(GetDB().QueryRowContext(ctx, "SELECT "+appColumns+", secret_hash FROM app_installations WHERE secret_hash=$1 AND kind='remote' AND revoked_at IS NULL", hash), &stored)
+	a, err := scanApp(GetDB().QueryRowContext(ctx,
+		"SELECT "+appColumns+", secret_hash FROM app_installations "+
+			"WHERE secret_hash = $1 AND kind = 'remote' AND revoked_at IS NULL",
+		hash), &stored)
 	if err != nil {
 		return a, "", err
 	}
@@ -111,7 +117,10 @@ func UpdateApp(ctx context.Context, id string, name, display, avatar any, caps *
 	if len(sets) == 0 {
 		return scanApp(GetDB().QueryRowContext(ctx, "SELECT "+appColumns+" FROM app_installations WHERE id=$1 AND revoked_at IS NULL", id))
 	}
-	return scanApp(GetDB().QueryRowContext(ctx, "UPDATE app_installations SET "+strings.Join(sets, ",")+" WHERE id=$1 AND revoked_at IS NULL RETURNING "+appColumns, args...))
+	return scanApp(GetDB().QueryRowContext(ctx,
+		"UPDATE app_installations SET "+strings.Join(sets, ", ")+
+			" WHERE id = $1 AND revoked_at IS NULL RETURNING "+appColumns,
+		args...))
 }
 
 // RotateAppToken substitui o hash de uma instalação remota ativa.
@@ -161,7 +170,10 @@ func AddAppScope(ctx context.Context, id, channel, actor string) error {
 	if err = tx.QueryRowContext(ctx, "SELECT id FROM app_installations WHERE id=$1 AND revoked_at IS NULL FOR UPDATE", id).Scan(&active); err != nil {
 		return mapStorageError(err)
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO app_channel_scopes (app_installation_id,channel_id,created_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", id, channel, actor); err != nil {
+	if _, err = tx.ExecContext(ctx,
+		"INSERT INTO app_channel_scopes (app_installation_id, channel_id, created_by) "+
+			"VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+		id, channel, actor); err != nil {
 		return mapStorageError(err)
 	}
 	return tx.Commit()
@@ -176,8 +188,22 @@ func RemoveAppScope(ctx context.Context, id, channel string) error {
 // AppHasScope consulta a ACL própria de máquina; não herda permissões do instalador.
 func AppHasScope(ctx context.Context, id, channel string) (bool, error) {
 	var allowed bool
-	err := GetDB().QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM app_channel_scopes WHERE app_installation_id=$1 AND channel_id=$2)", id, channel).Scan(&allowed)
+	err := GetDB().QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM app_channel_scopes WHERE app_installation_id = $1 AND channel_id = $2)",
+		id, channel).Scan(&allowed)
 	return allowed, err
+}
+
+// AppScopedChannelType devolve o tipo do canal quando a instalação tem escopo
+// nele, numa única consulta. ErrNotFound significa sem escopo (o escopo é
+// removido em cascata junto com o canal).
+func AppScopedChannelType(ctx context.Context, id, channel string) (string, error) {
+	var channelType string
+	err := GetDB().QueryRowContext(ctx,
+		"SELECT c.type FROM app_channel_scopes s JOIN channels c ON c.id = s.channel_id "+
+			"WHERE s.app_installation_id = $1 AND s.channel_id = $2",
+		id, channel).Scan(&channelType)
+	return channelType, mapStorageError(err)
 }
 
 // GetAppMessage busca a chave de idempotência enquanto a mensagem existir.

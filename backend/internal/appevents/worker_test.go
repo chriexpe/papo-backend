@@ -11,7 +11,7 @@ import (
 func TestShutdownCanceledWorker(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	worker := Start(ctx, 0, 0)
+	worker := Start(ctx, 0, 0, nil)
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
 		wg.Add(1)

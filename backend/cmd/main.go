@@ -120,7 +120,7 @@ func main() {
 	push.Init(cfg, pushCtx)
 
 	// Eventos de apps têm ciclo de vida próprio e SQL cancelável no shutdown.
-	appEvents := appevents.Start(context.Background(), cfg.AppEventRetention, cfg.AppEventMaxDeliveries)
+	appEvents := appevents.Start(context.Background(), cfg.AppEventRetention, cfg.AppEventMaxDeliveries, nil)
 	defer appEvents.Shutdown()
 
 	e := echo.New()

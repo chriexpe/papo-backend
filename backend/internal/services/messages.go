@@ -115,36 +115,8 @@ func ListMessagesOrdered(ctx context.Context, channelID, userID string, since *t
 		messages = messages[:limit]
 	}
 
-	messageIDs := make([]string, 0, len(messages))
-	attachmentIDs := make([]string, 0)
-	for _, m := range messages {
-		messageIDs = append(messageIDs, m.ID)
-		for _, a := range m.Attachments {
-			attachmentIDs = append(attachmentIDs, a.ID)
-		}
-	}
-
-	embedsByMessage, err := storage.ListEmbedsByMessageIDs(ctx, messageIDs)
-	if err != nil {
+	if err := hydrateMessages(ctx, messages, userID); err != nil {
 		return models.MessageList{}, err
-	}
-	thumbnails, err := storage.ListThumbnailsByAttachmentIDs(ctx, attachmentIDs)
-	if err != nil {
-		return models.MessageList{}, err
-	}
-	reactionCounts, err := storage.ReactionCountsByMessages(ctx, messageIDs)
-	if err != nil {
-		return models.MessageList{}, err
-	}
-	userReactions, err := storage.UserReactionsByMessages(ctx, messageIDs, userID)
-	if err != nil {
-		return models.MessageList{}, err
-	}
-	for i := range messages {
-		messages[i].Embeds = embedsByMessage[messages[i].ID]
-		messages[i].Reactions = reactionCounts[messages[i].ID]
-		messages[i].UserReactions = userReactions[messages[i].ID]
-		setAttachmentThumbnails(&messages[i].Attachments, thumbnails)
 	}
 
 	// Listar mensagens NÃO avança o last_read do usuário: listar é leitura de
@@ -155,6 +127,51 @@ func ListMessagesOrdered(ctx context.Context, channelID, userID string, since *t
 	// alcança a mensagem mais nova do canal.
 
 	return models.MessageList{ChannelID: channelID, Messages: messages, HasMore: hasMore}, nil
+}
+
+// hydrateMessages completa uma página de mensagens (já com attachments) com
+// embeds, thumbnails dos attachments e contagens de reações, em consultas em
+// lote. viewerID é o usuário cujas reações próprias vêm em user_reactions;
+// vazio (leitura por app, que não é usuário) devolve user_reactions vazio.
+func hydrateMessages(ctx context.Context, messages []models.MessageWithAttachment, viewerID string) error {
+	messageIDs := make([]string, 0, len(messages))
+	attachmentIDs := make([]string, 0)
+	for _, m := range messages {
+		messageIDs = append(messageIDs, m.ID)
+		for _, a := range m.Attachments {
+			attachmentIDs = append(attachmentIDs, a.ID)
+		}
+	}
+
+	embedsByMessage, err := ListMessageEmbeds(ctx, messageIDs)
+	if err != nil {
+		return err
+	}
+	thumbnails, err := storage.ListThumbnailsByAttachmentIDs(ctx, attachmentIDs)
+	if err != nil {
+		return err
+	}
+	reactionCounts, err := storage.ReactionCountsByMessages(ctx, messageIDs)
+	if err != nil {
+		return err
+	}
+	userReactions := map[string][]models.MessageUserReaction{}
+	if viewerID != "" {
+		userReactions, err = storage.UserReactionsByMessages(ctx, messageIDs, viewerID)
+		if err != nil {
+			return err
+		}
+	}
+	for i := range messages {
+		messages[i].Embeds = embedsByMessage[messages[i].ID]
+		messages[i].Reactions = reactionCounts[messages[i].ID]
+		messages[i].UserReactions = userReactions[messages[i].ID]
+		if viewerID == "" {
+			messages[i].UserReactions = []models.MessageUserReaction{}
+		}
+		setAttachmentThumbnails(&messages[i].Attachments, thumbnails)
+	}
+	return nil
 }
 
 // setAttachmentThumbnails popula o ThumbnailID dos attachments a partir do

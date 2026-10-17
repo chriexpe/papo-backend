@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"papo/internal/config"
+	"papo/internal/models"
 	"papo/internal/storage"
 )
 
@@ -550,6 +551,71 @@ func TestCleanupMediaUnreferenced(t *testing.T) {
 	}
 	if !mediaRowExists(t, shared) {
 		t.Errorf("blob compartilhado ainda referenciado deveria ter sido mantido")
+	}
+}
+
+// TestCleanupMediaKeepsWebhookAvatar garante que o avatar persistente de um
+// webhook conta como referência: a row não é apagada (a FK de
+// webhooks.avatar_media impediria o DELETE e abortaria todo o GC) e as demais
+// mídias sem referência continuam sendo removidas na mesma execução.
+func TestCleanupMediaKeepsWebhookAvatar(t *testing.T) {
+	withTempMediaDir(t)
+
+	avatar := randHex(32)
+	insertOldMediaRow(t, avatar)
+	avatarPath := writeMediaBlob(t, avatar, []byte("avatar do webhook"))
+	user := newWebhookTestUser(t)
+	channel := newWebhookTestChannel(t, "text")
+	hook, err := storage.CreateWebhook(testCtx(), channel.ID, "hook", user.ID, randHex(32))
+	if err != nil {
+		t.Fatalf("falha ao criar webhook de apoio: %v", err)
+	}
+	if _, err := storage.GetDB().ExecContext(testCtx(),
+		"UPDATE webhooks SET avatar_media = $2 WHERE id = $1", hook.ID, avatar); err != nil {
+		t.Fatalf("falha ao referenciar a mídia no avatar do webhook: %v", err)
+	}
+
+	unreferenced := randHex(32)
+	insertOldMediaRow(t, unreferenced)
+	writeMediaBlob(t, unreferenced, []byte("sem referência"))
+
+	if err := cleanupMedia(testCtx()); err != nil {
+		t.Fatalf("cleanupMedia retornou erro: %v", err)
+	}
+	if !mediaRowExists(t, avatar) {
+		t.Errorf("row do avatar do webhook deveria ter sido mantida")
+	}
+	if _, err := os.Stat(avatarPath); err != nil {
+		t.Errorf("arquivo do avatar do webhook deveria ter sido mantido (stat err = %v)", err)
+	}
+	if mediaRowExists(t, unreferenced) {
+		t.Errorf("row antiga sem referência deveria ter sido removida")
+	}
+}
+
+// TestCleanupMediaKeepsAppAvatar aplica ao avatar de um app a mesma regra do
+// avatar de webhook: a referência mantém a row e o GC não é abortado.
+func TestCleanupMediaKeepsAppAvatar(t *testing.T) {
+	withTempMediaDir(t)
+
+	avatar := randHex(32)
+	insertOldMediaRow(t, avatar)
+	writeMediaBlob(t, avatar, []byte("avatar do app"))
+	user := newWebhookTestUser(t)
+	app, _, err := CreateApp(testCtx(), user.ID, "gc_"+randHex(4), "remote", "App", models.AppCapabilities{})
+	if err != nil {
+		t.Fatalf("falha ao criar app de apoio: %v", err)
+	}
+	if _, err := storage.GetDB().ExecContext(testCtx(),
+		"UPDATE app_installations SET avatar_media = $2 WHERE id = $1", app.ID, avatar); err != nil {
+		t.Fatalf("falha ao referenciar a mídia no avatar do app: %v", err)
+	}
+
+	if err := cleanupMedia(testCtx()); err != nil {
+		t.Fatalf("cleanupMedia retornou erro: %v", err)
+	}
+	if !mediaRowExists(t, avatar) {
+		t.Errorf("row do avatar do app deveria ter sido mantida")
 	}
 }
 

@@ -312,6 +312,7 @@ func DeleteChannel(ctx context.Context, id string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("falha ao excluir canal: %w", err)
 	}
+	notifyAppEvents()
 	return nil
 }
 
@@ -321,7 +322,7 @@ func deleteChannelInTx(ctx context.Context, tx *sql.Tx, id string) error {
 	if err := tx.QueryRowContext(ctx, "SELECT id FROM channels WHERE id=$1 FOR UPDATE", id).Scan(&locked); err != nil {
 		return mapStorageError(err)
 	}
-	if err := CreateAppEventInTx(tx, ctx, "channel.deleted", id, nil, map[string]any{"channel_id": id}); err != nil {
+	if err := createAppEventInTx(ctx, tx, "channel.deleted", id, nil, map[string]any{"channel_id": id}); err != nil {
 		return err
 	}
 
