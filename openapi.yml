@@ -3164,10 +3164,13 @@ paths:
         event_id. Um novo processo/reconexão não depende da memória do registry.
 
         O buffer é limitado a 32 controles/sequências; não guarda snapshots.
-        O payload é relido e a credencial, a época, as capacidades e o escopo são
-        revalidados antes de enviar. Um consumidor lento é desconectado; seu
+        O payload é relido e a época, as capacidades e o escopo são revalidados
+        antes de enviar. O servidor entrega assim que a mutação é confirmada
+        (sem polling no intervalo normal). Um consumidor lento é desconectado; seu
         backlog não confirmado permanece durável até os limites de retenção.
-        Rotação e revogação encerram conexões autenticadas pelo token antigo.
+        Rotação e revogação pelas rotas de gestão encerram na hora a conexão
+        autenticada pelo token antigo; a credencial também é reexaminada a cada
+        30 s.
 
         Tombstones e remoção de conteúdo seguem AppEventTombstone. Exclusão de
         mensagem substitui created/updated ainda sem ack por IDs e redacted:true.

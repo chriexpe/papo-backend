@@ -344,14 +344,13 @@ func RegisterWebhookRoutes(e *echo.Echo, cfg *config.Config) {
 }
 
 // RegisterAppRoutes registra gestão humana e execução remota com ACL própria.
-func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) *appgateway.Registry {
-	gateway := appgateway.NewRegistry()
+func RegisterAppRoutes(e *echo.Echo, cfg *config.Config, gateway *appgateway.Registry) {
 	management := e.Group("/apps", middleware.JWTMiddleware, middleware.RequireManageApps())
 	management.POST("", func(c echo.Context) error { return CreateAppHandler(cfg.BaseURL, c) })
 	management.GET("", func(c echo.Context) error { return ListAppsHandler(cfg.BaseURL, c) })
 	management.PATCH("/:app_id", func(c echo.Context) error { return UpdateAppHandler(cfg.BaseURL, c) })
-	management.DELETE("/:app_id", func(c echo.Context) error { return DeleteAppHandler(cfg.BaseURL, c) })
-	management.POST("/:app_id/token", func(c echo.Context) error { return RotateAppTokenHandler(cfg.BaseURL, c) })
+	management.DELETE("/:app_id", func(c echo.Context) error { return DeleteAppHandler(cfg.BaseURL, gateway, c) })
+	management.POST("/:app_id/token", func(c echo.Context) error { return RotateAppTokenHandler(cfg.BaseURL, gateway, c) })
 	management.PUT("/:app_id/channels/:channel_id", func(c echo.Context) error { return AddAppScopeHandler(cfg.BaseURL, c) })
 	management.DELETE("/:app_id/channels/:channel_id", func(c echo.Context) error { return RemoveAppScopeHandler(cfg.BaseURL, c) })
 	e.GET("/apps/:app_id/avatar", func(c echo.Context) error { return GetAppAvatarHandler(cfg.BaseURL, c) })
@@ -361,5 +360,4 @@ func RegisterAppRoutes(e *echo.Echo, cfg *config.Config) *appgateway.Registry {
 	execution.GET("/channels/:channel_id/messages", func(c echo.Context) error { return ListAppMessagesHandler(cfg.BaseURL, c) })
 	execution.PUT("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return EditAppMessageHandler(cfg.BaseURL, c) })
 	execution.DELETE("/channels/:channel_id/messages/:message_id", func(c echo.Context) error { return DeleteAppMessageHandler(cfg.BaseURL, c) })
-	return gateway
 }
