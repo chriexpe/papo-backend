@@ -5664,10 +5664,28 @@ components:
     NativeEmbed:
       type: object
       description: >
-        Embeds nativos existentes: link (preview automático reutilizado por cache)
-        ou custom (card com título, descrição, imagem e demais campos nativos).
-        Continuam disponíveis a apps sem alteração no formato ou comportamento.
-        Mídias seguem o fluxo de armazenamento e relay autenticado já existente.
+        Embed de mensagem. source_type: 'link' (preview automático de link,
+        obtido por fetch e reutilizado pelo cache por URL normalizada) ou
+        'custom' (embed enviado pela mensagem, dono do próprio registro).
+        fetch_method: 'opengraph' (parser OpenGraph), 'oembed' (provedor
+        allowlistado), 'gif' (resolvedor tenor/giphy/klipy: título + thumbnail
+        GIF animada linkando ao page URL original) ou 'manual' (embed
+        customizado).
+
+        A mídia é referenciada internamente: a imagem da thumbnail é servida
+        por GET /embeds/{embed_id} (image_data) e o vídeo por
+        GET /embeds/{embed_id}/video (relay autenticado com suporte a Range).
+
+        Player: `video` tem duas formas. Vídeo direto (og:video ou embed
+        customizado) traz `mime_type` de vídeo e é reproduzido pelo relay. Para
+        o provedor de iframe allowlistado (YouTube), `video.url` é a página de
+        embed `https://www.youtube.com/embed/<id>` e `mime_type` não vem: o
+        cliente renderiza iframe somente quando a URL casa exatamente com esse
+        padrão (derivado por padrão hardcoded do backend a partir da URL do
+        link, nunca do campo `html` da resposta oEmbed) e não chama o relay.
+
+        Os dois formatos continuam disponíveis a apps sem alteração no formato
+        ou comportamento.
       properties:
         id:
           type: string
@@ -5677,7 +5695,7 @@ components:
           enum: [link, custom]
         fetch_method:
           type: string
-          enum: [opengraph, oembed, manual]
+          enum: [opengraph, oembed, manual, gif]
         provider:
           type: string
           nullable: true
@@ -6327,7 +6345,7 @@ components:
           type: string
           enum:
           - remote
-
+          - plugin
         name:
           type: string
           minLength: 1

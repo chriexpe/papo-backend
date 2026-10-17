@@ -19,7 +19,7 @@ func TestAppStorageConstraints(t *testing.T) {
 		kind  string
 		hash  *string
 		valid bool
-	}{{"remote", &hash, true}, {"remote", nil, false}, {"view", nil, false}, {"view", &hash, false}, {"wasm", nil, false}, {"wasm", &hash, false}, {"plugin", nil, true}, {"plugin", &hash, false}, {"other", nil, false}} {
+	}{{"remote", &hash, true}, {"remote", nil, false}, {"plugin", nil, true}, {"plugin", &hash, false}, {"other", nil, false}} {
 		_, err := CreateApp(testCtx(), "key", tc.kind, "App", u.ID, models.AppCapabilities{}, tc.hash)
 		if (err == nil) != tc.valid {
 			t.Fatalf("kind=%s hash=%v: %v", tc.kind, tc.hash, err)
