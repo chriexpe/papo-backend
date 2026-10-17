@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"papo/internal/appevents"
+	"papo/internal/appgateway"
 	"papo/internal/config"
 	"papo/internal/handlers"
 	"papo/internal/middleware"
@@ -120,7 +121,9 @@ func main() {
 	push.Init(cfg, pushCtx)
 
 	// Eventos de apps têm ciclo de vida próprio e SQL cancelável no shutdown.
-	appEvents := appevents.Start(context.Background(), cfg.AppEventRetention, cfg.AppEventMaxDeliveries)
+	// O dispatcher acorda os consumidores do gateway depois de atribuir entregas.
+	appGateway := appgateway.NewRegistry()
+	appEvents := appevents.Start(context.Background(), cfg.AppEventRetention, cfg.AppEventMaxDeliveries, appGateway.Wake)
 	defer appEvents.Shutdown()
 
 	e := echo.New()
@@ -193,7 +196,7 @@ func main() {
 	handlers.RegisterDirectMessageRoutes(e, cfg)
 	handlers.RegisterMessageRoutes(e, cfg)
 	handlers.RegisterWebhookRoutes(e, cfg)
-	appGateway := handlers.RegisterAppRoutes(e, cfg)
+	handlers.RegisterAppRoutes(e, cfg, appGateway)
 	defer appGateway.Shutdown()
 	handlers.RegisterAttachmentRoutes(e, cfg)
 	handlers.RegisterMediaRoutes(e, cfg)

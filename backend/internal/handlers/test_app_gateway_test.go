@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	gorilla "github.com/gorilla/websocket"
+	"github.com/labstack/echo/v4"
 	"papo/internal/models"
 	"papo/internal/storage"
 )
@@ -34,6 +36,14 @@ type gatewayFrame struct {
 // gatewayFixture usa newApp e HTTP real para incluir autenticação e o upgrade.
 func gatewayFixture(t *testing.T) (*httptest.Server, models.AppInstallation, string, models.Channel) {
 	t.Helper()
+	server, _, _, app, token, channel := gatewayAdminFixture(t)
+	return server, app, token, channel
+}
+
+// gatewayAdminFixture também devolve o roteador e o cookie do administrador,
+// para exercitar as rotas de gestão contra o mesmo registry do gateway.
+func gatewayAdminFixture(t *testing.T) (*httptest.Server, *echo.Echo, string, models.AppInstallation, string, models.Channel) {
+	t.Helper()
 	cleanServers(context.Background())
 	e := newApp()
 	cookie := webhookTestServer(t, e)
@@ -42,7 +52,20 @@ func gatewayFixture(t *testing.T) (*httptest.Server, models.AppInstallation, str
 	scopeAppViaRoute(t, e, cookie, app.ID, channel.ID)
 	server := httptest.NewServer(e)
 	t.Cleanup(server.Close)
-	return server, app, token, channel
+	return server, e, cookie, app, token, channel
+}
+
+// gatewayExpectClosed exige que o servidor encerre o socket; esgotar o prazo
+// de leitura não conta como encerramento.
+func gatewayExpectClosed(t *testing.T, conn *gorilla.Conn, reason string) {
+	t.Helper()
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var frame gatewayFrame
+	err := conn.ReadJSON(&frame)
+	var netErr net.Error
+	if err == nil || (errors.As(err, &netErr) && netErr.Timeout()) {
+		t.Fatalf("%s não encerrou o socket: %v", reason, err)
+	}
 }
 
 // gatewayUpgrade autentica exclusivamente por header, lê hello e deixa a ativação para o teste.
@@ -107,10 +130,25 @@ func gatewayMessage(t *testing.T, app models.AppInstallation, ch models.Channel,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storage.DispatchAppEvents(context.Background(), 1000, 10000); err != nil {
+	if _, err := dispatchAndWake(); err != nil {
 		t.Fatal(err)
 	}
 	return m
+}
+
+// dispatchAndWake distribui o outbox e acorda os consumidores conectados,
+// como o worker de eventos faz em produção.
+func dispatchAndWake() (int, error) {
+	n, err := storage.DispatchAppEvents(context.Background(), 1000, 10000)
+	testAppGateway.Wake()
+	return n, err
+}
+
+// pruneAndWake expira todo o outbox e acorda os consumidores conectados.
+func pruneAndWake() (int, error) {
+	n, err := storage.PruneAppEvents(context.Background(), 0, 1000, 10000)
+	testAppGateway.Wake()
+	return n, err
 }
 
 // gatewayAck confirma pelo socket e espera o estado durável, sem presumir o escalonamento do reader.
@@ -194,7 +232,7 @@ func TestAppGatewayOfflineRedaction(t *testing.T) {
 	if err := storage.DeleteMessage(context.Background(), m.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storage.DispatchAppEvents(context.Background(), 1000, 10000); err != nil {
+	if _, err := dispatchAndWake(); err != nil {
 		t.Fatal(err)
 	}
 	conn, ready := gatewayConnect(t, server, token, nil)
@@ -269,7 +307,7 @@ func TestAppGatewayTombstonesWithoutScope(t *testing.T) {
 	if err := storage.DeleteMessage(context.Background(), m.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storage.DispatchAppEvents(context.Background(), 1000, 10000); err != nil {
+	if _, err := dispatchAndWake(); err != nil {
 		t.Fatal(err)
 	}
 	if err := storage.RemoveAppScope(context.Background(), app.ID, ch.ID); err != nil {
@@ -293,7 +331,7 @@ func TestAppGatewayChannelDeletedOffline(t *testing.T) {
 	if err := storage.DeleteChannel(context.Background(), ch.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storage.DispatchAppEvents(context.Background(), 1000, 10000); err != nil {
+	if _, err := dispatchAndWake(); err != nil {
 		t.Fatal(err)
 	}
 	conn, _ := gatewayConnect(t, server, token, nil)
@@ -310,7 +348,7 @@ func TestAppGatewayRetentionResync(t *testing.T) {
 	if _, err := storage.GetDB().Exec("UPDATE app_event_outbox SET created_at=clock_timestamp()-interval '8 days' WHERE channel_id=$1", ch.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storage.PruneAppEvents(context.Background(), 0, 1000, 10000); err != nil {
+	if _, err := pruneAndWake(); err != nil {
 		t.Fatal(err)
 	}
 	conn := gatewayUpgrade(t, server, token)
@@ -381,18 +419,12 @@ func TestAppGatewayBearerFailures(t *testing.T) {
 	if err := storage.RotateAppToken(context.Background(), app.ID, hex.EncodeToString(thirdSum[:])); err != nil {
 		t.Fatal(err)
 	}
-	var frame gatewayFrame
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if err := conn.ReadJSON(&frame); err == nil {
-		t.Fatal("rotação não encerrou socket")
-	}
-	revoked, _ := gatewayConnect(t, server, thirdToken, nil)
+	// Rotação fora das rotas de gestão é detectada pelo reexame periódico; o
+	// teste força o mesmo efeito do Disconnect que a rota faz.
+	testAppGateway.Disconnect(app.ID)
+	gatewayExpectClosed(t, conn, "rotação")
 	if err := storage.RevokeApp(context.Background(), app.ID); err != nil {
 		t.Fatal(err)
-	}
-	revoked.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if err := revoked.ReadJSON(&frame); err == nil {
-		t.Fatal("revogação não encerrou socket")
 	}
 	request, _ := http.NewRequest(http.MethodGet, server.URL+"/app/gateway", nil)
 	request.Header.Set("Authorization", "Bearer "+thirdToken)
@@ -405,6 +437,30 @@ func TestAppGatewayBearerFailures(t *testing.T) {
 		t.Fatalf("revogado=%d", response.StatusCode)
 	}
 
+}
+
+// TestAppGatewayManagementDisconnects garante que rotacionar e revogar pelas
+// rotas de gestão encerram na hora o socket aberto com a credencial anterior.
+func TestAppGatewayManagementDisconnects(t *testing.T) {
+	server, e, cookie, app, token, _ := gatewayAdminFixture(t)
+	conn, _ := gatewayConnect(t, server, token, nil)
+	rec := do(t, e, http.MethodPost, "/apps/"+app.ID+"/token", nil, authCookie(cookie))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotação=%d %s", rec.Code, rec.Body.String())
+	}
+	var rotated struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rotated); err != nil || rotated.Token == "" {
+		t.Fatalf("token rotacionado: %v", err)
+	}
+	gatewayExpectClosed(t, conn, "rotação pela rota")
+
+	revoked, _ := gatewayConnect(t, server, rotated.Token, nil)
+	if rec := do(t, e, http.MethodDelete, "/apps/"+app.ID, nil, authCookie(cookie)); rec.Code != http.StatusNoContent {
+		t.Fatalf("revogação=%d %s", rec.Code, rec.Body.String())
+	}
+	gatewayExpectClosed(t, revoked, "revogação pela rota")
 }
 
 // TestAppGatewayRejectsFutureAck impede que um consumidor confirme fatos ainda não enviados.
@@ -466,7 +522,7 @@ func TestAppGatewayReactionEvents(t *testing.T) {
 	if _, err := storage.RemoveReaction(context.Background(), m.ID, app.CreatedBy, nil, &emoji); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := storage.DispatchAppEvents(context.Background(), 1000, 10000); err != nil {
+	if _, err := dispatchAndWake(); err != nil {
 		t.Fatal(err)
 	}
 	for _, kind := range []string{"reaction.added", "reaction.removed"} {
