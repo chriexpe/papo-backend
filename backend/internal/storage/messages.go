@@ -90,6 +90,7 @@ func createMessageWithApp(ctx context.Context, channelID, authorID, webhookID, a
 	if err := tx.Commit(); err != nil {
 		return models.Message{}, false, fmt.Errorf("falha ao criar mensagem: %w", err)
 	}
+	notifyAppEvents()
 	return message, inserted, nil
 }
 
@@ -383,6 +384,7 @@ func UpdateMessage(ctx context.Context, id string, message models.Message) (mode
 	if err := tx.Commit(); err != nil {
 		return models.Message{}, mapStorageError(err)
 	}
+	notifyAppEvents()
 	return updated, nil
 }
 
@@ -419,6 +421,7 @@ func DeleteMessage(ctx context.Context, id string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("falha ao excluir mensagem: %w", err)
 	}
+	notifyAppEvents()
 	return nil
 }
 
@@ -430,5 +433,5 @@ func deleteMessageInTx(ctx context.Context, tx *sql.Tx, id string) error {
 	if err := redactAppEventsInTx(ctx, tx, "message_id", id); err != nil {
 		return err
 	}
-	return CreateAppEventInTx(tx, ctx, "message.deleted", channel, &id, map[string]any{"channel_id": channel, "message_id": id})
+	return createAppEventInTx(ctx, tx, "message.deleted", channel, &id, map[string]any{"channel_id": channel, "message_id": id})
 }
