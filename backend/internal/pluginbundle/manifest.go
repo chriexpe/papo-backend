@@ -57,10 +57,6 @@ type Surface struct {
 	Load            string                `toml:"load" json:"load"`
 	Display         string                `toml:"display" json:"display"`
 	Poster          string                `toml:"poster" json:"poster"`
-	Frame           struct {
-		Width  int `toml:"width" json:"width"`
-		Height int `toml:"height" json:"height"`
-	} `toml:"frame" json:"frame"`
 }
 
 // SafePath aceita somente caminhos portáveis relativos e canônicos.
@@ -163,9 +159,6 @@ func Parse(data []byte, c Config) (Manifest, error) {
 		}
 		if s.Poster != "" && (!SafePath(s.Poster) || !strings.HasPrefix(s.Poster, "ui/")) {
 			return m, fmt.Errorf("poster inválido")
-		}
-		if s.Frame.Width < 0 || s.Frame.Width > 1920 || s.Frame.Height < 0 || s.Frame.Height > 1080 {
-			return m, fmt.Errorf("frame inválido")
 		}
 	}
 	seen = map[string]bool{}

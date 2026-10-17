@@ -212,9 +212,6 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 	p.Origins = sorted(p.Origins)
 	for _, s := range b.Manifest.Surfaces {
 		d := AppSurfaceDeclaration{ID: s.ID, Kind: s.Kind, DefaultName: s.DefaultName, Source: "bundled", Entry: s.Entry, Size: s.Size, Load: s.Load, Display: s.Display, Poster: s.Poster}
-		if d.Size.Width == 0 && d.Size.Height == 0 {
-			d.Size = models.AppSurfaceSize{Width: s.Frame.Width, Height: s.Frame.Height}
-		}
 		if s.EntryURL != "" {
 			d.Source = "remote"
 			d.Entry = s.EntryURL
