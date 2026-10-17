@@ -20,6 +20,26 @@ type AppEvent struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
+// appEventsWritten acorda o dispatcher depois do commit de uma escrita que pode
+// ter gravado fatos no outbox. O backend roda em um único processo, então o
+// sinal é em memória; o dispatcher mantém uma varredura lenta de segurança.
+var appEventsWritten = make(chan struct{}, 1)
+
+// notifyAppEvents sinaliza sem bloquear: sinais acumulados viram um só, pois
+// o dispatcher drena o outbox inteiro a cada despertar.
+func notifyAppEvents() {
+	select {
+	case appEventsWritten <- struct{}{}:
+	default:
+	}
+}
+
+// AppEventsWritten devolve o canal sinalizado após o commit de mutações que
+// produzem eventos de apps. Deve ser consumido por um único dispatcher.
+func AppEventsWritten() <-chan struct{} {
+	return appEventsWritten
+}
+
 // appEventReader limita a produção a instalações ativas com leitura e ACL de máquina.
 const appEventReader = `FROM app_installations a
  JOIN app_channel_scopes s ON s.app_installation_id=a.id
@@ -27,9 +47,9 @@ const appEventReader = `FROM app_installations a
  WHERE s.channel_id=$1 AND a.revoked_at IS NULL AND a.kind='remote'
  AND a.capabilities @> '{"read_messages":true}'::jsonb AND c.type IN ('text','voice')`
 
-// CreateAppEventInTx grava somente quando há um leitor, na transação da mutação.
+// createAppEventInTx grava somente quando há um leitor, na transação da mutação.
 // Tombstones materializam os destinatários antes de qualquer cascata de escopos.
-func CreateAppEventInTx(tx *sql.Tx, ctx context.Context, eventType, channelID string, messageID *string, payload any) error {
+func createAppEventInTx(ctx context.Context, tx *sql.Tx, eventType, channelID string, messageID *string, payload any) error {
 	var interested bool
 	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 "+appEventReader+")", channelID).Scan(&interested); err != nil {
 		return fmt.Errorf("falha ao consultar leitores de eventos: %w", err)
@@ -97,7 +117,7 @@ func createMessageEventInTx(ctx context.Context, tx *sql.Tx, eventType string, m
 	} else {
 		payload["edited_at"] = m.EditedAt
 	}
-	return CreateAppEventInTx(tx, ctx, eventType, m.ChannelID, &m.ID, payload)
+	return createAppEventInTx(ctx, tx, eventType, m.ChannelID, &m.ID, payload)
 }
 
 // redactAppEventsInTx remove conteúdo de snapshots ainda pendentes, inclusive já atribuídos.
@@ -139,7 +159,7 @@ func createReactionEventInTx(ctx context.Context, tx *sql.Tx, eventType, message
 	if err := tx.QueryRowContext(ctx, "SELECT channel_id FROM messages WHERE id=$1", messageID).Scan(&channel); err != nil {
 		return mapStorageError(err)
 	}
-	return CreateAppEventInTx(tx, ctx, eventType, channel, &messageID, map[string]any{
+	return createAppEventInTx(ctx, tx, eventType, channel, &messageID, map[string]any{
 		"channel_id": channel, "message_id": messageID, "user_id": userID, "emoji_id": emojiID, "unicode": unicode,
 	})
 }

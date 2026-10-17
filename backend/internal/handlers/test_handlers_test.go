@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"papo/internal/appgateway"
 	"papo/internal/config"
 	"papo/internal/middleware"
 	"papo/internal/models"
@@ -119,6 +120,10 @@ func runRoutesTests(m *testing.M) int {
 	return code
 }
 
+// testAppGateway é o registry do último newApp; os testes do gateway o acordam
+// depois de distribuir eventos, como o dispatcher faz em produção.
+var testAppGateway *appgateway.Registry
+
 // newApp monta a instância do Echo com as rotas de autenticação, usuários,
 // servidores, canais e roles consolidadas em handlers/routes.go
 // (tarefas 4.9, 5.2, 5.4 e 6.2).
@@ -148,7 +153,8 @@ func newApp() *echo.Echo {
 	RegisterSearchRoutes(e, cfg)
 	RegisterWebSocketRoutes(e, cfg)
 	RegisterWebhookRoutes(e, cfg)
-	RegisterAppRoutes(e, cfg)
+	testAppGateway = appgateway.NewRegistry()
+	RegisterAppRoutes(e, cfg, testAppGateway)
 	pluginCfg, _ := pluginbundle.LoadConfig()
 	pluginManager, err := services.NewPluginManager(pluginCfg, routePluginHost, PluginEffects())
 	if err != nil {

@@ -2,14 +2,9 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"papo/internal/models"
 	"papo/internal/storage"
-	"papo/internal/utils"
 )
 
 // ErrAppNotFound indica instalação inexistente ou revogada na gestão.
@@ -39,17 +33,6 @@ func validAppName(name string, limit int) bool {
 	return true
 }
 
-// newAppToken gera 32 bytes aleatórios e retorna somente seu hash para persistência.
-func newAppToken() (string, string, error) {
-	data := make([]byte, 32)
-	if _, err := rand.Read(data); err != nil {
-		return "", "", err
-	}
-	token := hex.EncodeToString(data)
-	sum := sha256.Sum256([]byte(token))
-	return token, hex.EncodeToString(sum[:]), nil
-}
-
 // CreateApp instala uma identidade do servidor; somente remote recebe token uma vez.
 func CreateApp(ctx context.Context, actor, key, kind, name string, caps models.AppCapabilities) (models.AppInstallation, string, error) {
 	if !validAppName(name, 80) || !validAppName(key, 200) || (kind != "remote" && kind != "plugin") {
@@ -58,7 +41,7 @@ func CreateApp(ctx context.Context, actor, key, kind, name string, caps models.A
 	var hash *string
 	token := ""
 	if kind == "remote" {
-		plain, hashed, err := newAppToken()
+		plain, hashed, err := newMachineToken()
 		if err != nil {
 			return models.AppInstallation{}, "", err
 		}
@@ -69,7 +52,13 @@ func CreateApp(ctx context.Context, actor, key, kind, name string, caps models.A
 	if err != nil {
 		return a, "", err
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppCreate, EntityType: EntityApp, EntityID: &a.ID, Metadata: map[string]any{"name": a.Name, "kind": a.Kind}})
+	RecordAudit(ctx, AuditEntry{
+		ActorID:    actor,
+		Action:     ActionAppCreate,
+		EntityType: EntityApp,
+		EntityID:   &a.ID,
+		Metadata:   map[string]any{"name": a.Name, "kind": a.Kind},
+	})
 	return a, token, nil
 }
 
@@ -126,7 +115,7 @@ func UpdateApp(ctx context.Context, actorID, appID string, name *string, capabil
 		return models.AppInstallation{}, ErrAppNotFound
 	}
 
-	var nameArg, displayNameArg, avatarArg any
+	var nameArg, displayNameArg any
 	if name != nil {
 		if !validAppName(*name, 80) {
 			return models.AppInstallation{}, ErrInvalidInput
@@ -145,27 +134,9 @@ func UpdateApp(ctx context.Context, actorID, appID string, name *string, capabil
 		}
 	}
 
-	if avatar != nil {
-		if *avatar == "" {
-			avatarArg = sql.NullString{Valid: false}
-		} else {
-			decoded, err := base64.StdEncoding.DecodeString(*avatar)
-			if err != nil {
-				return models.AppInstallation{}, ErrInvalidInput
-			}
-			upperFormat := normalizeImageFormat(avatarFormat)
-			if !avatarContentMatchesFormat(decoded, upperFormat) || len(decoded) > maxAvatarBytes {
-				return models.AppInstallation{}, ErrInvalidInput
-			}
-			if err := utils.ValidateImage(decoded, utils.MaxImageDimension); err != nil {
-				return models.AppInstallation{}, ErrInvalidInput
-			}
-			sha, _, err := StoreMediaFromBytes(ctx, decoded, formatToMime(upperFormat))
-			if err != nil {
-				return models.AppInstallation{}, fmt.Errorf("falha ao gravar o avatar do app: %w", err)
-			}
-			avatarArg = sql.NullString{String: sha, Valid: true}
-		}
+	avatarArg, err := machineAvatarArg(ctx, avatar, avatarFormat, "app")
+	if err != nil {
+		return models.AppInstallation{}, err
 	}
 
 	app, err := storage.UpdateApp(ctx, appID, nameArg, displayNameArg, avatarArg, capabilities)
@@ -213,7 +184,7 @@ func RotateAppToken(ctx context.Context, actor, id string) (string, error) {
 	if a.Kind != "remote" {
 		return "", ErrInvalidInput
 	}
-	token, hash, err := newAppToken()
+	token, hash, err := newMachineToken()
 	if err != nil {
 		return "", err
 	}
@@ -274,7 +245,13 @@ func AddAppScope(ctx context.Context, actor, id, channelID string) error {
 	} else if err != nil {
 		return err
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppScopeAdd, EntityType: EntityApp, EntityID: &id, Metadata: map[string]any{"channel_id": channelID}})
+	RecordAudit(ctx, AuditEntry{
+		ActorID:    actor,
+		Action:     ActionAppScopeAdd,
+		EntityType: EntityApp,
+		EntityID:   &id,
+		Metadata:   map[string]any{"channel_id": channelID},
+	})
 	return nil
 }
 
@@ -289,14 +266,19 @@ func RemoveAppScope(ctx context.Context, actor, id, channelID string) error {
 	if err := storage.RemoveAppScope(ctx, id, channelID); err != nil {
 		return err
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppScopeRemove, EntityType: EntityApp, EntityID: &id, Metadata: map[string]any{"channel_id": channelID}})
+	RecordAudit(ctx, AuditEntry{
+		ActorID:    actor,
+		Action:     ActionAppScopeRemove,
+		EntityType: EntityApp,
+		EntityID:   &id,
+		Metadata:   map[string]any{"channel_id": channelID},
+	})
 	return nil
 }
 
 // AuthenticateApp aceita somente o segredo remoto e compara o hash em tempo constante.
 func AuthenticateApp(ctx context.Context, token string) (models.AppInstallation, error) {
-	sum := sha256.Sum256([]byte(token))
-	hash := hex.EncodeToString(sum[:])
+	hash := machineTokenHash(token)
 	a, stored, err := storage.GetActiveAppByHash(ctx, hash)
 	if err != nil || token == "" || subtle.ConstantTimeCompare([]byte(hash), []byte(stored)) != 1 {
 		return models.AppInstallation{}, ErrAppUnauthorized
@@ -322,21 +304,14 @@ func authorizeApp(ctx context.Context, a models.AppInstallation, channelID strin
 	if _, err := uuid.Parse(channelID); err != nil {
 		return current, ErrInvalidInput
 	}
-	allowed, err := storage.AppHasScope(ctx, a.ID, channelID)
-	if err != nil {
-		return current, err
-	}
-	if !allowed {
+	channelType, err := storage.AppScopedChannelType(ctx, a.ID, channelID)
+	if errors.Is(err, storage.ErrNotFound) {
 		return current, ErrPermissionDenied
 	}
-	ch, err := storage.GetChannelByID(ctx, channelID)
-	if errors.Is(err, storage.ErrNotFound) {
-		return current, ErrChannelNotFound
-	}
 	if err != nil {
 		return current, err
 	}
-	if ch.Type != "text" && ch.Type != "voice" {
+	if channelType != "text" && channelType != "voice" {
 		return current, ErrPermissionDenied
 	}
 	return current, nil
@@ -401,11 +376,18 @@ func DeleteAppMessage(ctx context.Context, a models.AppInstallation, channelID, 
 	if err = deleteMessage(ctx, messageID); err != nil {
 		return "", err
 	}
-	RecordAudit(ctx, AuditEntry{ActorLabel: "app:" + current.Name, Action: ActionMessageDelete, EntityType: EntityMessage, EntityID: &messageID, Metadata: map[string]any{"channel_id": channelID, "app_installation_id": a.ID}})
+	RecordAudit(ctx, AuditEntry{
+		ActorLabel: "app:" + current.Name,
+		Action:     ActionMessageDelete,
+		EntityType: EntityMessage,
+		EntityID:   &messageID,
+		Metadata:   map[string]any{"channel_id": channelID, "app_installation_id": a.ID},
+	})
 	return channelID, nil
 }
 
-// ListAppMessages monta o histórico completo sem consultar reações de um usuário fictício.
+// ListAppMessages monta o histórico com a mesma hidratação em lote da listagem
+// humana, sem reações próprias (o app não é usuário).
 func ListAppMessages(ctx context.Context, a models.AppInstallation, channelID string, since *time.Time, lastID, order string, limit int) (models.MessageList, error) {
 	if _, err := authorizeApp(ctx, a, channelID, true); err != nil {
 		return models.MessageList{}, err
@@ -432,11 +414,8 @@ func ListAppMessages(ctx context.Context, a models.AppInstallation, channelID st
 	if more {
 		items = items[:limit]
 	}
-	for i := range items {
-		items[i], err = messageWithRelations(ctx, items[i].Message)
-		if err != nil {
-			return models.MessageList{}, err
-		}
+	if err := hydrateMessages(ctx, items, ""); err != nil {
+		return models.MessageList{}, err
 	}
 	return models.MessageList{ChannelID: channelID, Messages: items, HasMore: more}, nil
 }

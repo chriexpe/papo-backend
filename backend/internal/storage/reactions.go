@@ -89,6 +89,7 @@ func AddReaction(ctx context.Context, messageID, userID string, emojiID, unicode
 	if err := tx.Commit(); err != nil {
 		return models.MessageReaction{}, false, 0, fmt.Errorf("falha ao reagir: %w", err)
 	}
+	notifyAppEvents()
 	return reaction, created, count, nil
 }
 
@@ -177,6 +178,7 @@ func RemoveReaction(ctx context.Context, messageID, userID string, emojiID, unic
 	if err := tx.Commit(); err != nil {
 		return 0, mapStorageError(err)
 	}
+	notifyAppEvents()
 	return count, nil
 }
 

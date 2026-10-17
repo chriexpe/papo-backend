@@ -15,7 +15,7 @@ import (
 // fixtureSurfaceSource substitui somente a descoberta de plugins; nenhum runtime é necessário.
 type fixtureSurfaceSource map[string]PluginSurfaceBundle
 
-// Resolve entrega os metadados aprovados que a PR 5 fornecerá em produção.
+// Resolve entrega os metadados aprovados, como o provedor de plugins em produção.
 func (s fixtureSurfaceSource) Resolve(_ context.Context, id string) (PluginSurfaceBundle, error) {
 	b, ok := s[id]
 	if !ok {

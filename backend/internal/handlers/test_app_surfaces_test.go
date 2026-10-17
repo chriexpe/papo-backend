@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-// handlerSurfaceSource fornece o contrato da futura descoberta de plugins aos testes HTTP.
+// handlerSurfaceSource fornece aos testes HTTP o contrato do provedor de plugins.
 type handlerSurfaceSource map[string]services.PluginSurfaceBundle
 
 // Resolve retorna metadados sem instanciar um módulo Wasm.

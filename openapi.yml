@@ -2863,14 +2863,14 @@ paths:
       security: []
       description: |
         Rota pública porque a WebView isolada não tem sessão. Serve somente arquivos
-        estáticos da pasta ui/ do plugin resolvido pelo provedor de metadados da PR 5;
+        estáticos da pasta ui/ do plugin resolvido pelo provedor de metadados;
         nunca dados por usuário, templates, plugin.toml ou plugin.wasm. Não lê nem
         emite cookies. Instalação desabilitada, revogada, removida ou sem provedor: 404.
         Não lista diretórios; rejeita traversal, caminhos absolutos e symlinks.
         Nada é executado pelo backend. Tipos permitidos: HTML/CSS/JS/JSON, imagens,
         fontes, texto e módulos Wasm dentro de ui/.
 
-        Headers obrigatórios (§9.1.4):
+        Headers obrigatórios:
         Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self' <origem servida>
         (origem explícita extraída de APPS_ORIGIN ou BaseURL, nunca do Host/Forwarded
         da requisição; acrescenta as origens remotas aprovadas; nunca allow-same-origin).
@@ -3222,10 +3222,13 @@ paths:
         event_id. Um novo processo/reconexão não depende da memória do registry.
 
         O buffer é limitado a 32 controles/sequências; não guarda snapshots.
-        O payload é relido e a credencial, a época, as capacidades e o escopo são
-        revalidados antes de enviar. Um consumidor lento é desconectado; seu
+        O payload é relido e a época, as capacidades e o escopo são revalidados
+        antes de enviar. O servidor entrega assim que a mutação é confirmada
+        (sem polling no intervalo normal). Um consumidor lento é desconectado; seu
         backlog não confirmado permanece durável até os limites de retenção.
-        Rotação e revogação encerram conexões autenticadas pelo token antigo.
+        Rotação e revogação pelas rotas de gestão encerram na hora a conexão
+        autenticada pelo token antigo; a credencial também é reexaminada a cada
+        30 s.
 
         Tombstones e remoção de conteúdo seguem AppEventTombstone. Exclusão de
         mensagem substitui created/updated ainda sem ack por IDs e redacted:true.
@@ -4793,7 +4796,7 @@ components:
         preserva ID, nome, posição e ACL. Não exige capacidade nem escopo próprio;
         escopos de envio/leitura continuam limitados a text/voice.
 
-        Regras de isolamento obrigatórias (§9.1):
+        Regras de isolamento obrigatórias:
         1. WebView exclusiva e perfil não persistente, sem compartilhar cookies,
            armazenamento ou cache com contextos que acessam a API Papo.
         2. Não injetar sessão, JWT ou cookies. Só o ticket de launch de uso único vai no fragmento da URL.
@@ -5641,10 +5644,10 @@ components:
       type: object
       required: [id, kind, source, entry, size]
       description: >
-        Metadados fornecidos pela PR 5 a partir de plugin.toml. Poster opcional deve
+        Metadados declarados no plugin.toml. Poster opcional deve
         ser imagem existente confinada a ui/, sem traversal/symlinks. Formatos
-        PNG/JPEG/GIF/WebP/SVG são validados. frame_width/frame_height foram substituídos
-        por size. Load padrão click; display padrão inline; overlay+visible é rejeitado.
+        PNG/JPEG/GIF/WebP/SVG são validados. Load padrão click; display padrão inline;
+        overlay+visible é rejeitado.
       oneOf:
         - properties:
             display: {enum: [inline]}
@@ -5894,7 +5897,7 @@ components:
         em canal text/voice escopado. Size/load/display/poster vêm da superfície
         declarada, nunca de overrides na mensagem. Campos de card nativo como
         imagem, thumbnail, descrição, author, fields, footer e cor são recusados
-        no frame; use source_type=custom para esses cards. Envio interno pela PR 5
+        no frame; use source_type=custom para esses cards. O envio interno do plugin
         usa CreatePluginMessage, sem token de plugin. Humanos/webhooks não podem
         postar frames. Os limites existentes de texto e número de embeds continuam.
       properties:

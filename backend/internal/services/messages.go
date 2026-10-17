@@ -118,6 +118,25 @@ func ListMessagesOrdered(ctx context.Context, channelID, userID string, since *t
 		messages = messages[:limit]
 	}
 
+	if err := hydrateMessages(ctx, messages, userID); err != nil {
+		return models.MessageList{}, err
+	}
+
+	// Listar mensagens NÃO avança o last_read do usuário: listar é leitura de
+	// dados, não confirmação de leitura (abrir o canal com não lidas, paginar
+	// histórico ou saltar para uma mensagem não devem marcar nada como lido).
+	// O read é registrado explicitamente por PUT /channels/:channel_id/read
+	// (services.MarkChannelRead), chamado pelo frontend quando o usuário
+	// alcança a mensagem mais nova do canal.
+
+	return models.MessageList{ChannelID: channelID, Messages: messages, HasMore: hasMore}, nil
+}
+
+// hydrateMessages completa uma página de mensagens (já com attachments) com
+// embeds, thumbnails dos attachments e contagens de reações, em consultas em
+// lote. viewerID é o usuário cujas reações próprias vêm em user_reactions;
+// vazio (leitura por app, que não é usuário) devolve user_reactions vazio.
+func hydrateMessages(ctx context.Context, messages []models.MessageWithAttachment, viewerID string) error {
 	messageIDs := make([]string, 0, len(messages))
 	attachmentIDs := make([]string, 0)
 	for _, m := range messages {
@@ -129,40 +148,38 @@ func ListMessagesOrdered(ctx context.Context, channelID, userID string, since *t
 
 	embedsByMessage, err := ListMessageEmbeds(ctx, messageIDs)
 	if err != nil {
-		return models.MessageList{}, err
+		return err
 	}
 	thumbnails, err := storage.ListThumbnailsByAttachmentIDs(ctx, attachmentIDs)
 	if err != nil {
-		return models.MessageList{}, err
+		return err
 	}
 	reactionCounts, err := storage.ReactionCountsByMessages(ctx, messageIDs)
 	if err != nil {
-		return models.MessageList{}, err
+		return err
 	}
-	userReactions, err := storage.UserReactionsByMessages(ctx, messageIDs, userID)
-	if err != nil {
-		return models.MessageList{}, err
+	userReactions := map[string][]models.MessageUserReaction{}
+	if viewerID != "" {
+		userReactions, err = storage.UserReactionsByMessages(ctx, messageIDs, viewerID)
+		if err != nil {
+			return err
+		}
 	}
 	componentsByMessage, err := storage.AppComponents(ctx, messageIDs)
 	if err != nil {
-		return models.MessageList{}, err
+		return err
 	}
 	for i := range messages {
 		messages[i].Embeds = embedsByMessage[messages[i].ID]
 		messages[i].Components = componentsByMessage[messages[i].ID]
 		messages[i].Reactions = reactionCounts[messages[i].ID]
 		messages[i].UserReactions = userReactions[messages[i].ID]
+		if viewerID == "" {
+			messages[i].UserReactions = []models.MessageUserReaction{}
+		}
 		setAttachmentThumbnails(&messages[i].Attachments, thumbnails)
 	}
-
-	// Listar mensagens NÃO avança o last_read do usuário: listar é leitura de
-	// dados, não confirmação de leitura (abrir o canal com não lidas, paginar
-	// histórico ou saltar para uma mensagem não devem marcar nada como lido).
-	// O read é registrado explicitamente por PUT /channels/:channel_id/read
-	// (services.MarkChannelRead), chamado pelo frontend quando o usuário
-	// alcança a mensagem mais nova do canal.
-
-	return models.MessageList{ChannelID: channelID, Messages: messages, HasMore: hasMore}, nil
+	return nil
 }
 
 // setAttachmentThumbnails popula o ThumbnailID dos attachments a partir do

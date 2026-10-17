@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"papo/internal/appgateway"
 	"papo/internal/middleware"
 	"papo/internal/models"
 	"papo/internal/services"
@@ -182,15 +183,16 @@ func GetAppAvatarHandler(baseURL string, c echo.Context) error {
 }
 
 // DeleteAppHandler implementa DELETE /apps/:app_id (JWT +
-// manage_apps): revoga o app (soft delete). As mensagens já enviadas
-// mantêm a atribuição.
-func DeleteAppHandler(baseURL string, c echo.Context) error {
+// manage_apps): revoga o app (soft delete) e encerra a conexão do gateway.
+// As mensagens já enviadas mantêm a atribuição.
+func DeleteAppHandler(baseURL string, gateway *appgateway.Registry, c echo.Context) error {
 	actor, _ := c.Get(middleware.UserIDContextKey).(string)
 	channels, err := services.RevokeAppWithChannelChanges(c.Request().Context(), actor, c.Param("app_id"))
 	if err != nil {
 		return appProblem(c, baseURL, err)
 	}
 	BroadcastAppChannelChanges(c.Request().Context(), channels)
+	gateway.Disconnect(c.Param("app_id"))
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -361,13 +363,15 @@ func DeleteAppMessageHandler(baseURL string, c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// RotateAppTokenHandler devolve o novo segredo uma única vez.
-func RotateAppTokenHandler(baseURL string, c echo.Context) error {
+// RotateAppTokenHandler devolve o novo segredo uma única vez e encerra a
+// conexão do gateway aberta com o token antigo.
+func RotateAppTokenHandler(baseURL string, gateway *appgateway.Registry, c echo.Context) error {
 	actor, _ := c.Get(middleware.UserIDContextKey).(string)
 	token, err := services.RotateAppToken(c.Request().Context(), actor, c.Param("app_id"))
 	if err != nil {
 		return appProblem(c, baseURL, err)
 	}
+	gateway.Disconnect(c.Param("app_id"))
 	return c.JSON(http.StatusOK, map[string]string{"token": token})
 }
 

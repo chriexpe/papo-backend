@@ -39,6 +39,14 @@ type outbound struct {
 	seq   int64
 }
 
+// Intervalos do consumidor: o despertar normal vem do dispatcher (Wake); a
+// varredura de segurança cobre sinais perdidos e o reexame da credencial
+// segue o mesmo intervalo da revalidação de sessões do hub humano.
+const (
+	pollFallback      = 10 * time.Second
+	credentialRecheck = 30 * time.Second
+)
+
 // Registry mantém um consumidor por instalação; a época no banco também cerca outros processos.
 type Registry struct {
 	mu        sync.Mutex
@@ -61,6 +69,7 @@ type consumer struct {
 	cancel   context.CancelFunc
 	once     sync.Once
 	send     chan outbound
+	wake     chan struct{}
 	// mu impede que um ack recebido antes de WriteJSON retornar ultrapasse highestSent.
 	mu          sync.Mutex
 	highestSent int64
@@ -96,7 +105,16 @@ func (r *Registry) Serve(w http.ResponseWriter, request *http.Request, id string
 		return err
 	}
 	ctx, cancel := context.WithCancel(r.ctx)
-	c := &consumer{registry: r, conn: conn, id: id, ctx: ctx, cancel: cancel, send: make(chan outbound, r.buffer), revalidate: revalidate}
+	c := &consumer{
+		registry:   r,
+		conn:       conn,
+		id:         id,
+		ctx:        ctx,
+		cancel:     cancel,
+		send:       make(chan outbound, r.buffer),
+		wake:       make(chan struct{}, 1),
+		revalidate: revalidate,
+	}
 	defer c.stop()
 	r.mu.Lock()
 	if r.ctx.Err() != nil {
@@ -162,7 +180,7 @@ func (r *Registry) Serve(w http.ResponseWriter, request *http.Request, id string
 	go func() { defer close(writerDone); c.writeLoop() }()
 	readerDone := make(chan struct{})
 	go func() { defer close(readerDone); c.readLoop() }()
-	c.poll(state.Cursor, revalidate)
+	c.poll(state.Cursor)
 	c.stop()
 	<-writerDone
 	<-readerDone
@@ -188,18 +206,19 @@ func (c *consumer) enqueue(value outbound) bool {
 	}
 }
 
-// poll busca sequências, nunca snapshots, e revalida a credencial enquanto o socket está aberto.
-func (c *consumer) poll(cursor int64, revalidate func(context.Context) error) {
-	tick := time.NewTicker(100 * time.Millisecond)
-	defer tick.Stop()
+// poll busca sequências, nunca snapshots. Drena enquanto houver lote cheio e
+// depois dorme até o Wake do dispatcher ou a varredura de segurança. A
+// credencial é reexaminada a cada credentialRecheck; rotação e revogação
+// encerram o socket na hora por Disconnect.
+func (c *consumer) poll(cursor int64) {
+	const batch = 16
+	fallback := time.NewTicker(pollFallback)
+	defer fallback.Stop()
+	recheck := time.NewTicker(credentialRecheck)
+	defer recheck.Stop()
 	for {
 		op, cancel := context.WithTimeout(c.ctx, 5*time.Second)
-		err := revalidate(op)
-		var seqs []int64
-		var state storage.AppGatewayState
-		if err == nil {
-			seqs, state, err = storage.PendingAppGatewaySequences(op, c.id, c.epoch, cursor, 16)
-		}
+		seqs, state, err := storage.PendingAppGatewaySequences(op, c.id, c.epoch, cursor, batch)
 		cancel()
 		if errors.Is(err, storage.ErrAppResyncRequired) {
 			// O writer envia o controle terminal e encerra, em vez de descartar o frame na fila.
@@ -217,10 +236,21 @@ func (c *consumer) poll(cursor int64, revalidate func(context.Context) error) {
 			}
 			cursor = seq
 		}
+		if len(seqs) == batch {
+			continue
+		}
 		select {
 		case <-c.ctx.Done():
 			return
-		case <-tick.C:
+		case <-c.wake:
+		case <-fallback.C:
+		case <-recheck.C:
+			op, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+			err := c.revalidate(op)
+			cancel()
+			if err != nil {
+				return
+			}
 		}
 	}
 }
@@ -239,12 +269,8 @@ func (c *consumer) writeLoop() {
 			frame := item.frame
 			if frame == nil {
 				op, cancel := context.WithTimeout(c.ctx, 5*time.Second)
-				var d *storage.AppEventDelivery
-				var state storage.AppGatewayState
-				err := c.revalidate(op)
-				if err == nil {
-					d, state, err = storage.ReadAppGatewayDelivery(op, c.id, c.epoch, item.seq)
-				}
+				// A leitura revalida época, escopo e capacidade e aplica redações.
+				d, state, err := storage.ReadAppGatewayDelivery(op, c.id, c.epoch, item.seq)
 				cancel()
 				if errors.Is(err, storage.ErrAppResyncRequired) {
 					_ = writeFrame(c.conn, stateFrame("resync_required", state))
@@ -292,10 +318,7 @@ func (c *consumer) readLoop() {
 			}
 			op, cancel := context.WithTimeout(c.ctx, 5*time.Second)
 			c.mu.Lock()
-			err := c.revalidate(op)
-			if err == nil {
-				err = storage.AckAppGateway(op, c.id, c.epoch, *frame.DeliverySeq, c.highestSent)
-			}
+			err := storage.AckAppGateway(op, c.id, c.epoch, *frame.DeliverySeq, c.highestSent)
 			c.mu.Unlock()
 			cancel()
 			if err != nil {
@@ -304,6 +327,30 @@ func (c *consumer) readLoop() {
 		default:
 			return
 		}
+	}
+}
+
+// Wake acorda todos os consumidores ativos para buscarem novas sequências.
+// É chamado pelo dispatcher depois de atribuir ou podar entregas.
+func (r *Registry) Wake() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.clients {
+		select {
+		case c.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Disconnect encerra imediatamente a conexão ativa da instalação, se houver
+// (rotação de token, revogação). O app reconecta com a credencial válida.
+func (r *Registry) Disconnect(id string) {
+	r.mu.Lock()
+	c := r.clients[id]
+	r.mu.Unlock()
+	if c != nil {
+		c.stop()
 	}
 }
 
