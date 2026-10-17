@@ -296,21 +296,14 @@ func authorizeApp(ctx context.Context, a models.AppInstallation, channelID strin
 	if _, err := uuid.Parse(channelID); err != nil {
 		return current, ErrInvalidInput
 	}
-	allowed, err := storage.AppHasScope(ctx, a.ID, channelID)
-	if err != nil {
-		return current, err
-	}
-	if !allowed {
+	channelType, err := storage.AppScopedChannelType(ctx, a.ID, channelID)
+	if errors.Is(err, storage.ErrNotFound) {
 		return current, ErrPermissionDenied
 	}
-	ch, err := storage.GetChannelByID(ctx, channelID)
-	if errors.Is(err, storage.ErrNotFound) {
-		return current, ErrChannelNotFound
-	}
 	if err != nil {
 		return current, err
 	}
-	if ch.Type != "text" && ch.Type != "voice" {
+	if channelType != "text" && channelType != "voice" {
 		return current, ErrPermissionDenied
 	}
 	return current, nil

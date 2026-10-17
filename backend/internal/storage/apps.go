@@ -190,6 +190,18 @@ func AppHasScope(ctx context.Context, id, channel string) (bool, error) {
 	return allowed, err
 }
 
+// AppScopedChannelType devolve o tipo do canal quando a instalação tem escopo
+// nele, numa única consulta. ErrNotFound significa sem escopo (o escopo é
+// removido em cascata junto com o canal).
+func AppScopedChannelType(ctx context.Context, id, channel string) (string, error) {
+	var channelType string
+	err := GetDB().QueryRowContext(ctx,
+		"SELECT c.type FROM app_channel_scopes s JOIN channels c ON c.id = s.channel_id "+
+			"WHERE s.app_installation_id = $1 AND s.channel_id = $2",
+		id, channel).Scan(&channelType)
+	return channelType, mapStorageError(err)
+}
+
 // GetAppMessage busca a chave de idempotência enquanto a mensagem existir.
 func GetAppMessage(ctx context.Context, id, key string) (models.Message, error) {
 	m, err := scanMessage(GetDB().QueryRowContext(ctx, "SELECT "+messageColumns+" FROM messages WHERE app_installation_id=$1 AND external_message_id=$2", id, key))
