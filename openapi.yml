@@ -2991,7 +2991,7 @@ paths:
       tags:
       - Apps
       summary: Rotaciona token remoto
-      description: Exige manage_apps. Somente remote; view/wasm retornam 400. O token antigo deixa de autenticar imediatamente.
+      description: Exige manage_apps. Somente remote; plugin retorna 400. O token antigo deixa de autenticar imediatamente.
         O novo segredo aparece apenas nesta resposta.
       responses:
         '200':
@@ -5345,8 +5345,7 @@ components:
           type: string
           enum:
           - remote
-          - view
-          - wasm
+          - plugin
         name:
           type: string
         display_name:
@@ -5396,8 +5395,7 @@ components:
           type: string
           enum:
           - remote
-          - view
-          - wasm
+          - plugin
         name:
           type: string
           minLength: 1
