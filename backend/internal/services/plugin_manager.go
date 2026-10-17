@@ -64,11 +64,12 @@ type PluginManager struct {
 	gates   map[string]*pluginGate
 	scan    chan struct{}
 	ioSlots chan struct{}
+	limits  *appLimiter
 }
 
 // NewPluginManager configura descoberta sem instanciar qualquer módulo.
 func NewPluginManager(c pluginbundle.Config, h plugins.PluginHost, e PluginEffects) (*PluginManager, error) {
-	m := &PluginManager{Config: c, Host: h, Effects: e, catalog: map[string]DiscoveredPlugin{}, gates: map[string]*pluginGate{}, scan: make(chan struct{}, 1), ioSlots: make(chan struct{}, 4)}
+	m := &PluginManager{Config: c, Host: h, Effects: e, catalog: map[string]DiscoveredPlugin{}, gates: map[string]*pluginGate{}, scan: make(chan struct{}, 1), ioSlots: make(chan struct{}, 4), limits: newAppLimiter()}
 	_, err := rand.Read(m.secret[:])
 	return m, err
 }

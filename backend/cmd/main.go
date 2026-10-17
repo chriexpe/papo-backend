@@ -223,7 +223,7 @@ func main() {
 	defer func() { stopPlugins(); <-pluginWatchDone }()
 	handlers.RegisterPluginRoutes(e, cfg.BaseURL, pluginManager)
 	handlers.RegisterAppInteractionRoutes(e, cfg.BaseURL, pluginManager)
-	stopAppCleanup := services.StartAppInteractionCleanup(pluginCtx)
+	stopAppCleanup := pluginManager.StartInteractionCleanup(pluginCtx)
 	defer stopAppCleanup()
 	appGateway := handlers.RegisterAppRoutes(e, cfg)
 	defer appGateway.Shutdown()

@@ -3881,7 +3881,7 @@ paths:
       description: 'CORS *, sem credenciais. Bearer UI com vínculo restrito. Revalida
         ACL, estado, digest e geração em cada chamada. on_ui_call recebe user_id verificado,
         channel_id, session_id, method, params e convite aceito opcional. Disable/app_invalidate
-        ou alteração de ACL revogam tokens; inválidos retornam 401. Polling padrão do
+        revogam tokens e a perda de leitura do canal os invalida; inválidos retornam 401. Polling padrão do
         SDK: 1500 ms, configurável.'
       security:
       - appUIBearer: []

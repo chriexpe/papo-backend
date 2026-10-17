@@ -84,13 +84,16 @@ Ticket dura 60 s; uma atualização condicional garante consumo único concorren
 Sessão começa com 30 min de inatividade, renovados após RPC válido, sem exceder
 8 h desde a troca. RPC recusado não estende o prazo. Cada chamada revalida ACL,
 banimento, digest e disponibilidade. Invalidação da instalação muda sua geração;
-tokens antigos não voltam a funcionar. Mudanças de ACL de canais, roles,
-associações e banimento revogam tokens no banco, mesmo com perda/restauração de
-acesso entre dois RPCs. Nesta primeira versão essa revogação de ACL é conservadora:
-encerra todas as sessões UI, inclusive de leitores que conservaram acesso.
+tokens antigos não voltam a funcionar. Um RPC recusado por perda de leitura
+apaga os tokens daquele usuário na instalação, de modo que restaurar o acesso
+depois não os reativa. Mudanças de ACL, roles ou banimento de outros usuários não
+afetam sessões de quem continua lendo o canal.
 
-Rotina periódica remove lotes de tokens consumidos/expirados, convites expirados
-(e seus pushes pendentes) e buckets antigos. Usa contexto cancelável, limites,
+Os limites por minuto (interações, lançamentos, RPC, convites, users.resolve)
+ficam em memória, por chave, como os demais rate limits do servidor.
+
+Rotina periódica remove lotes de tokens consumidos/expirados e convites expirados
+(e seus pushes pendentes). Usa contexto cancelável, limites,
 SKIP LOCKED e transação, e sua parada é aguardada no ciclo do servidor.
 
 ## Limites e SDK

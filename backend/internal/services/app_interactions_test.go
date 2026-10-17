@@ -174,7 +174,7 @@ func TestAppInteractionDenials(t *testing.T) {
 		t.Fatal("trigger convidou", raw)
 	}
 	in := InteractionInput{InstallationID: a.ID, Kind: "user_action", ChannelID: channel, ActionID: "convidar", TargetUserID: v.ID}
-	t.Setenv("PLUGINS_INTERACTIONS_PER_USER", "1")
+	m.Config.Limits.InteractionsPerUser = 1
 	if _, e := m.Interact(testCtx(), u.ID, in); e != nil {
 		t.Fatal(e)
 	}
@@ -251,7 +251,7 @@ func TestAppUITokenBoundaries(t *testing.T) {
 	if e = storage.CleanAppInteractions(testCtx()); e != nil {
 		t.Fatal(e)
 	}
-	stop := StartAppInteractionCleanup(testCtx())
+	stop := m.StartInteractionCleanup(testCtx())
 	stop()
 }
 
@@ -259,19 +259,19 @@ func TestAppUITokenBoundaries(t *testing.T) {
 func TestAppInviteLimitsMuteAndUICall(t *testing.T) {
 	m, u, v, a, channel, _ := interactionFixture(t)
 	ctx := context.WithValue(testCtx(), appHumanKey{}, appHuman{u.ID, channel})
-	t.Setenv("PLUGINS_INVITES_PER_SENDER", "1")
+	m.Config.Limits.InvitesPerSender = 1
 	if _, e := m.SendAppInvite(ctx, a, v.ID, "Jogar", json.RawMessage(`{}`)); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := m.SendAppInvite(ctx, a, v.ID, "Jogar", json.RawMessage(`{}`)); !errors.Is(e, ErrAppRateLimit) {
 		t.Fatal("limite remetente", e)
 	}
-	t.Setenv("PLUGINS_INVITES_PER_SENDER", "100")
-	t.Setenv("PLUGINS_INVITES_PER_TARGET", "1")
+	m.Config.Limits.InvitesPerSender = 100
+	m.Config.Limits.InvitesPerTarget = 1
 	if _, e := m.SendAppInvite(ctx, a, v.ID, "Jogar", json.RawMessage(`{}`)); !errors.Is(e, ErrAppRateLimit) {
 		t.Fatal("limite alvo", e)
 	}
-	t.Setenv("PLUGINS_INVITES_PER_TARGET", "100")
+	m.Config.Limits.InvitesPerTarget = 100
 	if e := SetPluginInviteMute(testCtx(), v.ID, a.ID, true); e != nil {
 		t.Fatal(e)
 	}
@@ -285,7 +285,7 @@ func TestAppInviteLimitsMuteAndUICall(t *testing.T) {
 	if _, e := m.AppRPC(testCtx(), a.ID, token, "game.invite", jsonValue(map[string]string{"target_user_id": v.ID})); e != nil {
 		t.Fatal("on_ui_call não convidou", e)
 	}
-	t.Setenv("PLUGINS_RPC_PER_SESSION", "1")
+	m.Config.Limits.RPCPerSession = 1
 	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); !errors.Is(e, ErrAppRateLimit) {
 		t.Fatal("limite RPC", e)
 	}
@@ -302,7 +302,7 @@ func (h stalledCallback) Invoke(ctx context.Context, _ string, _ []byte, _ []byt
 // TestAppCallbackTimeout mantém o processo saudável depois de um callback que não termina.
 func TestAppCallbackTimeout(t *testing.T) {
 	m, u, v, a, channel, _ := interactionFixture(t)
-	t.Setenv("PLUGINS_INTERACTION_TIMEOUT_MS", "20")
+	m.Config.InteractionTimeout = 20 * time.Millisecond
 	real := m.Host
 	m.Host = stalledCallback{real}
 	_, e := m.Interact(testCtx(), u.ID, InteractionInput{InstallationID: a.ID, ChannelID: channel, Kind: "user_action", ActionID: "convidar", TargetUserID: v.ID})
@@ -363,10 +363,7 @@ func TestAppInviteTargetAndCapabilities(t *testing.T) {
 // TestAppInstallationRateLimits confirma limites distintos por instalação e por usuário.
 func TestAppInstallationRateLimits(t *testing.T) {
 	m, u, v, a, channel, _ := interactionFixture(t)
-	t.Setenv("PLUGINS_INTERACTIONS_PER_PLUGIN", "1")
-	if _, e := storage.GetDB().Exec(`DELETE FROM app_rate_limits WHERE key=$1`, "interaction:plugin:"+a.ID); e != nil {
-		t.Fatal(e)
-	}
+	m.Config.Limits.InteractionsPerPlugin = 1
 	in := InteractionInput{InstallationID: a.ID, Kind: "user_action", ChannelID: channel, ActionID: "convidar", TargetUserID: v.ID}
 	if _, e := m.Interact(testCtx(), u.ID, in); e != nil {
 		t.Fatal(e)
@@ -375,10 +372,7 @@ func TestAppInstallationRateLimits(t *testing.T) {
 		t.Fatal("limite plugin", e)
 	}
 	token := launchSession(t, m, u.ID, a.ID, channel)
-	t.Setenv("PLUGINS_RPC_PER_PLUGIN", "1")
-	if _, e := storage.GetDB().Exec(`DELETE FROM app_rate_limits WHERE key=$1`, "rpc:plugin:"+a.ID); e != nil {
-		t.Fatal(e)
-	}
+	m.Config.Limits.RPCPerPlugin = 1
 	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); e != nil {
 		t.Fatal(e)
 	}
@@ -394,8 +388,8 @@ func TestAppCleanupWorkerTicks(t *testing.T) {
 	if _, e := storage.GetDB().Exec(`UPDATE app_ui_tokens SET expires_at=now()-interval '1 second' WHERE token_hash=$1`, appHash(token)); e != nil {
 		t.Fatal(e)
 	}
-	t.Setenv("PLUGINS_CLEANUP_SECONDS", "1")
-	stop := StartAppInteractionCleanup(context.Background())
+	m.Config.CleanupInterval = time.Second
+	stop := m.StartInteractionCleanup(context.Background())
 	defer stop()
 	deadline := time.Now().Add(4 * time.Second)
 	for {
@@ -533,5 +527,27 @@ func TestAppSaturationPreservesTickets(t *testing.T) {
 	}
 	if _, e = m.ExchangeAppTicket(testCtx(), a.ID, ticket["ticket"].(string)); e != nil {
 		t.Fatal("ticket revogado por saturação", e)
+	}
+}
+
+// TestAppUISessionSurvivesUnrelatedModeration garante que banir outro usuário,
+// atribuir roles a terceiros ou editar a ACL de outro canal não encerra sessões
+// de quem continua lendo o canal app.
+func TestAppUISessionSurvivesUnrelatedModeration(t *testing.T) {
+	m, u, v, a, channel, text := interactionFixture(t)
+	token := launchSession(t, m, u.ID, a.ID, channel)
+	role, err := storage.CreateRole(testCtx(), "terceiros", nil, models.RolePermissions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = storage.AssignUserRole(testCtx(), v.ID, role.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = storage.GetDB().Exec(`UPDATE users SET banned=true WHERE id=$1`, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	denyAppRead(t, text.ID)
+	if _, err = m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); err != nil {
+		t.Fatal("sessão encerrada por moderação não relacionada", err)
 	}
 }

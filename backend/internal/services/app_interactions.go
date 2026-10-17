@@ -8,8 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -46,24 +44,6 @@ type appHumanKey struct{}
 type appButtonsKey struct{}
 type appHuman struct{ UserID, ChannelID string }
 
-// appInt lê limites positivos, mantendo defaults seguros para valores inválidos.
-func appInt(key string, fallback int) int {
-	n, e := strconv.Atoi(os.Getenv(key))
-	if e != nil || n < 1 {
-		return fallback
-	}
-	return n
-}
-func appLimit(ctx context.Context, key, env string, n int) error {
-	ok, e := storage.AppRateLimit(ctx, key, appInt(env, n))
-	if e != nil {
-		return e
-	}
-	if !ok {
-		return ErrAppRateLimit
-	}
-	return nil
-}
 func appHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 func appSecret(prefix string) (string, error) {
 	b := make([]byte, 32)
@@ -75,7 +55,7 @@ func appSecret(prefix string) (string, error) {
 
 // HumanCall aplica a mesma fronteira de upgrade do trigger e limita a espera na fila.
 func (m *PluginManager) HumanCall(parent context.Context, id, event string, input json.RawMessage, h appHuman) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.WithValue(parent, appHumanKey{}, h), time.Duration(appInt("PLUGINS_INTERACTION_TIMEOUT_MS", 3000))*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.WithValue(parent, appHumanKey{}, h), m.Config.InteractionTimeout)
 	defer cancel()
 	var payload map[string]json.RawMessage
 	if json.Unmarshal(input, &payload) != nil {
@@ -165,10 +145,10 @@ func (m *PluginManager) Interact(ctx context.Context, user string, in Interactio
 	default:
 		return "", ErrInvalidInput
 	}
-	if e = appLimit(ctx, "interaction:user:"+user, "PLUGINS_INTERACTIONS_PER_USER", 30); e != nil {
+	if e = m.limit("interaction:user:"+user, m.Config.Limits.InteractionsPerUser); e != nil {
 		return "", e
 	}
-	if e = appLimit(ctx, "interaction:plugin:"+in.InstallationID, "PLUGINS_INTERACTIONS_PER_PLUGIN", 120); e != nil {
+	if e = m.limit("interaction:plugin:"+in.InstallationID, m.Config.Limits.InteractionsPerPlugin); e != nil {
 		return "", e
 	}
 	id := uuid.NewString()
@@ -286,7 +266,7 @@ func (m *PluginManager) LaunchAppUI(ctx context.Context, user, id string, in Lau
 			return nil, ErrPermissionDenied
 		}
 	}
-	if e = appLimit(ctx, "launch:"+user, "PLUGINS_LAUNCH_PER_USER", 60); e != nil {
+	if e = m.limit("launch:"+user, m.Config.Limits.LaunchPerUser); e != nil {
 		return nil, e
 	}
 	secret, e := appSecret("pat_")
@@ -394,10 +374,10 @@ func (m *PluginManager) AppRPC(ctx context.Context, id, secret, method string, p
 	if e != nil {
 		return nil, e
 	}
-	if e = appLimit(ctx, "rpc:session:"+t.ID, "PLUGINS_RPC_PER_SESSION", 120); e != nil {
+	if e = m.limit("rpc:session:"+t.ID, m.Config.Limits.RPCPerSession); e != nil {
 		return nil, e
 	}
-	if e = appLimit(ctx, "rpc:plugin:"+id, "PLUGINS_RPC_PER_PLUGIN", 600); e != nil {
+	if e = m.limit("rpc:plugin:"+id, m.Config.Limits.RPCPerPlugin); e != nil {
 		return nil, e
 	}
 	input := map[string]any{"user_id": t.UserID, "channel_id": t.ChannelID, "session_id": t.ID, "method": method, "params": params}
@@ -446,13 +426,13 @@ func (m *PluginManager) SendAppInvite(ctx context.Context, a models.AppInstallat
 	if e = CanReadChannel(ctx, h.ChannelID, target); e != nil {
 		return empty, e
 	}
-	if e = appLimit(ctx, "invite:sender:"+h.UserID, "PLUGINS_INVITES_PER_SENDER", 10); e != nil {
+	if e = m.limit("invite:sender:"+h.UserID, m.Config.Limits.InvitesPerSender); e != nil {
 		return empty, e
 	}
-	if e = appLimit(ctx, "invite:target:"+target, "PLUGINS_INVITES_PER_TARGET", 5); e != nil {
+	if e = m.limit("invite:target:"+target, m.Config.Limits.InvitesPerTarget); e != nil {
 		return empty, e
 	}
-	v := models.AppInvite{SurfaceID: ch.SurfaceID, ID: uuid.NewString(), UserID: target, InstallationID: a.ID, InviterID: h.UserID, ChannelID: h.ChannelID, Text: text, Data: data, Status: "pending", ExpiresAt: time.Now().Add(time.Duration(appInt("PLUGINS_INVITE_TTL_SECONDS", 86400)) * time.Second)}
+	v := models.AppInvite{SurfaceID: ch.SurfaceID, ID: uuid.NewString(), UserID: target, InstallationID: a.ID, InviterID: h.UserID, ChannelID: h.ChannelID, Text: text, Data: data, Status: "pending", ExpiresAt: time.Now().Add(m.Config.InviteTTL)}
 	push := jsonValue(map[string]any{"type": "app_invite", "notification_id": v.ID, "app_installation_id": a.ID, "channel_id": h.ChannelID, "author": a.Name, "preview": text})
 	if e = storage.CreateAppInvite(ctx, v, string(push)); e != nil {
 		return empty, e
@@ -486,19 +466,22 @@ func (m *PluginManager) DecideInvite(ctx context.Context, user, id, status strin
 	return v, nil
 }
 
-// StartAppInteractionCleanup acompanha o ciclo do servidor e aguarda parada cooperativa.
-func StartAppInteractionCleanup(parent context.Context) func() {
+// StartInteractionCleanup remove periodicamente tickets, sessões e convites
+// expirados e descarta limites em memória sem uso. A função retornada cancela o
+// worker e aguarda o fim do ciclo em andamento.
+func (m *PluginManager) StartInteractionCleanup(parent context.Context) func() {
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(time.Duration(appInt("PLUGINS_CLEANUP_SECONDS", 60)) * time.Second)
+		ticker := time.NewTicker(m.Config.CleanupInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				m.limits.sweep(time.Now())
 				c, stop := context.WithTimeout(ctx, 10*time.Second)
 				if e := storage.CleanAppInteractions(c); e != nil && !errors.Is(e, context.Canceled) {
 					utils.Errorf("limpeza de interações: %v", e)

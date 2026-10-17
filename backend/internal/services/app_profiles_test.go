@@ -126,10 +126,8 @@ func TestAppUsersResolve(t *testing.T) {
 	if _, e = m.ResolveUsers(testCtx(), a.ID, append(ids, u.ID)); !errors.Is(e, ErrInvalidInput) {
 		t.Fatal("mais de 50", e)
 	}
-	if _, e = storage.GetDB().Exec(`DELETE FROM app_rate_limits WHERE key=$1`, "users.resolve:"+a.ID); e != nil {
-		t.Fatal(e)
-	}
-	t.Setenv("PLUGINS_USERS_RESOLVE_PER_PLUGIN", "1")
+	m.limits = newAppLimiter()
+	m.Config.Limits.UsersResolvePerPlugin = 1
 	if _, e = m.ResolveUsers(testCtx(), a.ID, []string{u.ID}); e != nil {
 		t.Fatal(e)
 	}

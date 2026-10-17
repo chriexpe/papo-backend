@@ -7,15 +7,6 @@ import (
 	"time"
 )
 
-// AppRateLimit usa o banco para compartilhar limites entre processos.
-func AppRateLimit(ctx context.Context, key string, limit int) (bool, error) {
-	var n int
-	err := GetDB().QueryRowContext(ctx, `INSERT INTO app_rate_limits(key,window_at,count) VALUES($1,now(),1)
- ON CONFLICT(key) DO UPDATE SET count=CASE WHEN app_rate_limits.window_at <= now()-interval '1 minute' THEN 1 ELSE app_rate_limits.count+1 END,
- window_at=CASE WHEN app_rate_limits.window_at <= now()-interval '1 minute' THEN now() ELSE app_rate_limits.window_at END RETURNING count`, key).Scan(&n)
-	return n <= limit, err
-}
-
 // RevokeAppUI invalida inclusive tickets já entregues e sessões em outro processo.
 func RevokeAppUI(ctx context.Context, id string) error {
 	_, e := GetDB().ExecContext(ctx, `UPDATE app_installations SET ui_generation=ui_generation+1 WHERE id=$1`, id)
@@ -82,7 +73,6 @@ func CleanAppInteractions(ctx context.Context) error {
 		`DELETE FROM app_ui_tokens WHERE id IN (SELECT id FROM app_ui_tokens WHERE expires_at<=now() OR absolute_expires_at<=now() OR consumed ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED)`,
 		`DELETE FROM push_outbox WHERE notification_id IN (SELECT id FROM notifications WHERE kind='app_invite' AND expires_at<=now())`,
 		`DELETE FROM notifications WHERE id IN (SELECT id FROM notifications WHERE kind='app_invite' AND expires_at<=now() ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED)`,
-		`DELETE FROM app_rate_limits WHERE window_at<now()-interval '1 hour'`,
 	} {
 		if _, e = tx.ExecContext(ctx, q); e != nil {
 			return e

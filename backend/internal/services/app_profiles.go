@@ -45,7 +45,7 @@ func (m *PluginManager) ResolveUsers(ctx context.Context, id string, ids []strin
 	if a.Kind != "plugin" || a.PluginState != "enabled" {
 		return nil, ErrPermissionDenied
 	}
-	if e = appLimit(ctx, "users.resolve:"+id, "PLUGINS_USERS_RESOLVE_PER_PLUGIN", 120); e != nil {
+	if e = m.limit("users.resolve:"+id, m.Config.Limits.UsersResolvePerPlugin); e != nil {
 		return nil, e
 	}
 	channels, e := storage.AppProfileChannels(ctx, id)
