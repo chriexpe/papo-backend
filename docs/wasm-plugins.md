@@ -120,8 +120,15 @@ colisões de nomes ignorando caixa e extensões de UI fora do allowlist da #18.
 Entradas de diretório também são limitadas (até `2*PLUGINS_MAX_FILES+1`). Ícones
 precisam decodificar como PNG/WebP, dimensão até 4096². O digest SHA-256 usa arquivos
 ordenados, comprimento/caminho, comprimento/conteúdo; inclui manifest, ícone, UI,
-templates, locales e todos os demais arquivos. É reconferido na fronteira de
-invocação, antes de compilar e nas leituras de host/UI.
+templates, locales e todos os demais arquivos.
+
+Ao habilitar (ou no hot reload), a pasta é copiada para
+`PLUGINS_DIR/.approved/<digest>/<id>` e a cópia é validada e hasheada de novo;
+ela só é publicada se o digest for o do consentimento. Execução, `asset.read`,
+UI e superfícies usam somente essa cópia, carregada uma vez em memória. Editar a
+pasta viva não afeta nada até o próximo rescan (manual, no startup ou pelo watch
+do hot reload). Cópias que não pertencem a um plugin habilitado são removidas
+no rescan. Pastas que começam com `.` não são candidatas à descoberta.
 
 ## Endpoints e consentimento
 
@@ -159,10 +166,10 @@ autoridade e não requer consentimento novo. Renomear/reordenar canais app conti
 nas rotas normais de gestão de canais; reconciliação conserva ID/nome/posição/ACL
 quando `surface_id` persiste.
 
-Sem hot reload, qualquer digest novo em plugin habilitado põe em quarentena até
-reaprovação. Com hot reload, sem expansão do pedido de permissões/origens/escopos,
-a troca é automática na próxima fronteira de invocação; expansão exige consentimento.
-Novos bytes nunca são executados pelo on_disable da versão antiga. Quarentena
+No rescan, sem hot reload, um digest novo em plugin habilitado põe em quarentena
+até reaprovação. Com hot reload (watch de 1 s), sem expansão do pedido de
+permissões/origens/escopos, a versão nova é aprovada e aplicada automaticamente;
+expansão exige consentimento. on_disable sempre executa a versão aprovada. Quarentena
 persiste no banco, conserva canais (indisponíveis) e impede novas invocações.
 Disable/remove revoga grants, apaga backlog/escopos/canais e deixa embeds históricos
 inertes. Falha de on_disable é reportada, mas não interrompe esse cleanup.

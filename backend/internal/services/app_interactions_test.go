@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"papo/internal/models"
+	"papo/internal/pluginbundle"
 	"papo/internal/plugins"
 	"papo/internal/storage"
 )
@@ -425,7 +426,7 @@ func (h *lifecycleInvite) Invoke(ctx context.Context, _ string, _ []byte, _ []by
 // TestAppLifecycleCannotInheritHuman previne convites em on_enable durante hot reload humano.
 func TestAppLifecycleCannotInheritHuman(t *testing.T) {
 	m, u, _, a, channel, _ := interactionFixture(t)
-	b, e := m.bundle(testCtx(), a.AppKey, false)
+	b, e := m.snapshot(testCtx(), a)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -447,6 +448,13 @@ func TestAppHumanHotReload(t *testing.T) {
 	token := launchSession(t, m, u.ID, a.ID, channel)
 	path := filepath.Join(m.Config.Directory, "reference", "ui", "data.json")
 	if e := os.WriteFile(path, []byte(`{"message":"versão atualizada"}`), 0600); e != nil {
+		t.Fatal(e)
+	}
+	// A pasta alterada não afeta a sessão até o Rescan/Watch aprovar a versão nova.
+	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); e != nil {
+		t.Fatal("sessão encerrada antes do rescan", e)
+	}
+	if e := m.Rescan(testCtx()); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); !errors.Is(e, ErrAppSession) {
@@ -508,25 +516,28 @@ func TestAppActionsInChannelSnapshots(t *testing.T) {
 	}
 }
 
-// TestAppSaturationPreservesTickets responde fila cheia sem invalidar identidade ou artefato.
-func TestAppSaturationPreservesTickets(t *testing.T) {
-	m, u, _, a, channel, _ := interactionFixture(t)
-	ticket, e := m.LaunchAppUI(testCtx(), u.ID, a.ID, LaunchInput{SurfaceID: "home", ChannelID: channel})
-	if e != nil {
-		t.Fatal(e)
+// TestAppConcurrentResolveStaysAvailable garante que leituras simultâneas da
+// superfície usam a cópia aprovada em memória e nunca degradam para
+// indisponível, como acontecia com a releitura da pasta por chamada.
+func TestAppConcurrentResolveStaysAvailable(t *testing.T) {
+	m, _, _, a, _, _ := interactionFixture(t)
+	errs := make(chan error, 64)
+	for range 64 {
+		go func() {
+			b, err := ResolvePluginSurfaceBundle(context.Background(), a.ID)
+			if err == nil && (!b.Enabled || b.Directory == "") {
+				err = errors.New("superfície degradada")
+			}
+			errs <- err
+		}()
 	}
-	for range cap(m.ioSlots) {
-		m.ioSlots <- struct{}{}
+	for range 64 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
 	}
-	_, e = m.ExchangeAppTicket(testCtx(), a.ID, ticket["ticket"].(string))
-	for range cap(m.ioSlots) {
-		<-m.ioSlots
-	}
-	if !errors.Is(e, plugins.ErrBusy) {
-		t.Fatal("saturação não preservada", e)
-	}
-	if _, e = m.ExchangeAppTicket(testCtx(), a.ID, ticket["ticket"].(string)); e != nil {
-		t.Fatal("ticket revogado por saturação", e)
+	if !strings.Contains(m.snapshots[*a.PluginDigest].Directory, pluginbundle.ApprovedDir) {
+		t.Fatal("superfície servida fora da cópia aprovada")
 	}
 }
 

@@ -33,8 +33,10 @@ type pluginRequest struct {
 	Embeds            []EmbedInput          `json:"embeds"`
 }
 
-// hostCall recarrega estado, grants e digest antes de cada efeito e leitura de asset.
-func (m *PluginManager) hostCall(ctx context.Context, id string, data []byte) ([]byte, error) {
+// hostCall recarrega estado e grants antes de cada efeito. b é a cópia
+// aprovada da invocação em andamento; uma aprovação nova no meio da chamada
+// encerra a autoridade dela.
+func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.Bundle, data []byte) ([]byte, error) {
 	var req pluginRequest
 	if json.Unmarshal(data, &req) != nil {
 		return pluginResponse(nil, ErrInvalidInput)
@@ -46,11 +48,7 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, data []byte) ([
 	if a.Kind != "plugin" || a.PluginState != "enabled" || (a.LifecyclePending && ctx.Value(pluginTransitionKey{}) != a.ID) {
 		return pluginResponse(nil, ErrPermissionDenied)
 	}
-	b, e := m.bundle(ctx, a.AppKey, false)
-	if e != nil || a.PluginDigest == nil || b.Digest != *a.PluginDigest {
-		if !m.Config.HotReload && !transientPluginError(e) {
-			_ = m.quarantine(ctx, a)
-		}
+	if a.PluginDigest == nil || b.Digest != *a.PluginDigest {
 		return pluginResponse(nil, ErrPermissionDenied)
 	}
 	for _, p := range permissionList(a) {

@@ -499,41 +499,15 @@ func SetPluginInviteMute(ctx context.Context, user, id string, muted bool) error
 	return storage.SetAppInviteMute(ctx, user, id, muted)
 }
 
-// refreshHumanPlugin aplica hot reload na fronteira humana; novas versões revogam as sessões antigas.
+// refreshHumanPlugin confirma que a instalação está habilitada antes de uma
+// chamada humana. Versões novas chegam por Rescan/Watch, nunca pela chamada.
 func (m *PluginManager) refreshHumanPlugin(ctx context.Context, id string) error {
-	a, e := activeApp(ctx, id)
-	if e != nil {
-		return e
+	a, err := activeApp(ctx, id)
+	if err != nil {
+		return err
 	}
 	if a.Kind != "plugin" || a.PluginState != "enabled" || a.LifecyclePending {
 		return ErrPermissionDenied
 	}
-	b, e := m.bundle(ctx, a.AppKey, false)
-	if transientPluginError(e) {
-		return e
-	}
-	if e == nil && a.PluginDigest != nil && b.Digest == *a.PluginDigest {
-		return nil
-	}
-	unlock, e := m.lock(ctx, a.AppKey)
-	if e != nil {
-		return e
-	}
-	defer unlock()
-	a, e = activeApp(ctx, id)
-	if e != nil {
-		return e
-	}
-	b, e = m.bundle(ctx, a.AppKey, false)
-	if transientPluginError(e) {
-		return e
-	}
-	if e == nil && a.PluginDigest != nil && b.Digest == *a.PluginDigest {
-		return nil
-	}
-	if !m.Config.HotReload || e != nil {
-		_ = m.quarantine(ctx, a)
-		return ErrPluginConsent
-	}
-	return m.reloadLocked(ctx, a)
+	return nil
 }

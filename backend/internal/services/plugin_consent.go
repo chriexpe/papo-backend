@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -55,10 +54,7 @@ type PluginPreview struct {
 
 // Preview revalida pasta, settings e leitura humana dos escopos antes de assinar o consentimento.
 func (m *PluginManager) Preview(ctx context.Context, actor, id string, o PluginOptions) (PluginPreview, error) {
-	b, e := m.bundle(ctx, id, true)
-	if errors.Is(e, plugins.ErrBusy) {
-		return PluginPreview{}, e
-	}
+	b, e := m.liveBundle(ctx, id, true)
 	if e != nil {
 		return PluginPreview{}, fmt.Errorf("%w: %v", ErrInvalidInput, e)
 	}
