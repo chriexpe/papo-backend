@@ -86,7 +86,7 @@ func TestAppAuthenticationRoutes(t *testing.T) {
 		rec := do(t, e, method, target, nil, authCookie(owner))
 		assertProblem(t, rec, 401, "unauthorized", "Não autorizado", "app inválido")
 	}
-	for _, kind := range []string{"view", "wasm"} {
+	for _, kind := range []string{"plugin"} {
 		local, secret := createAppViaRoute(t, e, owner, kind)
 		if secret != "" {
 			t.Fatal("segredo local")

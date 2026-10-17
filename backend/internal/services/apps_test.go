@@ -31,7 +31,7 @@ func newAppTest(t *testing.T) (models.AppInstallation, models.Channel, models.Us
 // TestAppLifecycle cobre modos sem segredo, autenticação, identidade, rotação e revogação.
 func TestAppLifecycle(t *testing.T) {
 	u := newWebhookTestUser(t)
-	for _, kind := range []string{"remote", "view", "wasm"} {
+	for _, kind := range []string{"remote", "plugin"} {
 		a, token, err := CreateApp(testCtx(), u.ID, "key", kind, "App", models.AppCapabilities{})
 		if err != nil {
 			t.Fatal(err)
