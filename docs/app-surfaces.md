@@ -147,7 +147,7 @@ O histórico guarda referência, size/load/display e caminho relativo do poster,
 nunca a entry executável. Na leitura, entry é resolvida contra metadados atuais.
 Disable/remove omite entry/poster, mantendo a referência, políticas e título como
 card inerte. Um frame antigo que exceda um teto posteriormente reduzido também não
-é lançado. A 019 usa `app_width`/`app_height` inteiros positivos, `app_load`,
+é lançado. A migration 021 usa `app_width`/`app_height` inteiros positivos, `app_load`,
 `app_display` e `app_poster`; o CHECK também rejeita overlay+visible. O máximo
 configurável é aplicado pelo serviço, não fixado no SQL.
 
@@ -160,10 +160,3 @@ O OpenAPI documenta o contrato completo de isolamento, links com confirmação e
 fallback por plataforma. Não são implementados frontend, runtime, botões ou
 `app_invalidate` nesta correção. Persistência futura da página pertence ao
 `app_storage` da PR 5, sem bridge/SDK privilegiado.
-
-## Migration do fork
-
-A 019 foi corrigida em lugar de acrescentar uma segunda migration sobre o modelo
-rejeitado. Bancos descartáveis devem ser recriados. Quem já aplicou a 019 antiga deve
-fazer rollback usando a revisão antiga antes de trocar para esta versão. Não executar
-um Down novo contra o schema da antiga `channel_app_views`.

@@ -58,7 +58,7 @@ func ResolvePluginSurfaceBundle(ctx context.Context, id string) (PluginSurfaceBu
 	if err != nil {
 		return PluginSurfaceBundle{}, err
 	}
-	if a.Kind == "remote" || a.Kind == "view" {
+	if a.Kind != "plugin" {
 		return PluginSurfaceBundle{}, ErrPermissionDenied
 	}
 	pluginSurfaceSource.RLock()

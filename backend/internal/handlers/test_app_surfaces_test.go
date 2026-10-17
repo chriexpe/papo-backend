@@ -38,7 +38,7 @@ func (s handlerSurfaceSource) Resolve(_ context.Context, id string) (services.Pl
 // newHandlerSurfaces cria uma instalação e assets estáticos de teste, sem token.
 func newHandlerSurfaces(t *testing.T, ownerID string) (models.AppInstallation, handlerSurfaceSource) {
 	t.Helper()
-	a, _, err := services.CreateApp(context.Background(), ownerID, "fixture", "wasm", "App", models.AppCapabilities{SendMessages: true, PostAppEmbeds: true})
+	a, _, err := services.CreateApp(context.Background(), ownerID, "fixture", "plugin", "App", models.AppCapabilities{SendMessages: true, PostAppEmbeds: true})
 	if err != nil {
 		t.Fatal(err)
 	}
