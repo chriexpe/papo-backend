@@ -75,12 +75,15 @@ func TestAppUIStaticRoute(t *testing.T) {
 	id, _ := registerAndLogin(t, e)
 	a, source := newHandlerSurfaces(t, id)
 	e.Use(middleware.CORS([]string{"*"}))
-	path := "/apps/" + a.ID + "/ui/"
+	if rec := do(t, e, http.MethodGet, "/apps/"+a.ID+"/ui/digest-antigo/index.html", nil, nil); rec.Code != 404 {
+		t.Fatal("digest de outra versão servido", rec.Code)
+	}
+	path := "/apps/" + a.ID + "/ui/digest-v1/"
 	rec := do(t, e, http.MethodGet, path+"index.html", nil, nil)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "<!doctype html>") {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	for name, want := range map[string]string{"Content-Security-Policy": "sandbox allow-scripts allow-forms; default-src 'self' https://papo.com:8443", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "cross-origin", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=0, must-revalidate"} {
+	for name, want := range map[string]string{"Content-Security-Policy": "sandbox allow-scripts allow-forms; default-src 'self' https://papo.com:8443", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "cross-origin", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=31536000, immutable"} {
 		if got := rec.Header().Get(name); got != want {
 			t.Fatalf("%s: %q", name, got)
 		}
@@ -114,6 +117,11 @@ func TestAppUIStaticRoute(t *testing.T) {
 	b := source[a.ID]
 	b.Digest = "digest-v2"
 	source[a.ID] = b
+	// Versão nova, URL nova: a antiga deixa de existir em vez de revalidar.
+	if old := do(t, e, http.MethodGet, path+"index.html", nil, nil); old.Code != 404 {
+		t.Fatal("versão antiga servida", old.Code)
+	}
+	path = "/apps/" + a.ID + "/ui/digest-v2/"
 	req = httptest.NewRequest(http.MethodGet, path+"index.html", nil)
 	req.Header.Set("If-None-Match", tag)
 	changed := httptest.NewRecorder()
@@ -459,7 +467,7 @@ func TestAppUIOpaqueOriginAssets(t *testing.T) {
 				{"image.svg", "image/svg+xml"}, {"fixture.ttf", "font/ttf"}, {"data.json", "application/json"},
 			} {
 				for _, origin := range []string{"null", "https://client.example"} {
-					target := "/apps/" + a.ID + "/ui/" + asset.file
+					target := "/apps/" + a.ID + "/ui/digest-v1/" + asset.file
 					req := httptest.NewRequest(http.MethodGet, target, nil)
 					req.Header.Set("Origin", origin)
 					req.Host = "untrusted-host.example"
@@ -496,7 +504,7 @@ func TestAppUIOpaqueOriginAssets(t *testing.T) {
 	t.Setenv("APPS_ORIGIN", "https://apps.example/; script-src *")
 	e := newApp()
 	services.SetPluginSurfaceSource(source)
-	if rec := do(t, e, http.MethodGet, "/apps/"+a.ID+"/ui/index.html", nil, nil); rec.Code != 404 {
+	if rec := do(t, e, http.MethodGet, "/apps/"+a.ID+"/ui/digest-v1/index.html", nil, nil); rec.Code != 404 {
 		t.Fatal("configuração inválida", rec.Code)
 	}
 }
@@ -560,7 +568,7 @@ func TestAppFrameReadPayload(t *testing.T) {
 			if live {
 				var posterURL string
 				json.Unmarshal(frame["poster"], &posterURL)
-				if posterURL != "/apps/"+a.ID+"/ui/image.svg" {
+				if posterURL != "/apps/"+a.ID+"/ui/digest-v1/image.svg" {
 					t.Fatal(posterURL)
 				}
 				if image := do(t, e, http.MethodGet, posterURL, nil, nil); image.Code != 200 || !strings.HasPrefix(image.Header().Get("Content-Type"), "image/svg+xml") {

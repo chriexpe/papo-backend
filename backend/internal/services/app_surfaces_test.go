@@ -59,7 +59,7 @@ func TestAppSurfaceLifecycle(t *testing.T) {
 		t.Fatalf("create: %+v %v", changes, err)
 	}
 	ch := *changes[0].After
-	if ch.App.Entry != "/apps/"+a.ID+"/ui/index.html" {
+	if ch.App.Entry != "/apps/"+a.ID+"/ui/fixture-v1/index.html" {
 		t.Fatal(ch.App)
 	}
 	if has, err := storage.AppHasScope(testCtx(), a.ID, ch.ID); err != nil || has {
@@ -240,7 +240,7 @@ func TestAppEmbedsLifecycle(t *testing.T) {
 	if err != nil || !created || len(m.Embeds) != 1 || m.Embeds[0].SourceType != "app" || m.Embeds[0].Entry == "" {
 		t.Fatalf("embed: %+v %v", m, err)
 	}
-	if m.Embeds[0].Entry != "/apps/"+a.ID+"/ui/result.html" {
+	if m.Embeds[0].Entry != "/apps/"+a.ID+"/ui/fixture-v1/result.html" {
 		t.Fatal(m.Embeds[0])
 	}
 	if _, err := CreateMessage(testCtx(), ch.ID, u.ID, "", "", nil, []EmbedInput{input}); !errors.Is(err, ErrInvalidEmbed) {

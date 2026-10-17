@@ -163,7 +163,7 @@ func TestAppFramePayloadAndNativeCards(t *testing.T) {
 	}
 	e := m.Embeds[0]
 	payload := assertAppFrameJSON(t, e, true)
-	if string(payload["size"]) != `{"width":560,"height":420}` || string(payload["display"]) != `"overlay"` || string(payload["load"]) != `"click"` || e.Poster != "/apps/"+a.ID+"/ui/poster.png" {
+	if string(payload["size"]) != `{"width":560,"height":420}` || string(payload["display"]) != `"overlay"` || string(payload["load"]) != `"click"` || e.Poster != "/apps/"+a.ID+"/ui/fixture-v1/poster.png" {
 		t.Fatal(payload, e)
 	}
 	var width, height int

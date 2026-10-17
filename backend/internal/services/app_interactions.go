@@ -287,10 +287,10 @@ func (m *PluginManager) LaunchAppUI(ctx context.Context, user, id string, in Lau
 	entry := selected.Entry
 	poster := selected.Poster
 	if selected.Source == "bundled" {
-		entry = "/apps/" + id + "/" + entry
+		entry = pluginAssetURL(id, b.Digest, entry)
 	}
 	if poster != "" {
-		poster = "/apps/" + id + "/" + poster
+		poster = pluginAssetURL(id, b.Digest, poster)
 	}
 	return map[string]any{
 		"ticket": secret, "expires_at": t.ExpiresAt,

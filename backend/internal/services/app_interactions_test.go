@@ -133,7 +133,7 @@ func TestAppInteractionsGame(t *testing.T) {
 		t.Fatal(e)
 	}
 	surface, ok := launch["surface"].(models.AppChannel)
-	if !ok || surface.SurfaceID != "result" || surface.Entry != "/apps/"+a.ID+"/ui/result.html" || launch["display"] != "overlay" {
+	if !ok || surface.SurfaceID != "result" || surface.Entry != "/apps/"+a.ID+"/ui/"+*a.PluginDigest+"/result.html" || launch["display"] != "overlay" {
 		t.Fatalf("opens-only launch: %+v", launch)
 	}
 	if _, e = m.LaunchAppUI(testCtx(), u.ID, a.ID, LaunchInput{SurfaceID: "missing", ChannelID: text.ID, MessageID: msg.ID}); e == nil {
@@ -511,7 +511,7 @@ func TestAppActionsInChannelSnapshots(t *testing.T) {
 		}
 	}
 	a := enableReference(t, m, u, ch)
-	if snapshot == nil || len(snapshot.UserActions) != 1 || snapshot.UserActions[0].ID != "convidar" || snapshot.UserActions[0].Icon != "/apps/"+a.ID+"/ui/image.svg" {
+	if snapshot == nil || len(snapshot.UserActions) != 1 || snapshot.UserActions[0].ID != "convidar" || snapshot.UserActions[0].Icon != "/apps/"+a.ID+"/ui/"+*a.PluginDigest+"/image.svg" {
 		t.Fatal("ações ausentes no snapshot", snapshot)
 	}
 }

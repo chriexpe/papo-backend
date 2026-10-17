@@ -13,8 +13,11 @@ import (
 	"strings"
 )
 
-// AppUIHandler serve somente assets públicos estáticos: nunca lê sessão ou cookies.
-// os.Root confina o caminho; symlinks são recusados mesmo se apontarem para dentro de ui/.
+// AppUIHandler implementa GET /apps/:app_id/ui/:digest/*path: serve somente
+// assets estáticos públicos da cópia aprovada, nunca sessão ou cookies. O
+// digest precisa ser o da versão habilitada; como a URL muda a cada versão, a
+// resposta é cacheada como imutável. os.Root confina o caminho e symlinks são
+// recusados mesmo se apontarem para dentro de ui/.
 func AppUIHandler(baseURL string, c echo.Context) error {
 	notFound := func() error { return c.NoContent(http.StatusNotFound) }
 	c.Response().Header().Set("Cache-Control", "no-store")
@@ -25,7 +28,7 @@ func AppUIHandler(baseURL string, c echo.Context) error {
 	c.Response().Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	c.Response().Header().Set("Content-Security-Policy", "sandbox allow-scripts allow-forms; default-src 'self'")
 	b, err := services.ResolvePluginSurfaceBundle(c.Request().Context(), c.Param("app_id"))
-	if err != nil || b.Directory == "" {
+	if err != nil || b.Directory == "" || c.Param("digest") != b.Digest {
 		return notFound()
 	}
 	relative := c.Param("*")
@@ -70,7 +73,7 @@ func AppUIHandler(baseURL string, c echo.Context) error {
 	}
 	headers := c.Response().Header()
 	headers.Set("Content-Security-Policy", csp)
-	headers.Set("Cache-Control", "public, max-age=0, must-revalidate")
+	headers.Set("Cache-Control", "public, max-age=31536000, immutable")
 	headers.Set("ETag", fmt.Sprintf(`"%x"`, sha256.Sum256([]byte(b.Digest+"\x00"+relative))))
 	if contentType := mime.TypeByExtension(extension); contentType != "" {
 		headers.Set("Content-Type", contentType)

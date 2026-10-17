@@ -123,7 +123,7 @@ def main():
             embed = message["embeds"][0]
             assert embed["source_type"] == "app" and embed["surface"]["id"] == "result" and embed["entry"]
             print("PASS: reference trigger reads template and posts own inline embed")
-            ui = base + "/apps/" + installed["reference"]["id"] + "/ui/index.html"
+            ui = base + "/apps/" + installed["reference"]["id"] + "/ui/" + installed["reference"]["plugin_digest"] + "/index.html"
             headers = subprocess.check_output(["curl", "-fsS", "-D", "-", "-o", str(Path(work) / "ui.html"), ui], text=True)
             assert "sandbox allow-scripts allow-forms" in headers and "allow-same-origin" not in headers
             assert "nosniff" in headers and "no-referrer" in headers and "Set-Cookie:" not in headers
@@ -262,7 +262,7 @@ def main():
                     if surface == "result":
                         selection["message_id"] = game_message["id"]
                     _, ticket, _ = request("POST", f"/apps/{app_id}/launch", selection)
-                    page = base + f"/apps/{app_id}/ui/{file}#papo_ticket=" + ticket["ticket"]
+                    page = base + ticket["surface"]["entry"].rsplit("/", 1)[0] + f"/{file}#papo_ticket=" + ticket["ticket"]
                     checked = subprocess.run([str(Path(args.avatar_browser).resolve())], input=page + "\n", text=True, capture_output=True, timeout=30)
                     if checked.returncode:
                         # O ticket não é exibido, nem em falha do verificador.

@@ -216,15 +216,10 @@ func ReconcileAppChannels(ctx context.Context, actorID, installationID string, s
 		return nil, err
 	}
 	RecordAudit(ctx, AuditEntry{ActorID: actorID, Action: ActionAppUpdate, EntityType: EntityApp, EntityID: &installationID, Metadata: map[string]any{"surfaces": len(validated)}})
-	normalizeAppChanges(changes)
+	normalizeAppChanges(changes, b.Digest)
 	for i := range changes {
 		if ch := changes[i].After; ch != nil && ch.App != nil {
-			ch.App.UserActions = append([]models.AppUserAction(nil), b.UserActions...)
-			for j := range ch.App.UserActions {
-				if ch.App.UserActions[j].Icon != "" {
-					ch.App.UserActions[j].Icon = "/apps/" + installationID + "/" + ch.App.UserActions[j].Icon
-				}
-			}
+			ch.App.UserActions = userActionPayload(installationID, b)
 		}
 	}
 	return changes, nil
@@ -240,7 +235,6 @@ func DeleteAppChannels(ctx context.Context, actorID, installationID string) ([]A
 		return nil, err
 	}
 	RecordAudit(ctx, AuditEntry{ActorID: actorID, Action: ActionAppUpdate, EntityType: EntityApp, EntityID: &installationID, Metadata: map[string]any{"surfaces_removed": true}})
-	normalizeAppChanges(changes)
 	return changes, nil
 }
 
@@ -303,30 +297,36 @@ func channelAppPayload(ctx context.Context, id string) (*models.AppChannel, erro
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ResolvePluginSurfaceBundle(ctx, app.AppInstallationID); err != nil {
+	b, err := ResolvePluginSurfaceBundle(ctx, app.AppInstallationID)
+	if err != nil {
 		app.Available = false
 		app.Entry = ""
 		return app, nil
 	}
-	if b, e := ResolvePluginSurfaceBundle(ctx, app.AppInstallationID); e == nil {
-		app.UserActions = append([]models.AppUserAction(nil), b.UserActions...)
-		for i := range app.UserActions {
-			if app.UserActions[i].Icon != "" {
-				app.UserActions[i].Icon = "/apps/" + app.AppInstallationID + "/" + app.UserActions[i].Icon
-			}
-		}
-	}
+	app.UserActions = userActionPayload(app.AppInstallationID, b)
 	if app.Source == "bundled" {
-		app.Entry = "/apps/" + app.AppInstallationID + "/" + app.Entry
+		app.Entry = pluginAssetURL(app.AppInstallationID, b.Digest, app.Entry)
 	}
 	return app, nil
 }
 
-// normalizeAppChanges converte arquivos ui/ em rotas públicas depois do commit.
-func normalizeAppChanges(changes []AppChannelChange) {
+// userActionPayload copia as ações do manifest com ícones em URL pública.
+func userActionPayload(installationID string, b PluginSurfaceBundle) []models.AppUserAction {
+	actions := append([]models.AppUserAction(nil), b.UserActions...)
+	for i := range actions {
+		if actions[i].Icon != "" {
+			actions[i].Icon = pluginAssetURL(installationID, b.Digest, actions[i].Icon)
+		}
+	}
+	return actions
+}
+
+// normalizeAppChanges converte arquivos ui/ em rotas públicas da versão
+// digest depois do commit.
+func normalizeAppChanges(changes []AppChannelChange, digest string) {
 	for i := range changes {
 		if after := changes[i].After; after != nil && after.App != nil && after.App.Source == "bundled" {
-			after.App.Entry = "/apps/" + after.App.AppInstallationID + "/" + after.App.Entry
+			after.App.Entry = pluginAssetURL(after.App.AppInstallationID, digest, after.App.Entry)
 		}
 	}
 }

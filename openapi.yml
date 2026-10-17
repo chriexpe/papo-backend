@@ -2856,21 +2856,22 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /apps/{installation_id}/ui/{path}:
+  /apps/{installation_id}/ui/{digest}/{path}:
     get:
       tags: [Apps]
       summary: Assets públicos estáticos de uma superfície bundled
       security: []
       description: |
         Rota pública porque a WebView isolada não tem sessão. Serve somente arquivos
-        estáticos da pasta ui/ do plugin resolvido pelo provedor de metadados da PR 5;
-        nunca dados por usuário, templates, plugin.toml ou plugin.wasm. Não lê nem
+        estáticos da pasta ui/ da cópia aprovada do plugin; digest precisa ser o da
+        versão habilitada (outro digest responde 404). As URLs chegam prontas nos
+        payloads (entry, poster, ícones de ações) e mudam a cada versão; nunca dados por usuário, templates, plugin.toml ou plugin.wasm. Não lê nem
         emite cookies. Instalação desabilitada, revogada, removida ou sem provedor: 404.
         Não lista diretórios; rejeita traversal, caminhos absolutos e symlinks.
         Nada é executado pelo backend. Tipos permitidos: HTML/CSS/JS/JSON, imagens,
         fontes, texto e módulos Wasm dentro de ui/.
 
-        Headers obrigatórios (§9.1.4):
+        Headers obrigatórios:
         Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'self' <origem servida>
         (origem explícita extraída de APPS_ORIGIN ou BaseURL, nunca do Host/Forwarded
         da requisição; acrescenta as origens remotas aprovadas; nunca allow-same-origin).
@@ -2880,13 +2881,18 @@ paths:
         Access-Control-Allow-Origin: *
         Access-Control-Allow-Credentials: ausente (mesmo com o CORS global habilitado)
         ETag: derivado do digest do plugin e do caminho do asset.
-        Cache-Control: public, max-age=0, must-revalidate (revalida o digest em cada uso).
+        Cache-Control: public, max-age=31536000, immutable (a URL contém o digest da versão).
         Os mesmos headers de isolamento/CORS acompanham respostas 304. UI estática permite
         a leitura por páginas de origem opaca, inclusive fontes, módulos JS e fetch().
         Indisponibilidade responde no-store. O restante da API nunca permite Origin: null,
         mesmo quando CORS_ORIGINS contiver wildcard ou null.
       parameters:
         - {name: installation_id, in: path, required: true, schema: {type: string, format: uuid}}
+        - name: digest
+          in: path
+          required: true
+          description: Digest SHA-256 (hex) da versão aprovada do plugin.
+          schema: {type: string}
         - name: path
           in: path
           required: true
@@ -2908,7 +2914,7 @@ paths:
             application/octet-stream: {schema: {type: string, format: binary}}
         '206': {description: Intervalo do asset estático}
         '304': {description: Asset não modificado para o digest/caminho}
-        '404': {description: Instalação desabilitada ou asset inexistente/não permitido}
+        '404': {description: Instalação desabilitada, digest de outra versão ou asset inexistente/não permitido}
   /apps:
     post:
       tags:

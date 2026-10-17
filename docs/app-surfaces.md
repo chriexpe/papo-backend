@@ -59,7 +59,9 @@ inclui o objeto `app` somente para leitores; não existe mais campo `views` nem 
 
 ## UI bundled e URLs remotas
 
-`GET /apps/:installation_id/ui/*path` é **público** porque a WebView não tem sessão.
+`GET /apps/:installation_id/ui/:digest/*path` é **público** porque a WebView não tem sessão.
+O digest é o da versão aprovada: as URLs chegam prontas nos payloads e mudam a cada
+versão; um digest de outra versão responde 404.
 Serve somente arquivos estáticos de `ui/`, nunca dados por usuário, código do plugin,
 manifest ou templates. Não lê nem emite cookies. Traversal, diretórios, symlinks e
 extensões fora do allowlist são recusados. Instalação desabilitada/revogada: 404.
@@ -69,8 +71,8 @@ mais a origem explícita configurada (`APPS_ORIGIN`, ou origem de `BaseURL` quan
 e as origens remotas aprovadas; nunca `allow-same-origin`. A origem nunca vem de Host
 ou Forwarded da requisição. Também envia `nosniff`,
 `Referrer-Policy: no-referrer` e `Cross-Origin-Resource-Policy: cross-origin`. ETag combina
-digest do plugin e caminho; `Cache-Control: public, max-age=0, must-revalidate` revalida
-antes de reutilizar conteúdo. Respostas indisponíveis usam `no-store`.
+digest do plugin e caminho; `Cache-Control: public, max-age=31536000, immutable`, pois
+a URL já identifica a versão. Respostas indisponíveis usam `no-store`.
 Somente a UI estática envia `Access-Control-Allow-Origin: *`, sem
 `Access-Control-Allow-Credentials`, inclusive com o CORS global ativo e na revalidação
 304. Isso permite CSS, imagens, fontes, módulos JS e fetch de JSON a partir da origem
