@@ -29,6 +29,15 @@ CREATE TABLE app_storage (
     PRIMARY KEY (installation, key)
 );
 
+-- Uso acumulado de app_storage por instalação (chaves e bytes de chave + JSONB
+-- normalizado), mantido na mesma transação de cada escrita para checar a
+-- quota sem somar todas as chaves.
+CREATE TABLE app_storage_usage (
+    installation UUID PRIMARY KEY REFERENCES app_installations(id) ON DELETE CASCADE,
+    keys         INTEGER NOT NULL DEFAULT 0 CHECK (keys >= 0),
+    bytes        BIGINT NOT NULL DEFAULT 0 CHECK (bytes >= 0)
+);
+
 -- Botões de mensagens de apps (até duas linhas de cinco).
 ALTER TABLE messages ADD COLUMN components JSONB NOT NULL DEFAULT '[]';
 
@@ -94,6 +103,7 @@ ALTER TABLE notifications
     DROP COLUMN invite_status;
 ALTER TABLE notifications ALTER COLUMN message_id SET NOT NULL;
 ALTER TABLE messages DROP COLUMN components;
+DROP TABLE app_storage_usage;
 DROP TABLE app_storage;
 DROP INDEX idx_app_installations_plugin_key;
 ALTER TABLE app_installations

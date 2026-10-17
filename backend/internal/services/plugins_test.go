@@ -33,7 +33,7 @@ func TestPluginQuotas(t *testing.T) {
 	if _, e = storage.MutateAppStorage(testCtx(), a.ID, "0", json.RawMessage(`"`+strings.Repeat("x", 16384)+`"`), false); e != storage.ErrAppStorageQuota {
 		t.Fatal(e)
 	}
-	if _, e = storage.GetDB().Exec("DELETE FROM app_storage WHERE installation=$1", a.ID); e != nil {
+	if e = storage.ClearAppStorage(testCtx(), a.ID); e != nil {
 		t.Fatal(e)
 	}
 	for i := 0; i < 64; i++ {

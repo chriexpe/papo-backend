@@ -478,7 +478,7 @@ func TestPluginOriginExpansion(t *testing.T) {
 func TestPluginQuotaConcurrent(t *testing.T) {
 	m, u, ch := managerFixture(t, false)
 	a := enableReference(t, m, u, ch)
-	if _, e := storage.GetDB().Exec("DELETE FROM app_storage WHERE installation=$1", a.ID); e != nil {
+	if e := storage.ClearAppStorage(testCtx(), a.ID); e != nil {
 		t.Fatal(e)
 	}
 	for i := 0; i < 255; i++ {

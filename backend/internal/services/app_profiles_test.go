@@ -148,7 +148,7 @@ func TestAppStorageQuotaOverrides(t *testing.T) {
 	if updated.StorageQuota.MaxKeys != 2 || updated.StorageQuota.MaxTotalBytes != 64 || updated.StorageQuota.MaxValueBytes != 12 {
 		t.Fatal(updated.StorageQuota)
 	}
-	if _, e = storage.GetDB().Exec(`DELETE FROM app_storage WHERE installation=$1`, a.ID); e != nil {
+	if e = storage.ClearAppStorage(testCtx(), a.ID); e != nil {
 		t.Fatal(e)
 	}
 	put := func(key, raw string) error {
@@ -188,7 +188,7 @@ func TestAppStorageEnvAndLargeHostValue(t *testing.T) {
 	t.Setenv("PLUGINS_STORAGE_MAX_KEYS", "1")
 	t.Setenv("PLUGINS_STORAGE_MAX_TOTAL_BYTES", "65536")
 	t.Setenv("PLUGINS_STORAGE_MAX_VALUE_BYTES", "32768")
-	if _, e := storage.GetDB().Exec(`DELETE FROM app_storage WHERE installation=$1`, a.ID); e != nil {
+	if e := storage.ClearAppStorage(testCtx(), a.ID); e != nil {
 		t.Fatal(e)
 	}
 	large := strings.Repeat("x", 20000)

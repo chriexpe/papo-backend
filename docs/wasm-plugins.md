@@ -313,8 +313,9 @@ efetiva em storage_quota e configuração persistida em storage_quota_overrides.
 O consentimento assinado inclui ambas. Overrides não podem vir do manifest,
 setting do guest ou RPC. PATCH exige manage_apps, como max_memory_mb.
 
-A mutation KV resolve os limites dentro da transação e lock da instalação,
-incluindo JSONB normalizado e bytes UTF-8 das chaves. A redução não apaga dados;
+A mutation KV resolve os limites dentro da transação, travando somente a linha
+de uso da instalação (`app_storage_usage`, atualizada na mesma transação), com
+JSONB normalizado e bytes UTF-8 das chaves; não soma todas as chaves a cada escrita. A redução não apaga dados;
 novas escritas precisam caber e delete continua disponível. Reaprovação, restart
 e hot reload preservam o override. Migration 023 amplia o CHECK físico legado;
 down restaura o teto antigo para novas escritas com NOT VALID, preservando valores
