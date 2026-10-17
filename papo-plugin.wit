@@ -4,12 +4,12 @@ package papo:plugin@1.0.0;
 // Offsets são relativos à memória linear exportada "memory". Payloads são JSON UTF-8.
 interface host-core {
     // Projeção JSON fechada: {id,username,display_name,avatar_url}.
-    // avatar_url é sempre /users/<id>/avatar; nenhum campo privado é permitido.
+    // avatar_url é /users/<id>/avatar ou null sem avatar; nenhum campo privado é permitido.
     record user-profile {
         id: string,
         username: string,
         display-name: string,
-        avatar-url: string,
+        avatar-url: option<string>,
     }
     // Quota efetiva da gestão (JSON usa snake_case).
     record storage-quota {

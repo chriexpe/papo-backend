@@ -1,11 +1,12 @@
 package models
 
-// AppUserProfile é a projeção pública mínima entregue a plugins; nunca inclui dados privados.
+// AppUserProfile é a projeção pública mínima entregue a plugins; nunca inclui
+// dados privados. AvatarURL é null quando o usuário não tem avatar.
 type AppUserProfile struct {
-	ID          string `json:"id"`
-	Username    string `json:"username"`
-	DisplayName string `json:"display_name"`
-	AvatarURL   string `json:"avatar_url"`
+	ID          string  `json:"id"`
+	Username    string  `json:"username"`
+	DisplayName string  `json:"display_name"`
+	AvatarURL   *string `json:"avatar_url"`
 }
 
 // AppStorageQuota são os limites efetivos, em bytes de JSONB normalizado mais chaves.

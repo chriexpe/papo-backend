@@ -7,7 +7,9 @@ import (
 
 // AppPublicProfiles seleciona somente os quatro campos permitidos pelo ABI.
 func AppPublicProfiles(ctx context.Context, ids []string) ([]models.AppUserProfile, error) {
-	rows, e := GetDB().QueryContext(ctx, `SELECT id,username,COALESCE(NULLIF(nickname,''),username),'/users/'||id||'/avatar' FROM users WHERE id=ANY($1) AND NOT banned`, ids)
+	rows, e := GetDB().QueryContext(ctx, `SELECT id, username, COALESCE(NULLIF(nickname, ''), username),
+		 CASE WHEN avatar_media IS NOT NULL THEN '/users/' || id || '/avatar' END
+		 FROM users WHERE id = ANY($1) AND NOT banned`, ids)
 	if e != nil {
 		return nil, e
 	}

@@ -141,7 +141,7 @@ acontece dentro de um hot reload iniciado por interação/RPC.
 Os callbacks humanos incluem `input.user: {id,username,display_name,avatar_url}`;
 user_action também inclui `target_user`. São perfis dos IDs verificados pelo host,
 nunca de params. IDs legados permanecem. display_name usa nickname não vazio,
-com fallback para username; avatar_url é `/users/<id>/avatar`.
+com fallback para username; avatar_url é `/users/<id>/avatar`, ou null sem avatar.
 
 Host call `users.resolve {ids}` retorna `result: [perfil,...]`, até 50 IDs de entrada.
 Ausentes, banidos e usuários sem leitura de nenhum canal app próprio ou escopo

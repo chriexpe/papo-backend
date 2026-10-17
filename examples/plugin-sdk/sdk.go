@@ -139,7 +139,8 @@ type UserProfile struct {
 	ID          string `json:"id"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
-	AvatarURL   string `json:"avatar_url"`
+	// AvatarURL é nil quando o usuário não tem avatar.
+	AvatarURL *string `json:"avatar_url"`
 }
 
 // ResolveUsers retorna somente perfis autorizados; ausentes e negados são omitidos.
