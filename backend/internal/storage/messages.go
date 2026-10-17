@@ -163,6 +163,9 @@ func createMessageInTx(ctx context.Context, tx *sql.Tx, channelID, authorID, web
 			return models.Message{}, false, fmt.Errorf("falha ao vincular attachments à mensagem: %w", err)
 		}
 	}
+	if err := saveMessageComponentsInTx(ctx, tx, message.ID); err != nil {
+		return models.Message{}, false, err
+	}
 
 	if err := createMessageEventInTx(ctx, tx, "message.created", message); err != nil {
 		return models.Message{}, false, err

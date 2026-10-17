@@ -108,11 +108,9 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 		var created bool
 		if req.Components != nil && len(*req.Components) > 0 {
 			ctx = context.WithValue(ctx, appButtonsKey{}, true)
+			ctx = storage.WithMessageComponents(ctx, *req.Components)
 		}
 		msg, created, e = CreatePluginMessage(ctx, id, req.ChannelID, req.ExternalMessageID, req.Content, "", nil, req.Embeds)
-		if e == nil && created && req.Components != nil {
-			e = storage.SaveAppComponents(ctx, id, req.ChannelID, msg.ID, *req.Components)
-		}
 		if e == nil {
 			comps, err := storage.AppComponents(ctx, []string{msg.ID})
 			if err != nil {

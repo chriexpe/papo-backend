@@ -2,9 +2,11 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"papo/internal/models"
 	"time"
+
+	"papo/internal/models"
 )
 
 // RevokeAppUI invalida inclusive tickets já entregues e sessões em outro processo.
@@ -79,6 +81,28 @@ func CleanAppInteractions(ctx context.Context) error {
 		}
 	}
 	return tx.Commit()
+}
+
+type messageComponentsKey struct{}
+
+// WithMessageComponents faz a mensagem criada com este contexto gravar os
+// botões na mesma transação do INSERT, sem mensagem órfã de botões.
+func WithMessageComponents(ctx context.Context, buttons [][]models.AppButton) context.Context {
+	return context.WithValue(ctx, messageComponentsKey{}, buttons)
+}
+
+// saveMessageComponentsInTx grava os botões do contexto, quando houver.
+func saveMessageComponentsInTx(ctx context.Context, tx *sql.Tx, messageID string) error {
+	buttons, ok := ctx.Value(messageComponentsKey{}).([][]models.AppButton)
+	if !ok || len(buttons) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(buttons)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE messages SET components = $2 WHERE id = $1", messageID, data)
+	return err
 }
 
 // SaveAppComponents só altera mensagens pertencentes à instalação e ao canal.
