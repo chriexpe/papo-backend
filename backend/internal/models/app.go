@@ -30,8 +30,6 @@ type AppInstallation struct {
 	PluginState           string                  `json:"state,omitempty"`
 	MaxMemoryMB           int                     `json:"max_memory_mb,omitempty"`
 	PluginRevision        int64                   `json:"revision,omitempty"`
-	ArtifactSHA           *string                 `json:"artifact_sha,omitempty"`
-	ArtifactDigest        *string                 `json:"artifact_digest,omitempty"`
 	ID                    string                  `json:"id"`
 	AppKey                string                  `json:"app_key"`
 	Kind                  string                  `json:"kind"`

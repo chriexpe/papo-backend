@@ -21,7 +21,7 @@ func TestAppInteractionsMigrationRoundtrip(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	data, e := os.ReadFile(filepath.Join(migrationsDir, "022_app_interactions.sql"))
+	data, e := os.ReadFile(filepath.Join(migrationsDir, "022_app_plugins.sql"))
 	if e != nil {
 		t.Fatal(e)
 	}
