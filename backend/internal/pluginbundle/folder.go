@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"papo/internal/plugins"
 )
 
 // Bundle contém a definição validada e bytes do módulo, nunca uma instância executável.
@@ -24,6 +26,13 @@ type Bundle struct {
 	Digest    string   `json:"digest"`
 	Files     []string `json:"files"`
 	Module    []byte   `json:"-"`
+	// ModuleDigest é o SHA-256 de plugin.wasm, chave do cache de compilação.
+	ModuleDigest string `json:"-"`
+}
+
+// Code devolve o módulo com o digest calculado no Load.
+func (b Bundle) Code() plugins.Module {
+	return plugins.Module{Digest: b.ModuleDigest, Code: b.Module}
 }
 
 // Validator valida ABI/imports e limites sem instanciar.
@@ -136,6 +145,7 @@ func Load(ctx context.Context, dir string, c Config, validate Validator) (Bundle
 		switch name {
 		case "plugin.wasm":
 			b.Module = data
+			b.ModuleDigest = plugins.NewModule(data).Digest
 		case "plugin.toml":
 			b.Manifest, e = Parse(data, c)
 			if e != nil {

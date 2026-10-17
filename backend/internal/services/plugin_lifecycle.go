@@ -318,7 +318,7 @@ func (m *PluginManager) invoke(ctx context.Context, a models.AppInstallation, b 
 	}
 	envelope := jsonValue(map[string]any{"type": event, "settings": json.RawMessage(a.PluginSettings), "input": input})
 	call := func(c context.Context, data []byte) ([]byte, error) { return m.hostCall(c, a.ID, b, data) }
-	out, err := m.Host.Invoke(plugins.WithMemoryLimit(ctx, a.MaxMemoryMB), a.ID, b.Module, envelope, call)
+	out, err := m.Host.Invoke(plugins.WithMemoryLimit(ctx, a.MaxMemoryMB), a.ID, b.Code(), envelope, call)
 	if err == nil && event != "on_trigger" {
 		var result struct {
 			OK bool `json:"ok"`

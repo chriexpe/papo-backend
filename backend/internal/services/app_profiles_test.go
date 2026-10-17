@@ -18,7 +18,7 @@ type profileHost struct {
 	inputs map[string]json.RawMessage
 }
 
-func (h *profileHost) Invoke(ctx context.Context, id string, b, input []byte, call plugins.Call) ([]byte, error) {
+func (h *profileHost) Invoke(ctx context.Context, id string, b plugins.Module, input []byte, call plugins.Call) ([]byte, error) {
 	var event struct {
 		Type  string          `json:"type"`
 		Input json.RawMessage `json:"input"`

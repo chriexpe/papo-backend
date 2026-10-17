@@ -16,14 +16,16 @@ func run(args []string) error {
 	if len(args) < 2 || (args[0] != "check" && args[0] != "pack") {
 		return fmt.Errorf("uso: papo-plugin check <pasta> | pack <pasta> <arquivo.papoplugin>")
 	}
-	c, e := pluginbundle.LoadConfig()
-	if e != nil {
-		return e
+	c, err := pluginbundle.LoadConfig()
+	if err != nil {
+		return err
 	}
 	ctx := context.Background()
-	h, e := wasmhost.New(ctx, wasmhost.DefaultLimits())
-	if e != nil {
-		return e
+	limits := wasmhost.DefaultLimits()
+	limits.ArtifactBytes = int(c.WasmBytes)
+	h, err := wasmhost.New(ctx, limits)
+	if err != nil {
+		return err
 	}
 	defer h.Close(ctx)
 	validate := func(ctx context.Context, data []byte, mb int) error {
@@ -38,17 +40,17 @@ func run(args []string) error {
 	if len(args) != 2 {
 		return fmt.Errorf("check exige uma pasta")
 	}
-	b, e := pluginbundle.Load(ctx, args[1], c, validate)
-	if e != nil {
-		return e
+	b, err := pluginbundle.Load(ctx, args[1], c, validate)
+	if err != nil {
+		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(map[string]any{"id": b.Manifest.ID, "version": b.Manifest.Version, "digest": b.Digest, "files": len(b.Files), "valid": true})
 }
 
 // main não executa o plugin durante check ou pack.
 func main() {
-	if e := run(os.Args[1:]); e != nil {
-		fmt.Fprintln(os.Stderr, e)
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

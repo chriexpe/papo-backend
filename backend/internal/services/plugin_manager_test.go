@@ -374,14 +374,14 @@ type faultyLifecycle struct {
 }
 
 // Invoke permite confirmar que descoberta/check nunca executam callbacks.
-func (h *faultyLifecycle) Invoke(ctx context.Context, id string, artifact, input []byte, call plugins.Call) ([]byte, error) {
+func (h *faultyLifecycle) Invoke(ctx context.Context, id string, artifact plugins.Module, input []byte, call plugins.Call) ([]byte, error) {
 	h.calls++
 	var ev struct {
 		Type string `json:"type"`
 	}
 	_ = json.Unmarshal(input, &ev)
 	if ev.Type == h.event {
-		return h.PluginHost.Invoke(ctx, id, h.evil, []byte(`{"op":"trap"}`), call)
+		return h.PluginHost.Invoke(ctx, id, plugins.NewModule(h.evil), []byte(`{"op":"trap"}`), call)
 	}
 	return h.PluginHost.Invoke(ctx, id, artifact, input, call)
 }

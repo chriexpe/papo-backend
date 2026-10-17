@@ -295,7 +295,7 @@ func TestAppInviteLimitsMuteAndUICall(t *testing.T) {
 // stalledCallback conserva o runtime real para provar que o prazo também cobre a espera do callback.
 type stalledCallback struct{ plugins.PluginHost }
 
-func (h stalledCallback) Invoke(ctx context.Context, _ string, _ []byte, _ []byte, _ plugins.Call) ([]byte, error) {
+func (h stalledCallback) Invoke(ctx context.Context, _ string, _ plugins.Module, _ []byte, _ plugins.Call) ([]byte, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
@@ -414,7 +414,7 @@ type lifecycleInvite struct {
 	output string
 }
 
-func (h *lifecycleInvite) Invoke(ctx context.Context, _ string, _ []byte, _ []byte, call plugins.Call) ([]byte, error) {
+func (h *lifecycleInvite) Invoke(ctx context.Context, _ string, _ plugins.Module, _ []byte, call plugins.Call) ([]byte, error) {
 	out, e := call(ctx, []byte(`{"method":"invite.send","to_user_id":"00000000-0000-0000-0000-000000000001","text":"não deve enviar","data":{}}`))
 	h.output = string(out)
 	if e != nil {

@@ -195,16 +195,18 @@ func main() {
 	handlers.RegisterDirectMessageRoutes(e, cfg)
 	handlers.RegisterMessageRoutes(e, cfg)
 	handlers.RegisterWebhookRoutes(e, cfg)
-	pluginHost, err := wasmhost.New(context.Background(), wasmhost.DefaultLimits())
+	pluginConfig, err := pluginbundle.LoadConfig()
+	if err != nil {
+		utils.Fatal(err.Error())
+	}
+	hostLimits := wasmhost.DefaultLimits()
+	hostLimits.ArtifactBytes = int(pluginConfig.WasmBytes)
+	pluginHost, err := wasmhost.New(context.Background(), hostLimits)
 	if err != nil {
 		utils.Errorf("falha ao iniciar plugins: %v", err)
 		return
 	}
 	defer pluginHost.Close(context.Background())
-	pluginConfig, err := pluginbundle.LoadConfig()
-	if err != nil {
-		utils.Fatal(err.Error())
-	}
 	pluginManager, err := services.NewPluginManager(pluginConfig, pluginHost, handlers.PluginEffects())
 	if err != nil {
 		utils.Fatal(err.Error())

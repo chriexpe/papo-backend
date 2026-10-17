@@ -3,14 +3,16 @@ package plugins
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
-	"os"
-	"strconv"
 )
 
 const (
+	// MaxArtifact é o teto padrão do plugin.wasm (PLUGINS_MAX_WASM_BYTES).
 	MaxArtifact = 16 << 20
-	MaxPayload  = 64 << 10
+	// MaxPayload limita envelopes de invocação e host calls.
+	MaxPayload = 64 << 10
 )
 
 var (
@@ -23,11 +25,25 @@ var (
 // Call encaminha uma importação para serviços autenticados da instalação.
 type Call func(context.Context, []byte) ([]byte, error)
 
+// Module é o código de um plugin com o SHA-256 dos seus bytes, calculado uma
+// vez quando a versão é carregada. O host usa Digest como chave do cache de
+// compilação, sem rehashear o código a cada invocação.
+type Module struct {
+	Digest string
+	Code   []byte
+}
+
+// NewModule calcula o digest de code.
+func NewModule(code []byte) Module {
+	sum := sha256.Sum256(code)
+	return Module{Digest: hex.EncodeToString(sum[:]), Code: code}
+}
+
 // PluginHost permite substituir o adaptador embutido por um processo isolado.
 // Invoke não compartilha memória de guest e mantém efeitos concluídos antes de erro.
 type PluginHost interface {
 	Validate(context.Context, []byte) error
-	Invoke(context.Context, string, []byte, []byte, Call) ([]byte, error)
+	Invoke(context.Context, string, Module, []byte, Call) ([]byte, error)
 	Reset(string)
 	Close(context.Context) error
 }
@@ -45,12 +61,4 @@ func MemoryLimit(ctx context.Context) int {
 		return v
 	}
 	return 16
-}
-
-// ArtifactLimit acompanha o limite configurado para descoberta e compilação.
-func ArtifactLimit() int {
-	if n, e := strconv.Atoi(os.Getenv("PLUGINS_MAX_WASM_BYTES")); e == nil && n > 0 && n <= 1<<30 {
-		return n
-	}
-	return MaxArtifact
 }

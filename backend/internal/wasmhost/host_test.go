@@ -50,14 +50,14 @@ func TestBoundaries(t *testing.T) {
 	}
 	for _, op := range []string{"trap", "loop", "oversize", "pointer", "calls", "memory"} {
 		t.Run(op, func(t *testing.T) {
-			_, err := h.Invoke(context.Background(), op, b, []byte(`{"op":"`+op+`"}`), echoCall)
+			_, err := h.Invoke(context.Background(), op, plugins.NewModule(b), []byte(`{"op":"`+op+`"}`), echoCall)
 			if err == nil {
 				t.Fatal("guest malicioso aceito")
 			}
 			if op == "loop" && !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatal("timeout perdeu a causa", err)
 			}
-			out, err := h.Invoke(context.Background(), "healthy", b, []byte(`{"ok":true}`), echoCall)
+			out, err := h.Invoke(context.Background(), "healthy", plugins.NewModule(b), []byte(`{"ok":true}`), echoCall)
 			if err != nil || string(out) != `{"ok":true}` {
 				t.Fatalf("host afetado: %s %v", out, err)
 			}
@@ -70,15 +70,15 @@ func TestQuarantine(t *testing.T) {
 	h := newHost(t, DefaultLimits())
 	b := fixture(t)
 	for i := 0; i < 3; i++ {
-		if _, e := h.Invoke(context.Background(), "bad", b, []byte(`{"op":"trap"}`), echoCall); e == nil {
+		if _, e := h.Invoke(context.Background(), "bad", plugins.NewModule(b), []byte(`{"op":"trap"}`), echoCall); e == nil {
 			t.Fatal("sem trap")
 		}
 	}
-	if _, e := h.Invoke(context.Background(), "bad", b, []byte(`{"ok":true}`), echoCall); !errors.Is(e, plugins.ErrQuarantined) {
+	if _, e := h.Invoke(context.Background(), "bad", plugins.NewModule(b), []byte(`{"ok":true}`), echoCall); !errors.Is(e, plugins.ErrQuarantined) {
 		t.Fatal(e)
 	}
 	h.Reset("bad")
-	if _, e := h.Invoke(context.Background(), "bad", b, []byte(`{"ok":true}`), echoCall); e != nil {
+	if _, e := h.Invoke(context.Background(), "bad", plugins.NewModule(b), []byte(`{"ok":true}`), echoCall); e != nil {
 		t.Fatal(e)
 	}
 }
@@ -108,9 +108,15 @@ func TestAdmission(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}
-	go func() { _, e := h.Invoke(context.Background(), "one", b, []byte(`{"ok":true}`), call); done <- e }()
+	go func() {
+		_, e := h.Invoke(context.Background(), "one", plugins.NewModule(b), []byte(`{"ok":true}`), call)
+		done <- e
+	}()
 	<-entered
-	go func() { _, e := h.Invoke(context.Background(), "one", b, []byte(`{"ok":true}`), call); done <- e }()
+	go func() {
+		_, e := h.Invoke(context.Background(), "one", plugins.NewModule(b), []byte(`{"ok":true}`), call)
+		done <- e
+	}()
 	deadline := time.After(time.Second)
 	for {
 		h.mu.Lock()
@@ -126,12 +132,12 @@ func TestAdmission(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}
-	if _, e := h.Invoke(context.Background(), "one", b, []byte(`{"ok":true}`), call); !errors.Is(e, plugins.ErrBusy) {
+	if _, e := h.Invoke(context.Background(), "one", plugins.NewModule(b), []byte(`{"ok":true}`), call); !errors.Is(e, plugins.ErrBusy) {
 		t.Fatal(e)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, e := h.Invoke(ctx, "two", b, []byte(`{"ok":true}`), call); !errors.Is(e, context.DeadlineExceeded) {
+	if _, e := h.Invoke(ctx, "two", plugins.NewModule(b), []byte(`{"ok":true}`), call); !errors.Is(e, context.DeadlineExceeded) {
 		t.Fatal(e)
 	}
 	close(release)
@@ -147,7 +153,7 @@ func TestHostCallContext(t *testing.T) {
 	l := DefaultLimits()
 	l.Deadline = 30 * time.Millisecond
 	h := newHost(t, l)
-	_, e := h.Invoke(context.Background(), "slow", fixture(t), []byte(`{"ok":true}`), func(ctx context.Context, _ []byte) ([]byte, error) { <-ctx.Done(); return nil, ctx.Err() })
+	_, e := h.Invoke(context.Background(), "slow", plugins.NewModule(fixture(t)), []byte(`{"ok":true}`), func(ctx context.Context, _ []byte) ([]byte, error) { <-ctx.Done(); return nil, ctx.Err() })
 	if e == nil {
 		t.Fatal("host call sem deadline")
 	}
@@ -181,17 +187,17 @@ func TestCacheBudget(t *testing.T) {
 	l.CacheBytes = 1 << 20
 	h := newHost(t, l)
 	b := fixture(t)
-	first, e := h.acquire(context.Background(), b)
+	first, e := h.acquire(context.Background(), plugins.NewModule(b))
 	if e != nil {
 		t.Fatal(e)
 	}
 	// Custom section válida altera o digest sem mudar o código.
 	other := append(append([]byte(nil), b...), 0, 3, 1, 'x', 0)
-	if _, e = h.acquire(context.Background(), other); !errors.Is(e, plugins.ErrBusy) {
+	if _, e = h.acquire(context.Background(), plugins.NewModule(other)); !errors.Is(e, plugins.ErrBusy) {
 		t.Fatal(e)
 	}
 	h.release(first)
-	second, e := h.acquire(context.Background(), other)
+	second, e := h.acquire(context.Background(), plugins.NewModule(other))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -201,14 +207,31 @@ func TestCacheBudget(t *testing.T) {
 	}
 }
 
+// TestCacheHitSkipsValidation reusa o módulo compilado pelo digest conhecido,
+// sem repetir preflight, hash ou compilação a cada invocação.
+func TestCacheHitSkipsValidation(t *testing.T) {
+	h := newHost(t, DefaultLimits())
+	module := plugins.NewModule(fixture(t))
+	if _, err := h.Invoke(context.Background(), "cache", module, []byte(`{"ok":true}`), echoCall); err != nil {
+		t.Fatal(err)
+	}
+	// Mesmo digest sem bytes: só um acerto de cache pode executar.
+	if _, err := h.Invoke(context.Background(), "cache", plugins.Module{Digest: module.Digest}, []byte(`{"ok":true}`), echoCall); err != nil {
+		t.Fatal("cache não reutilizado", err)
+	}
+	if _, err := h.Invoke(context.Background(), "cache", plugins.Module{Digest: "outro"}, []byte(`{"ok":true}`), echoCall); !errors.Is(err, plugins.ErrInvalidArtifact) {
+		t.Fatal("digest desconhecido sem bytes aceito", err)
+	}
+}
+
 // TestInvalidJSON rejeita entrada e resposta sem aceitar UTF-8 malformado.
 func TestInvalidJSON(t *testing.T) {
 	h := newHost(t, DefaultLimits())
 	b := fixture(t)
-	if _, e := h.Invoke(context.Background(), "a", b, []byte("x"), echoCall); e == nil {
+	if _, e := h.Invoke(context.Background(), "a", plugins.NewModule(b), []byte("x"), echoCall); e == nil {
 		t.Fatal("JSON aceito")
 	}
-	if _, e := h.Invoke(context.Background(), "a", b, json.RawMessage(`{}`), func(context.Context, []byte) ([]byte, error) { return []byte{255}, nil }); e == nil {
+	if _, e := h.Invoke(context.Background(), "a", plugins.NewModule(b), json.RawMessage(`{}`), func(context.Context, []byte) ([]byte, error) { return []byte{255}, nil }); e == nil {
 		t.Fatal("UTF8 aceito")
 	}
 }
