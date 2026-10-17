@@ -11,7 +11,7 @@ import (
 )
 
 // BroadcastAppChannelChanges publica snapshots confirmados aos leitores, inclusive após exclusão.
-// Os hooks não publicam: enable/disable e workers da PR 5 reutilizam este contrato.
+// Os hooks não publicam: quem habilita, desabilita ou reconcilia o app usa este adaptador.
 func BroadcastAppChannelChanges(ctx context.Context, changes []services.AppChannelChange) {
 	hub := websocket.GetHub()
 	for _, change := range changes {

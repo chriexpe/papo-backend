@@ -35,7 +35,7 @@ type PluginSurfaceBundle struct {
 	Surfaces        []AppSurfaceDeclaration
 }
 
-// PluginSurfaceSource é implementada pela descoberta/lifecycle de plugins na PR 5.
+// PluginSurfaceSource é implementada pela descoberta e pelo ciclo de vida dos plugins.
 type PluginSurfaceSource interface {
 	Resolve(context.Context, string) (PluginSurfaceBundle, error)
 }
@@ -219,7 +219,7 @@ func ReconcileAppChannels(ctx context.Context, actorID, installationID string, s
 	return changes, nil
 }
 
-// DeleteAppChannels remove canais sem revogar a instalação; serve ao disable da PR 5.
+// DeleteAppChannels remove canais sem revogar a instalação (disable do plugin).
 func DeleteAppChannels(ctx context.Context, actorID, installationID string) ([]AppChannelChange, error) {
 	if _, err := activeApp(ctx, installationID); err != nil {
 		return nil, err

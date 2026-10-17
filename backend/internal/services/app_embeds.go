@@ -128,7 +128,7 @@ func decorateAppEmbed(ctx context.Context, e *models.Embed) {
 	}
 }
 
-// CreatePluginMessage recebe identidade do contexto interno da PR 5, nunca de campos do usuário.
+// CreatePluginMessage recebe a instalação do contexto interno do host, nunca de campos do usuário.
 // O chamador publica efeitos de mensagem apenas quando created é true, como os handlers existentes.
 func CreatePluginMessage(ctx context.Context, installationID, channelID, sourceID, content, replyTo string, attachments []AttachmentInput, embeds []EmbedInput) (models.MessageWithAttachment, bool, error) {
 	a, err := activeApp(ctx, installationID)
