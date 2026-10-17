@@ -52,7 +52,13 @@ func CreateApp(ctx context.Context, actor, key, kind, name string, caps models.A
 	if err != nil {
 		return a, "", err
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppCreate, EntityType: EntityApp, EntityID: &a.ID, Metadata: map[string]any{"name": a.Name, "kind": a.Kind}})
+	RecordAudit(ctx, AuditEntry{
+		ActorID:    actor,
+		Action:     ActionAppCreate,
+		EntityType: EntityApp,
+		EntityID:   &a.ID,
+		Metadata:   map[string]any{"name": a.Name, "kind": a.Kind},
+	})
 	return a, token, nil
 }
 
@@ -231,7 +237,13 @@ func AddAppScope(ctx context.Context, actor, id, channelID string) error {
 	} else if err != nil {
 		return err
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppScopeAdd, EntityType: EntityApp, EntityID: &id, Metadata: map[string]any{"channel_id": channelID}})
+	RecordAudit(ctx, AuditEntry{
+		ActorID:    actor,
+		Action:     ActionAppScopeAdd,
+		EntityType: EntityApp,
+		EntityID:   &id,
+		Metadata:   map[string]any{"channel_id": channelID},
+	})
 	return nil
 }
 
@@ -246,7 +258,13 @@ func RemoveAppScope(ctx context.Context, actor, id, channelID string) error {
 	if err := storage.RemoveAppScope(ctx, id, channelID); err != nil {
 		return err
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppScopeRemove, EntityType: EntityApp, EntityID: &id, Metadata: map[string]any{"channel_id": channelID}})
+	RecordAudit(ctx, AuditEntry{
+		ActorID:    actor,
+		Action:     ActionAppScopeRemove,
+		EntityType: EntityApp,
+		EntityID:   &id,
+		Metadata:   map[string]any{"channel_id": channelID},
+	})
 	return nil
 }
 
@@ -357,7 +375,13 @@ func DeleteAppMessage(ctx context.Context, a models.AppInstallation, channelID, 
 	if err = deleteMessage(ctx, messageID); err != nil {
 		return "", err
 	}
-	RecordAudit(ctx, AuditEntry{ActorLabel: "app:" + current.Name, Action: ActionMessageDelete, EntityType: EntityMessage, EntityID: &messageID, Metadata: map[string]any{"channel_id": channelID, "app_installation_id": a.ID}})
+	RecordAudit(ctx, AuditEntry{
+		ActorLabel: "app:" + current.Name,
+		Action:     ActionMessageDelete,
+		EntityType: EntityMessage,
+		EntityID:   &messageID,
+		Metadata:   map[string]any{"channel_id": channelID, "app_installation_id": a.ID},
+	})
 	return channelID, nil
 }
 
