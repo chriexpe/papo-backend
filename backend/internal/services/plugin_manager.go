@@ -450,6 +450,7 @@ func (m *PluginManager) Resolve(ctx context.Context, id string) (PluginSurfaceBu
 		}
 	}
 	return PluginSurfaceBundle{
+		AppKey:          a.AppKey,
 		Directory:       b.Directory,
 		Digest:          b.Digest,
 		Enabled:         true,

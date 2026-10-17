@@ -146,8 +146,13 @@ func TestAppBridgeRoutes(t *testing.T) {
 	readWSMessage(t, conn)
 	body = []byte(`{"app_installation_id":"` + a.ID + `","channel_id":"` + appChannel + `","kind":"user_action","action_id":"convidar","target_user_id":"` + targetID + `"}`)
 	rec = do(t, e, "POST", "/interactions", body, authCookie(owner))
-	if rec.Code != 202 {
-		t.Fatal(rec.Code, rec.Body.String())
+	var clicked struct {
+		InteractionID string          `json:"interaction_id"`
+		Result        json.RawMessage `json:"result"`
+	}
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &clicked) != nil || clicked.InteractionID == "" ||
+		!strings.Contains(string(clicked.Result), `"players"`) {
+		t.Fatal("resultado do plugin não chegou ao clicante", rec.Code, rec.Body.String())
 	}
 	readEvent := func(kind string) map[string]json.RawMessage {
 		t.Helper()
@@ -174,8 +179,10 @@ func TestAppBridgeRoutes(t *testing.T) {
 	json.Unmarshal(msg["id"], &msgID)
 	body = []byte(`{"app_installation_id":"` + a.ID + `","channel_id":"` + text.ID + `","kind":"button","message_id":"` + msgID + `","component_id":"revanche"}`)
 	rec = do(t, e, "POST", "/interactions", body, authCookie(owner))
-	if rec.Code != 202 {
-		t.Fatal(rec.Code, rec.Body.String())
+	clicked.Result = nil
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &clicked) != nil || clicked.InteractionID == "" ||
+		!strings.Contains(string(clicked.Result), `"players"`) {
+		t.Fatal("resultado do plugin não chegou ao clicante", rec.Code, rec.Body.String())
 	}
 	edit := readEvent("message_edit")
 	if !strings.Contains(string(edit["components"]), "revanche") {

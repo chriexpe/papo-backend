@@ -20,7 +20,18 @@ import (
 
 // ErrAppRateLimit preserva uma resposta curta e não expõe estado de outros usuários.
 var ErrAppRateLimit = errors.New("limite de chamadas do app excedido")
+
+// ErrAppSession indica ticket ou sessão UI inválida, expirada ou revogada.
 var ErrAppSession = errors.New("sessão do app inválida ou expirada")
+
+const (
+	// appTicketTTL é a validade do ticket de lançamento, de uso único.
+	appTicketTTL = 60 * time.Second
+	// appSessionIdle é a inatividade máxima de uma sessão UI, renovada a cada RPC.
+	appSessionIdle = 30 * time.Minute
+	// appSessionMax é a duração absoluta máxima de uma sessão UI.
+	appSessionMax = 8 * time.Hour
+)
 
 // InteractionInput contém apenas seletores; identidade é preenchida pelo servidor.
 type InteractionInput struct {
@@ -33,6 +44,14 @@ type InteractionInput struct {
 	TargetUserID   string `json:"target_user_id,omitempty"`
 }
 
+// InteractionResult é a resposta de POST /interactions: o id da interação e o
+// result devolvido pelo on_interaction do plugin, entregue somente a quem
+// clicou (null quando o plugin não devolve result).
+type InteractionResult struct {
+	InteractionID string          `json:"interaction_id"`
+	Result        json.RawMessage `json:"result"`
+}
+
 // LaunchInput vincula uma superfície a um contexto legível, nunca a uma URL arbitrária.
 type LaunchInput struct {
 	SurfaceID string `json:"surface_id"`
@@ -40,130 +59,173 @@ type LaunchInput struct {
 	MessageID string `json:"message_id,omitempty"`
 	InviteID  string `json:"invite_id,omitempty"`
 }
+
 type appHumanKey struct{}
 type appButtonsKey struct{}
-type appHuman struct{ UserID, ChannelID string }
 
-func appHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
+// appHuman é a identidade humana verificada de on_interaction e on_ui_call.
+type appHuman struct {
+	UserID    string
+	ChannelID string
+}
+
+// uiSession é um ticket ou sessão revalidado, com o convite aceito vinculado e
+// a chave do plugin.
+type uiSession struct {
+	token  models.AppUIToken
+	invite *models.AppInvite
+	appKey string
+}
+
+func appHash(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// appSecret gera 32 bytes aleatórios em base64url com o prefixo informado.
 func appSecret(prefix string) (string, error) {
 	b := make([]byte, 32)
-	if _, e := rand.Read(b); e != nil {
-		return "", e
+	if _, err := rand.Read(b); err != nil {
+		return "", err
 	}
 	return prefix + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// HumanCall aplica a mesma fronteira de upgrade do trigger e limita a espera na fila.
-func (m *PluginManager) HumanCall(parent context.Context, id, event string, input json.RawMessage, h appHuman) ([]byte, error) {
+// HumanCall entrega um callback humano com o perfil do chamador verificado e
+// limita a espera ao prazo de interação.
+func (m *PluginManager) HumanCall(parent context.Context, key, event string, input json.RawMessage, h appHuman) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.WithValue(parent, appHumanKey{}, h), m.Config.InteractionTimeout)
 	defer cancel()
 	var payload map[string]json.RawMessage
 	if json.Unmarshal(input, &payload) != nil {
 		return nil, ErrInvalidInput
 	}
-	profile, e := callerProfile(ctx, h.UserID)
-	if e != nil {
-		return nil, e
+	profile, err := callerProfile(ctx, h.UserID)
+	if err != nil {
+		return nil, err
 	}
 	payload["user"] = jsonValue(profile)
 	if event == "on_interaction" {
 		var action InteractionInput
 		_ = json.Unmarshal(input, &action)
 		if action.Kind == "user_action" {
-			target, e := callerProfile(ctx, action.TargetUserID)
-			if e != nil {
-				return nil, e
+			target, err := callerProfile(ctx, action.TargetUserID)
+			if err != nil {
+				return nil, err
 			}
 			payload["target_user"] = jsonValue(target)
 		}
 	}
-	return m.callEvent(ctx, id, event, jsonValue(payload))
+	return m.callEvent(ctx, key, event, jsonValue(payload))
 }
 
-// Interact verifica o botão/ação persistido antes de entregar a identidade humana.
-func (m *PluginManager) Interact(ctx context.Context, user string, in InteractionInput) (string, error) {
+// Interact verifica o botão ou a ação persistida, entrega a identidade humana
+// ao on_interaction e devolve o result do plugin a quem clicou.
+func (m *PluginManager) Interact(ctx context.Context, user string, in InteractionInput) (InteractionResult, error) {
 	if uuid.Validate(in.InstallationID) != nil || uuid.Validate(in.ChannelID) != nil {
-		return "", ErrInvalidInput
+		return InteractionResult{}, ErrInvalidInput
 	}
-	if e := CanReadChannel(ctx, in.ChannelID, user); e != nil {
-		return "", e
+	if err := CanReadChannel(ctx, in.ChannelID, user); err != nil {
+		return InteractionResult{}, err
 	}
-	if e := m.refreshHumanPlugin(ctx, in.InstallationID); e != nil {
-		return "", e
-	}
-	b, e := ResolvePluginSurfaceBundle(ctx, in.InstallationID)
-	if e != nil {
-		return "", e
+	b, err := ResolvePluginSurfaceBundle(ctx, in.InstallationID)
+	if err != nil {
+		return InteractionResult{}, err
 	}
 	switch in.Kind {
 	case "button":
-		if in.MessageID == "" || in.ComponentID == "" || in.ActionID != "" || in.TargetUserID != "" {
-			return "", ErrInvalidInput
-		}
-		msg, e := storage.GetMessageByID(ctx, in.MessageID)
-		if e != nil {
-			return "", ErrInvalidInput
-		}
-		if msg.ChannelID != in.ChannelID || msg.AppInstallationID == nil || *msg.AppInstallationID != in.InstallationID {
-			return "", ErrPermissionDenied
-		}
-		all, e := storage.AppComponents(ctx, []string{msg.ID})
-		if e != nil {
-			return "", e
-		}
-		found := false
-		for _, row := range all[msg.ID] {
-			for _, c := range row {
-				if c.ID == in.ComponentID && !c.Disabled && c.Opens == "" {
-					found = true
-				}
-			}
-		}
-		if !found {
-			return "", ErrInvalidInput
-		}
+		err = validateButtonInteraction(ctx, in)
 	case "user_action":
-		ch, e := storage.GetAppChannel(ctx, in.ChannelID)
-		if e != nil || ch.AppInstallationID != in.InstallationID {
-			return "", ErrPermissionDenied
-		}
-		if in.MessageID != "" || in.ComponentID != "" || in.TargetUserID == user || uuid.Validate(in.TargetUserID) != nil {
-			return "", ErrInvalidInput
-		}
-		if e = CanReadChannel(ctx, in.ChannelID, in.TargetUserID); e != nil {
-			return "", e
-		}
-		found := false
-		for _, a := range b.UserActions {
-			if a.ID == in.ActionID {
-				found = true
-			}
-		}
-		if !found {
-			return "", ErrInvalidInput
-		}
+		err = validateUserAction(ctx, user, in, b)
 	default:
-		return "", ErrInvalidInput
+		err = ErrInvalidInput
 	}
-	if e = m.limit("interaction:user:"+user, m.Config.Limits.InteractionsPerUser); e != nil {
-		return "", e
+	if err != nil {
+		return InteractionResult{}, err
 	}
-	if e = m.limit("interaction:plugin:"+in.InstallationID, m.Config.Limits.InteractionsPerPlugin); e != nil {
-		return "", e
+	if err = m.limit("interaction:user:"+user, m.Config.Limits.InteractionsPerUser); err != nil {
+		return InteractionResult{}, err
+	}
+	if err = m.limit("interaction:plugin:"+in.InstallationID, m.Config.Limits.InteractionsPerPlugin); err != nil {
+		return InteractionResult{}, err
 	}
 	id := uuid.NewString()
 	payload := map[string]any{"interaction_id": id, "kind": in.Kind, "user_id": user, "channel_id": in.ChannelID}
-	for k, v := range map[string]string{"message_id": in.MessageID, "component_id": in.ComponentID, "action_id": in.ActionID, "target_user_id": in.TargetUserID} {
+	optional := map[string]string{
+		"message_id":     in.MessageID,
+		"component_id":   in.ComponentID,
+		"action_id":      in.ActionID,
+		"target_user_id": in.TargetUserID,
+	}
+	for k, v := range optional {
 		if v != "" {
 			payload[k] = v
 		}
 	}
-	a, e := storage.GetApp(ctx, in.InstallationID)
-	if e != nil {
-		return "", e
+	out, err := m.HumanCall(ctx, b.AppKey, "on_interaction", jsonValue(payload), appHuman{UserID: user, ChannelID: in.ChannelID})
+	if err != nil {
+		return InteractionResult{}, err
 	}
-	_, e = m.HumanCall(ctx, a.AppKey, "on_interaction", jsonValue(payload), appHuman{user, in.ChannelID})
-	return id, e
+	return InteractionResult{InteractionID: id, Result: pluginResult(out)}, nil
+}
+
+// pluginResult extrai o result do envelope {"ok":true,"result":...} do guest.
+func pluginResult(out []byte) json.RawMessage {
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(out, &envelope) != nil || len(envelope.Result) == 0 {
+		return json.RawMessage("null")
+	}
+	return envelope.Result
+}
+
+// validateButtonInteraction exige um botão ativo, sem opens, de mensagem do
+// próprio plugin no canal informado.
+func validateButtonInteraction(ctx context.Context, in InteractionInput) error {
+	if in.MessageID == "" || in.ComponentID == "" || in.ActionID != "" || in.TargetUserID != "" {
+		return ErrInvalidInput
+	}
+	msg, err := storage.GetMessageByID(ctx, in.MessageID)
+	if err != nil {
+		return ErrInvalidInput
+	}
+	if msg.ChannelID != in.ChannelID || msg.AppInstallationID == nil || *msg.AppInstallationID != in.InstallationID {
+		return ErrPermissionDenied
+	}
+	all, err := storage.AppComponents(ctx, []string{msg.ID})
+	if err != nil {
+		return err
+	}
+	for _, row := range all[msg.ID] {
+		for _, c := range row {
+			if c.ID == in.ComponentID && !c.Disabled && c.Opens == "" {
+				return nil
+			}
+		}
+	}
+	return ErrInvalidInput
+}
+
+// validateUserAction exige uma ação declarada, no canal app do próprio plugin,
+// apontando para outro leitor do canal.
+func validateUserAction(ctx context.Context, user string, in InteractionInput, b PluginSurfaceBundle) error {
+	ch, err := storage.GetAppChannel(ctx, in.ChannelID)
+	if err != nil || ch.AppInstallationID != in.InstallationID {
+		return ErrPermissionDenied
+	}
+	if in.MessageID != "" || in.ComponentID != "" || in.TargetUserID == user || uuid.Validate(in.TargetUserID) != nil {
+		return ErrInvalidInput
+	}
+	if err = CanReadChannel(ctx, in.ChannelID, in.TargetUserID); err != nil {
+		return err
+	}
+	for _, a := range b.UserActions {
+		if a.ID == in.ActionID {
+			return nil
+		}
+	}
+	return ErrInvalidInput
 }
 
 // ValidateAppButtons impede referências a superfícies de outra instalação.
@@ -171,35 +233,25 @@ func ValidateAppButtons(ctx context.Context, id string, rows [][]models.AppButto
 	if len(rows) > 2 {
 		return ErrInvalidInput
 	}
-	seen := map[string]bool{}
 	var b PluginSurfaceBundle
-	var e error
 	if len(rows) > 0 {
-		b, e = ResolvePluginSurfaceBundle(ctx, id)
-		if e != nil {
-			return e
+		var err error
+		if b, err = ResolvePluginSurfaceBundle(ctx, id); err != nil {
+			return err
 		}
 	}
+	seen := map[string]bool{}
 	for _, row := range rows {
 		if len(row) == 0 || len(row) > 5 {
 			return ErrInvalidInput
 		}
 		for _, v := range row {
-			if v.ID == "" || len(v.ID) > 64 || seen[v.ID] || !utf8.ValidString(v.ID) || strings.TrimSpace(v.Label) == "" || !utf8.ValidString(v.Label) || utf8.RuneCountInString(v.Label) > 80 {
+			if !validButton(v) || seen[v.ID] {
 				return ErrInvalidInput
 			}
 			seen[v.ID] = true
-			if v.Style != "primary" && v.Style != "secondary" && v.Style != "danger" {
-				return ErrInvalidInput
-			}
 			if v.Opens != "" {
-				found := false
-				for _, s := range b.Surfaces {
-					if s.Kind == "embed" && s.ID == v.Opens {
-						found = true
-					}
-				}
-				if !found {
+				if _, err := embedSurface(b, v.Opens); err != nil {
 					return ErrInvalidInput
 				}
 			}
@@ -208,193 +260,242 @@ func ValidateAppButtons(ctx context.Context, id string, rows [][]models.AppButto
 	return nil
 }
 
+// validButton limita id, rótulo e estilo de um botão.
+func validButton(v models.AppButton) bool {
+	if v.ID == "" || len(v.ID) > 64 || !utf8.ValidString(v.ID) {
+		return false
+	}
+	if strings.TrimSpace(v.Label) == "" || !utf8.ValidString(v.Label) || utf8.RuneCountInString(v.Label) > 80 {
+		return false
+	}
+	return v.Style == "primary" || v.Style == "secondary" || v.Style == "danger"
+}
+
 // LaunchAppUI gera ticket de uso único após verificar a referência recebida pelo cliente.
 func (m *PluginManager) LaunchAppUI(ctx context.Context, user, id string, in LaunchInput) (map[string]any, error) {
-	if e := CanReadChannel(ctx, in.ChannelID, user); e != nil {
-		return nil, e
+	if err := CanReadChannel(ctx, in.ChannelID, user); err != nil {
+		return nil, err
 	}
-	b, e := ResolvePluginSurfaceBundle(ctx, id)
-	if e != nil {
-		return nil, e
+	b, err := ResolvePluginSurfaceBundle(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	found := false
-	var selected AppSurfaceDeclaration
-	for _, s := range b.Surfaces {
-		if s.ID != in.SurfaceID {
-			continue
-		}
-		selected = s
-		if s.Kind == "channel" {
-			ch, e := storage.GetAppChannel(ctx, in.ChannelID)
-			found = e == nil && ch.AppInstallationID == id && ch.SurfaceID == s.ID
-		} else if in.MessageID != "" {
-			msg, e := storage.GetMessageByID(ctx, in.MessageID)
-			if e != nil || msg.ChannelID != in.ChannelID || msg.AppInstallationID == nil || *msg.AppInstallationID != id {
-				return nil, ErrPermissionDenied
-			}
-			embeds, e := ListMessageEmbeds(ctx, []string{msg.ID})
-			if e != nil {
-				return nil, e
-			}
-			for _, v := range embeds[msg.ID] {
-				if v.Surface != nil && v.Surface.ID == s.ID {
-					found = true
-				}
-			}
-			buttons, e := storage.AppComponents(ctx, []string{msg.ID})
-			if e != nil {
-				return nil, e
-			}
-			for _, row := range buttons[msg.ID] {
-				for _, v := range row {
-					if v.Opens == s.ID && !v.Disabled {
-						found = true
-					}
-				}
-			}
-		}
-	}
-	if !found {
-		return nil, ErrPermissionDenied
+	selected, err := launchSurface(ctx, id, b, in)
+	if err != nil {
+		return nil, err
 	}
 	if in.InviteID != "" {
-		v, e := storage.GetAppInvite(ctx, in.InviteID, user)
-		if e != nil || v.Status != "accepted" || v.InstallationID != id || v.ChannelID != in.ChannelID {
+		v, err := storage.GetAppInvite(ctx, in.InviteID, user)
+		if err != nil || v.Status != "accepted" || v.InstallationID != id || v.ChannelID != in.ChannelID {
 			return nil, ErrPermissionDenied
 		}
 	}
-	if e = m.limit("launch:"+user, m.Config.Limits.LaunchPerUser); e != nil {
-		return nil, e
+	if err = m.limit("launch:"+user, m.Config.Limits.LaunchPerUser); err != nil {
+		return nil, err
 	}
-	secret, e := appSecret("pat_")
-	if e != nil {
-		return nil, e
+	secret, err := appSecret("pat_")
+	if err != nil {
+		return nil, err
 	}
-	generation, e := storage.AppUIGeneration(ctx, id)
-	if e != nil {
-		return nil, e
+	generation, err := storage.AppUIGeneration(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	t := models.AppUIToken{ID: uuid.NewString(), Hash: appHash(secret), Kind: "ticket", UserID: user, InstallationID: id, ChannelID: in.ChannelID, SurfaceID: in.SurfaceID, Digest: b.Digest, Generation: generation, ExpiresAt: time.Now().Add(60 * time.Second), AbsoluteExpiresAt: time.Now().Add(60 * time.Second)}
+	expires := time.Now().Add(appTicketTTL)
+	t := models.AppUIToken{
+		ID:                uuid.NewString(),
+		Hash:              appHash(secret),
+		Kind:              "ticket",
+		UserID:            user,
+		InstallationID:    id,
+		ChannelID:         in.ChannelID,
+		SurfaceID:         in.SurfaceID,
+		Digest:            b.Digest,
+		Generation:        generation,
+		ExpiresAt:         expires,
+		AbsoluteExpiresAt: expires,
+	}
 	if in.MessageID != "" {
 		t.MessageID = &in.MessageID
 	}
 	if in.InviteID != "" {
 		t.InviteID = &in.InviteID
 	}
-	if e = storage.SaveAppUIToken(ctx, t); e != nil {
-		return nil, e
+	if err = storage.SaveAppUIToken(ctx, t); err != nil {
+		return nil, err
 	}
 	entry := selected.Entry
-	poster := selected.Poster
 	if selected.Source == "bundled" {
 		entry = pluginAssetURL(id, b.Digest, entry)
 	}
+	poster := selected.Poster
 	if poster != "" {
 		poster = pluginAssetURL(id, b.Digest, poster)
 	}
+	surface := models.AppChannel{
+		AppInstallationID: id,
+		SurfaceID:         selected.ID,
+		Source:            selected.Source,
+		Entry:             entry,
+		AvatarURL:         "/apps/" + id + "/avatar",
+		Available:         true,
+	}
 	return map[string]any{
-		"ticket": secret, "expires_at": t.ExpiresAt,
-		"surface": models.AppChannel{AppInstallationID: id, SurfaceID: selected.ID, Source: selected.Source, Entry: entry, AvatarURL: "/apps/" + id + "/avatar", Available: true},
-		"display": selected.Display, "load": selected.Load, "size": selected.Size, "poster": poster,
+		"ticket":     secret,
+		"expires_at": t.ExpiresAt,
+		"surface":    surface,
+		"display":    selected.Display,
+		"load":       selected.Load,
+		"size":       selected.Size,
+		"poster":     poster,
 	}, nil
 }
 
-// validateUIToken refaz autorização em toda troca e chamada; falhas revogam os vínculos.
-func (m *PluginManager) validateUIToken(ctx context.Context, id, secret, kind string) (models.AppUIToken, error) {
-	t, e := storage.GetAppUIToken(ctx, appHash(secret), kind, id)
-	if e != nil {
-		return t, ErrAppSession
-	}
-	if e = m.refreshHumanPlugin(ctx, id); e != nil {
-		if transientPluginError(e) {
-			return t, e
+// launchSurface exige que a superfície pedida seja o canal app informado ou
+// esteja referenciada (frame ou botão opens ativo) na mensagem informada.
+func launchSurface(ctx context.Context, id string, b PluginSurfaceBundle, in LaunchInput) (AppSurfaceDeclaration, error) {
+	for _, s := range b.Surfaces {
+		if s.ID != in.SurfaceID {
+			continue
 		}
-		return t, ErrAppSession
+		if s.Kind == "channel" {
+			ch, err := storage.GetAppChannel(ctx, in.ChannelID)
+			if err == nil && ch.AppInstallationID == id && ch.SurfaceID == s.ID {
+				return s, nil
+			}
+			return AppSurfaceDeclaration{}, ErrPermissionDenied
+		}
+		if in.MessageID == "" {
+			return AppSurfaceDeclaration{}, ErrPermissionDenied
+		}
+		msg, err := storage.GetMessageByID(ctx, in.MessageID)
+		if err != nil || msg.ChannelID != in.ChannelID || msg.AppInstallationID == nil || *msg.AppInstallationID != id {
+			return AppSurfaceDeclaration{}, ErrPermissionDenied
+		}
+		embeds, err := ListMessageEmbeds(ctx, []string{msg.ID})
+		if err != nil {
+			return AppSurfaceDeclaration{}, err
+		}
+		for _, v := range embeds[msg.ID] {
+			if v.Surface != nil && v.Surface.ID == s.ID {
+				return s, nil
+			}
+		}
+		buttons, err := storage.AppComponents(ctx, []string{msg.ID})
+		if err != nil {
+			return AppSurfaceDeclaration{}, err
+		}
+		for _, row := range buttons[msg.ID] {
+			for _, v := range row {
+				if v.Opens == s.ID && !v.Disabled {
+					return s, nil
+				}
+			}
+		}
+		return AppSurfaceDeclaration{}, ErrPermissionDenied
 	}
-	b, e := ResolvePluginSurfaceBundle(ctx, id)
-	if transientPluginError(e) {
-		return t, e
+	return AppSurfaceDeclaration{}, ErrPermissionDenied
+}
+
+// validateUIToken refaz a autorização em toda troca e chamada: plugin
+// habilitado no mesmo digest, leitura do canal e convite ainda aceito. Perda
+// de leitura ou digest diferente apagam os tokens do usuário na instalação.
+func (m *PluginManager) validateUIToken(ctx context.Context, id, secret, kind string) (uiSession, error) {
+	t, err := storage.GetAppUIToken(ctx, appHash(secret), kind, id)
+	if err != nil {
+		return uiSession{}, ErrAppSession
 	}
-	if e != nil || b.Digest != t.Digest {
+	b, err := ResolvePluginSurfaceBundle(ctx, id)
+	if transientPluginError(err) {
+		return uiSession{}, err
+	}
+	if err != nil || b.Digest != t.Digest {
 		_ = storage.RevokeUserAppUI(ctx, t.UserID, id)
-		return t, ErrAppSession
+		return uiSession{}, ErrAppSession
 	}
-	if e = CanReadChannel(ctx, t.ChannelID, t.UserID); e != nil {
+	if err = CanReadChannel(ctx, t.ChannelID, t.UserID); err != nil {
 		_ = storage.RevokeUserAppUI(ctx, t.UserID, id)
-		return t, ErrAppSession
+		return uiSession{}, ErrAppSession
 	}
+	s := uiSession{token: t, appKey: b.AppKey}
 	if t.InviteID != nil {
-		v, e := storage.GetAppInvite(ctx, *t.InviteID, t.UserID)
-		if e != nil || v.Status != "accepted" {
-			return t, ErrAppSession
+		v, err := storage.GetAppInvite(ctx, *t.InviteID, t.UserID)
+		if err != nil || v.Status != "accepted" {
+			return uiSession{}, ErrAppSession
 		}
+		s.invite = &v
 	}
-	return t, nil
+	return s, nil
 }
 
 // ExchangeAppTicket consome atomicamente o ticket e guarda somente o hash da sessão.
 func (m *PluginManager) ExchangeAppTicket(ctx context.Context, id, secret string) (map[string]any, error) {
-	t, e := m.validateUIToken(ctx, id, secret, "ticket")
-	if e != nil {
-		return nil, e
+	s, err := m.validateUIToken(ctx, id, secret, "ticket")
+	if err != nil {
+		return nil, err
 	}
-	ok, e := storage.ConsumeAppTicket(ctx, t.ID)
-	if e != nil {
-		return nil, e
+	t := s.token
+	ok, err := storage.ConsumeAppTicket(ctx, t.ID)
+	if err != nil {
+		return nil, err
 	}
 	if !ok {
 		return nil, ErrAppSession
 	}
-	secret, e = appSecret("pas_")
-	if e != nil {
-		return nil, e
+	secret, err = appSecret("pas_")
+	if err != nil {
+		return nil, err
 	}
 	t.ID = uuid.NewString()
 	t.Hash = appHash(secret)
 	t.Kind = "session"
-	t.ExpiresAt = time.Now().Add(30 * time.Minute)
-	t.AbsoluteExpiresAt = time.Now().Add(8 * time.Hour)
-	if e = storage.SaveAppUIToken(ctx, t); e != nil {
-		return nil, e
+	t.ExpiresAt = time.Now().Add(appSessionIdle)
+	t.AbsoluteExpiresAt = time.Now().Add(appSessionMax)
+	if err = storage.SaveAppUIToken(ctx, t); err != nil {
+		return nil, err
 	}
-	return map[string]any{"token": secret, "session_id": t.ID, "expires_at": t.ExpiresAt, "absolute_expires_at": t.AbsoluteExpiresAt}, nil
+	return map[string]any{
+		"token":               secret,
+		"session_id":          t.ID,
+		"expires_at":          t.ExpiresAt,
+		"absolute_expires_at": t.AbsoluteExpiresAt,
+	}, nil
 }
 
-// AppRPC usa identidade verificada e estende somente uma chamada válida.
+// AppRPC entrega on_ui_call com a identidade verificada da sessão e só renova
+// a inatividade depois de uma chamada válida. A renovação exige, no próprio
+// UPDATE, a mesma geração e o plugin habilitado, então uma sessão revogada
+// durante a chamada não é estendida.
 func (m *PluginManager) AppRPC(ctx context.Context, id, secret, method string, params json.RawMessage) ([]byte, error) {
 	if method == "" || len(method) > 100 || len(params) > 32768 || !json.Valid(params) {
 		return nil, ErrInvalidInput
 	}
-	t, e := m.validateUIToken(ctx, id, secret, "session")
-	if e != nil {
-		return nil, e
+	s, err := m.validateUIToken(ctx, id, secret, "session")
+	if err != nil {
+		return nil, err
 	}
-	if e = m.limit("rpc:session:"+t.ID, m.Config.Limits.RPCPerSession); e != nil {
-		return nil, e
+	t := s.token
+	if err = m.limit("rpc:session:"+t.ID, m.Config.Limits.RPCPerSession); err != nil {
+		return nil, err
 	}
-	if e = m.limit("rpc:plugin:"+id, m.Config.Limits.RPCPerPlugin); e != nil {
-		return nil, e
+	if err = m.limit("rpc:plugin:"+id, m.Config.Limits.RPCPerPlugin); err != nil {
+		return nil, err
 	}
-	input := map[string]any{"user_id": t.UserID, "channel_id": t.ChannelID, "session_id": t.ID, "method": method, "params": params}
-	if t.InviteID != nil {
-		v, e := storage.GetAppInvite(ctx, *t.InviteID, t.UserID)
-		if e != nil {
-			return nil, ErrAppSession
-		}
-		input["invite"] = v
+	input := map[string]any{
+		"user_id":    t.UserID,
+		"channel_id": t.ChannelID,
+		"session_id": t.ID,
+		"method":     method,
+		"params":     params,
 	}
-	a, e := storage.GetApp(ctx, id)
-	if e != nil {
-		return nil, e
+	if s.invite != nil {
+		input["invite"] = *s.invite
 	}
-	out, e := m.HumanCall(ctx, a.AppKey, "on_ui_call", jsonValue(input), appHuman{t.UserID, t.ChannelID})
-	if e != nil {
-		return nil, e
+	out, err := m.HumanCall(ctx, s.appKey, "on_ui_call", jsonValue(input), appHuman{UserID: t.UserID, ChannelID: t.ChannelID})
+	if err != nil {
+		return nil, err
 	}
-	if _, e = m.validateUIToken(ctx, id, secret, "session"); e != nil {
-		return nil, e
-	}
-	if e = storage.TouchAppSession(ctx, t.ID, 30*time.Minute); e != nil {
+	if err = storage.TouchAppSession(ctx, t.ID, appSessionIdle); err != nil {
 		return nil, ErrAppSession
 	}
 	return out, nil
@@ -402,36 +503,65 @@ func (m *PluginManager) AppRPC(ctx context.Context, id, secret, method string, p
 
 // SendAppInvite aceita apenas callbacks com identidade humana verificada.
 func (m *PluginManager) SendAppInvite(ctx context.Context, a models.AppInstallation, target, text string, data json.RawMessage) (models.AppInvite, error) {
-	var empty models.AppInvite
 	h, ok := ctx.Value(appHumanKey{}).(appHuman)
 	if !ok || !a.Capabilities.SendInvites {
-		return empty, ErrPermissionDenied
+		return models.AppInvite{}, ErrPermissionDenied
 	}
-	ch, e := storage.GetAppChannel(ctx, h.ChannelID)
-	if e != nil || ch.AppInstallationID != a.ID {
-		return empty, ErrPermissionDenied
+	ch, err := storage.GetAppChannel(ctx, h.ChannelID)
+	if err != nil || ch.AppInstallationID != a.ID {
+		return models.AppInvite{}, ErrPermissionDenied
 	}
-	if target == h.UserID || uuid.Validate(target) != nil || strings.TrimSpace(text) == "" || utf8.RuneCountInString(text) > 500 || !utf8.ValidString(text) || len(data) > 8192 || !json.Valid(data) {
-		return empty, ErrInvalidInput
+	if target == h.UserID || uuid.Validate(target) != nil {
+		return models.AppInvite{}, ErrInvalidInput
 	}
-	if e = CanReadChannel(ctx, h.ChannelID, h.UserID); e != nil {
-		return empty, e
+	if strings.TrimSpace(text) == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > 500 {
+		return models.AppInvite{}, ErrInvalidInput
 	}
-	if e = CanReadChannel(ctx, h.ChannelID, target); e != nil {
-		return empty, e
+	if len(data) > 8192 || !json.Valid(data) {
+		return models.AppInvite{}, ErrInvalidInput
 	}
-	if e = m.limit("invite:sender:"+h.UserID, m.Config.Limits.InvitesPerSender); e != nil {
-		return empty, e
+	if err = CanReadChannel(ctx, h.ChannelID, h.UserID); err != nil {
+		return models.AppInvite{}, err
 	}
-	if e = m.limit("invite:target:"+target, m.Config.Limits.InvitesPerTarget); e != nil {
-		return empty, e
+	if err = CanReadChannel(ctx, h.ChannelID, target); err != nil {
+		return models.AppInvite{}, err
 	}
-	v := models.AppInvite{SurfaceID: ch.SurfaceID, ID: uuid.NewString(), UserID: target, InstallationID: a.ID, InviterID: h.UserID, ChannelID: h.ChannelID, Text: text, Data: data, Status: "pending", ExpiresAt: time.Now().Add(m.Config.InviteTTL)}
-	push := jsonValue(map[string]any{"type": "app_invite", "notification_id": v.ID, "app_installation_id": a.ID, "channel_id": h.ChannelID, "author": a.Name, "preview": text})
-	if e = storage.CreateAppInvite(ctx, v, string(push)); e != nil {
-		return empty, e
+	if err = m.limit("invite:sender:"+h.UserID, m.Config.Limits.InvitesPerSender); err != nil {
+		return models.AppInvite{}, err
 	}
-	RecordAudit(ctx, AuditEntry{ActorID: h.UserID, Action: ActionAppInviteSend, EntityType: EntityApp, EntityID: &a.ID, TargetUserID: &target})
+	if err = m.limit("invite:target:"+target, m.Config.Limits.InvitesPerTarget); err != nil {
+		return models.AppInvite{}, err
+	}
+	v := models.AppInvite{
+		SurfaceID:      ch.SurfaceID,
+		ID:             uuid.NewString(),
+		UserID:         target,
+		InstallationID: a.ID,
+		InviterID:      h.UserID,
+		ChannelID:      h.ChannelID,
+		Text:           text,
+		Data:           data,
+		Status:         "pending",
+		ExpiresAt:      time.Now().Add(m.Config.InviteTTL),
+	}
+	push := jsonValue(map[string]any{
+		"type":                "app_invite",
+		"notification_id":     v.ID,
+		"app_installation_id": a.ID,
+		"channel_id":          h.ChannelID,
+		"author":              a.Name,
+		"preview":             text,
+	})
+	if err = storage.CreateAppInvite(ctx, v, string(push)); err != nil {
+		return models.AppInvite{}, err
+	}
+	RecordAudit(ctx, AuditEntry{
+		ActorID:      h.UserID,
+		Action:       ActionAppInviteSend,
+		EntityType:   EntityApp,
+		EntityID:     &a.ID,
+		TargetUserID: &target,
+	})
 	if m.Effects.Invite != nil {
 		m.Effects.Invite(ctx, v)
 	}
@@ -440,23 +570,29 @@ func (m *PluginManager) SendAppInvite(ctx context.Context, a models.AppInstallat
 
 // DecideInvite valida acesso antes da decisão e não entrega ticket automaticamente.
 func (m *PluginManager) DecideInvite(ctx context.Context, user, id, status string) (models.AppInvite, error) {
-	v, e := storage.GetAppInvite(ctx, id, user)
-	if e != nil {
+	v, err := storage.GetAppInvite(ctx, id, user)
+	if err != nil {
 		return v, ErrNotificationNotFound
 	}
 	if status == "accepted" {
-		if e = CanReadChannel(ctx, v.ChannelID, user); e != nil {
-			return v, e
+		if err = CanReadChannel(ctx, v.ChannelID, user); err != nil {
+			return v, err
 		}
-		if _, e = ResolvePluginSurfaceBundle(ctx, v.InstallationID); e != nil {
-			return v, e
+		if _, err = ResolvePluginSurfaceBundle(ctx, v.InstallationID); err != nil {
+			return v, err
 		}
 	}
-	if e = storage.DecideAppInvite(ctx, id, user, status); e != nil {
+	if err = storage.DecideAppInvite(ctx, id, user, status); err != nil {
 		return v, ErrInvalidInput
 	}
 	v.Status = status
-	RecordAudit(ctx, AuditEntry{ActorID: user, Action: ActionAppInviteDecide, EntityType: EntityApp, EntityID: &v.InstallationID, Metadata: map[string]any{"decision": status}})
+	RecordAudit(ctx, AuditEntry{
+		ActorID:    user,
+		Action:     ActionAppInviteDecide,
+		EntityType: EntityApp,
+		EntityID:   &v.InstallationID,
+		Metadata:   map[string]any{"decision": status},
+	})
 	return v, nil
 }
 
@@ -477,8 +613,8 @@ func (m *PluginManager) StartInteractionCleanup(parent context.Context) func() {
 			case <-ticker.C:
 				m.limits.sweep(time.Now())
 				c, stop := context.WithTimeout(ctx, 10*time.Second)
-				if e := storage.CleanAppInteractions(c); e != nil && !errors.Is(e, context.Canceled) {
-					utils.Errorf("limpeza de interações: %v", e)
+				if err := storage.CleanAppInteractions(c); err != nil && !errors.Is(err, context.Canceled) {
+					utils.Errorf("limpeza de interações: %v", err)
 				}
 				stop()
 			}
@@ -489,25 +625,12 @@ func (m *PluginManager) StartInteractionCleanup(parent context.Context) func() {
 
 // SetPluginInviteMute altera a preferência do próprio usuário para uma instalação existente.
 func SetPluginInviteMute(ctx context.Context, user, id string, muted bool) error {
-	a, e := storage.GetApp(ctx, id)
-	if e != nil {
+	a, err := storage.GetApp(ctx, id)
+	if err != nil {
 		return ErrAppNotFound
 	}
 	if a.Kind != "plugin" {
 		return ErrInvalidInput
 	}
 	return storage.SetAppInviteMute(ctx, user, id, muted)
-}
-
-// refreshHumanPlugin confirma que a instalação está habilitada antes de uma
-// chamada humana. Versões novas chegam por Rescan/Watch, nunca pela chamada.
-func (m *PluginManager) refreshHumanPlugin(ctx context.Context, id string) error {
-	a, err := activeApp(ctx, id)
-	if err != nil {
-		return err
-	}
-	if a.Kind != "plugin" || a.PluginState != "enabled" || a.LifecyclePending {
-		return ErrPermissionDenied
-	}
-	return nil
 }

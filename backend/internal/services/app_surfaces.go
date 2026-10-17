@@ -28,6 +28,8 @@ var ErrAppChannelManaged = errors.New("este canal pertence a um app; desative o 
 
 // PluginSurfaceBundle contém apenas metadados aprovados; não executa código do plugin.
 type PluginSurfaceBundle struct {
+	// AppKey é o id do plugin (nome da pasta), usado para invocá-lo.
+	AppKey          string
 	UserActions     []models.AppUserAction
 	Directory       string
 	Digest          string

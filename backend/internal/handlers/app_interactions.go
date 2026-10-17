@@ -62,11 +62,11 @@ func RegisterAppInteractionRoutes(e *echo.Echo, base string, m *services.PluginM
 			return interactionProblem(c, base, er)
 		}
 		user, _ := c.Get(middleware.UserIDContextKey).(string)
-		id, er := m.Interact(c.Request().Context(), user, in)
+		result, er := m.Interact(c.Request().Context(), user, in)
 		if er != nil {
 			return interactionProblem(c, base, er)
 		}
-		return c.JSON(202, map[string]string{"interaction_id": id})
+		return c.JSON(200, result)
 	}, middleware.JWTMiddleware)
 	e.POST("/apps/:app_id/launch", func(c echo.Context) error {
 		var in services.LaunchInput

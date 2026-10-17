@@ -178,7 +178,7 @@ def main():
                 "app_installation_id": app_id, "channel_id": app_channel["id"],
                 "kind": "user_action", "action_id": "convidar", "target_user_id": player["id"],
             })
-            assert status == 202
+            assert status == 200
             cookie = player_cookie
             _, notifications, _ = request("GET", f"/users/{player['id']}/notifications")
             invite = next(n for n in notifications["notifications"] if n["kind"] == "app_invite")
@@ -242,7 +242,7 @@ def main():
             game_message = next(m for m in chat["messages"] if m["id"] == final["game"]["message_id"])
             assert game_message["components"][0][1]["opens"] == "result"
             assert game_message["embeds"][0]["display"] == "overlay"
-            assert request("POST", "/interactions", {"app_installation_id": app_id, "channel_id": channel["id"], "kind": "button", "message_id": game_message["id"], "component_id": "revanche"})[0] == 202
+            assert request("POST", "/interactions", {"app_installation_id": app_id, "channel_id": channel["id"], "kind": "button", "message_id": game_message["id"], "component_id": "revanche"})[0] == 200
             assert rpc(player_token, "game.state")["game"]["winner"] == ""
             print("PASS: message components and opens overlay; Revanche resets persisted game")
             _, only, _ = request("POST", "/plugins/reference/trigger", {"request": {

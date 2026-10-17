@@ -3754,16 +3754,17 @@ paths:
       summary: Executar botão ou ação de usuário
       description: Valida leitura, plugin habilitado e seletor existente. on_interaction
         recebe identidades verificadas. Botões com opens não usam esta rota. Prazo padrão
-        de 3 s, com limites por usuário e instalação.
+        de 3 s, com limites por usuário e instalação. A resposta é síncrona e leva o
+        result devolvido pelo on_interaction, visível somente a quem clicou.
       security:
       - cookieAuth: []
       responses:
-        '202':
-          description: Operação concluída
+        '200':
+          description: on_interaction concluído
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AppInteractionAccepted'
+                $ref: '#/components/schemas/AppInteractionResult'
         '400':
           description: Parâmetros inválidos
         '401':
@@ -6899,14 +6900,19 @@ components:
         absolute_expires_at:
           type: string
           format: date-time
-    AppInteractionAccepted:
+    AppInteractionResult:
       type: object
       additionalProperties: false
-      required: []
+      required: [interaction_id, result]
       properties:
         interaction_id:
           type: string
           format: uuid
+        result:
+          description: >
+            Valor de result no envelope {"ok":true,"result":...} do on_interaction,
+            sem alteração; null quando o plugin não devolve result.
+          nullable: true
 
     AppUserProfile:
       type: object

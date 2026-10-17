@@ -35,8 +35,11 @@ Mantém exports alloc/free/invoke e o import papo_host_v1.call. Novos tipos de e
 Interação de botão substitui action_id/target_user_id por message_id/component_id.
 `invite` é opcional e vem do convite aceito pelo destinatário. Nunca recebe
 identidade ou token fornecido dentro de params. Resposta segue `{ok,result,error}`.
-Callbacks usam a mesma fila, fronteira de hot reload, memória, circuito e limites
-de host calls do trigger. O prazo externo é 3 s configurável; o teto Wasm global
+O `result` de on_interaction volta sem alteração na resposta de `POST /interactions`
+(`{"interaction_id":...,"result":...}`), somente para quem clicou; use-o para
+feedback individual, e mensagens (`message.send`/`message.edit`) para o que todos
+devem ver. Callbacks usam a mesma fila, memória, circuito e limites de host calls
+do trigger. O prazo externo é 3 s configurável; o teto Wasm global
 pode interromper antes. Timeout HTTP responde 504 com erro curto em português.
 Efeitos já confirmados não são revertidos após falha posterior do guest.
 
@@ -58,7 +61,7 @@ Push conserva a outbox e inclui o tipo e a instalação, sem credenciais.
 
 | Método | Rota | Autorização |
 |---|---|---|
-| POST | /interactions | Sessão humana; valida seletor e leitura; 202 |
+| POST | /interactions | Sessão humana; valida seletor e leitura; 200 com o `result` do plugin |
 | POST | /notifications/:id/accept | Destinatário; retorna contexto canal/superfície |
 | POST | /notifications/:id/decline | Destinatário |
 | PATCH | /apps/:installation_id/user-settings | Sessão humana; invites_muted |
