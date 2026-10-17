@@ -2,14 +2,9 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"papo/internal/models"
 	"papo/internal/storage"
-	"papo/internal/utils"
 )
 
 // ErrAppNotFound indica instalação inexistente ou revogada na gestão.
@@ -39,17 +33,6 @@ func validAppName(name string, limit int) bool {
 	return true
 }
 
-// newAppToken gera 32 bytes aleatórios e retorna somente seu hash para persistência.
-func newAppToken() (string, string, error) {
-	data := make([]byte, 32)
-	if _, err := rand.Read(data); err != nil {
-		return "", "", err
-	}
-	token := hex.EncodeToString(data)
-	sum := sha256.Sum256([]byte(token))
-	return token, hex.EncodeToString(sum[:]), nil
-}
-
 // CreateApp instala uma identidade do servidor; somente remote recebe token uma vez.
 func CreateApp(ctx context.Context, actor, key, kind, name string, caps models.AppCapabilities) (models.AppInstallation, string, error) {
 	if !validAppName(name, 80) || !validAppName(key, 200) || (kind != "remote" && kind != "plugin") {
@@ -58,7 +41,7 @@ func CreateApp(ctx context.Context, actor, key, kind, name string, caps models.A
 	var hash *string
 	token := ""
 	if kind == "remote" {
-		plain, hashed, err := newAppToken()
+		plain, hashed, err := newMachineToken()
 		if err != nil {
 			return models.AppInstallation{}, "", err
 		}
@@ -126,7 +109,7 @@ func UpdateApp(ctx context.Context, actorID, appID string, name *string, capabil
 		return models.AppInstallation{}, ErrAppNotFound
 	}
 
-	var nameArg, displayNameArg, avatarArg any
+	var nameArg, displayNameArg any
 	if name != nil {
 		if !validAppName(*name, 80) {
 			return models.AppInstallation{}, ErrInvalidInput
@@ -145,27 +128,9 @@ func UpdateApp(ctx context.Context, actorID, appID string, name *string, capabil
 		}
 	}
 
-	if avatar != nil {
-		if *avatar == "" {
-			avatarArg = sql.NullString{Valid: false}
-		} else {
-			decoded, err := base64.StdEncoding.DecodeString(*avatar)
-			if err != nil {
-				return models.AppInstallation{}, ErrInvalidInput
-			}
-			upperFormat := normalizeImageFormat(avatarFormat)
-			if !avatarContentMatchesFormat(decoded, upperFormat) || len(decoded) > maxAvatarBytes {
-				return models.AppInstallation{}, ErrInvalidInput
-			}
-			if err := utils.ValidateImage(decoded, utils.MaxImageDimension); err != nil {
-				return models.AppInstallation{}, ErrInvalidInput
-			}
-			sha, _, err := StoreMediaFromBytes(ctx, decoded, formatToMime(upperFormat))
-			if err != nil {
-				return models.AppInstallation{}, fmt.Errorf("falha ao gravar o avatar do app: %w", err)
-			}
-			avatarArg = sql.NullString{String: sha, Valid: true}
-		}
+	avatarArg, err := machineAvatarArg(ctx, avatar, avatarFormat, "app")
+	if err != nil {
+		return models.AppInstallation{}, err
 	}
 
 	app, err := storage.UpdateApp(ctx, appID, nameArg, displayNameArg, avatarArg, capabilities)
@@ -213,7 +178,7 @@ func RotateAppToken(ctx context.Context, actor, id string) (string, error) {
 	if a.Kind != "remote" {
 		return "", ErrInvalidInput
 	}
-	token, hash, err := newAppToken()
+	token, hash, err := newMachineToken()
 	if err != nil {
 		return "", err
 	}
@@ -287,8 +252,7 @@ func RemoveAppScope(ctx context.Context, actor, id, channelID string) error {
 
 // AuthenticateApp aceita somente o segredo remoto e compara o hash em tempo constante.
 func AuthenticateApp(ctx context.Context, token string) (models.AppInstallation, error) {
-	sum := sha256.Sum256([]byte(token))
-	hash := hex.EncodeToString(sum[:])
+	hash := machineTokenHash(token)
 	a, stored, err := storage.GetActiveAppByHash(ctx, hash)
 	if err != nil || token == "" || subtle.ConstantTimeCompare([]byte(hash), []byte(stored)) != 1 {
 		return models.AppInstallation{}, ErrAppUnauthorized
