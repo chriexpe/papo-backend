@@ -20,15 +20,16 @@ type SearchRequest struct {
 // SearchResult é um resultado da busca (POST /search). Type é sempre
 // "message". Score é preenchido apenas quando a busca tem termo de texto.
 type SearchResult struct {
-	Type           string    `json:"type"`
-	ID             string    `json:"id"`
-	Content        *string   `json:"content"`
-	ChannelID      string    `json:"channel_id"`
-	ChannelName    string    `json:"channel_name"`
-	AuthorID       *string   `json:"author_id"`
-	AuthorUsername *string   `json:"author_username"`
-	CreatedAt      time.Time `json:"created_at"`
-	Score          *float64  `json:"score,omitempty"`
+	Type           string              `json:"type"`
+	ID             string              `json:"id"`
+	Content        *string             `json:"content"`
+	ChannelID      string              `json:"channel_id"`
+	ChannelName    string              `json:"channel_name"`
+	AuthorID       *string             `json:"author_id"`
+	AuthorUsername *string             `json:"author_username"`
+	CreatedAt      time.Time           `json:"created_at"`
+	Score          *float64            `json:"score,omitempty"`
+	Attachments    []MessageAttachment `json:"attachments"`
 }
 
 // SearchResponse é a resposta de POST /search (paginada: até 100 resultados

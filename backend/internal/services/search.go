@@ -133,5 +133,29 @@ func SearchMessages(ctx context.Context, req models.SearchRequest, since *time.T
 		results = results[:searchResultLimit]
 	}
 
+	messageIDs := make([]string, 0, len(results))
+	for _, result := range results {
+		messageIDs = append(messageIDs, result.ID)
+	}
+	attachmentsByMessage, err := storage.ListMessageAttachmentsByMessageIDs(ctx, messageIDs)
+	if err != nil {
+		return models.SearchResponse{}, err
+	}
+	attachmentIDs := make([]string, 0)
+	for _, attachments := range attachmentsByMessage {
+		for _, attachment := range attachments {
+			attachmentIDs = append(attachmentIDs, attachment.ID)
+		}
+	}
+	thumbnails, err := storage.ListThumbnailsByAttachmentIDs(ctx, attachmentIDs)
+	if err != nil {
+		return models.SearchResponse{}, err
+	}
+	for i := range results {
+		attachments := attachmentsByMessage[results[i].ID]
+		setAttachmentThumbnails(&attachments, thumbnails)
+		results[i].Attachments = attachments
+	}
+
 	return models.SearchResponse{Results: results, HasMore: hasMore}, nil
 }

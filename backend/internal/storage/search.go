@@ -31,6 +31,48 @@ type SearchParams struct {
 	Limit              int
 }
 
+// ListMessageAttachmentsByMessageIDs carrega os attachments públicos de um
+// conjunto de mensagens em uma única query, evitando N+1 nos resultados.
+func ListMessageAttachmentsByMessageIDs(ctx context.Context, messageIDs []string) (map[string][]models.MessageAttachment, error) {
+	out := make(map[string][]models.MessageAttachment, len(messageIDs))
+	if len(messageIDs) == 0 {
+		return out, nil
+	}
+
+	rows, err := GetDB().QueryContext(ctx, `
+		SELECT a.messages_id, a.id, m.mime_type, a.original_file_name,
+		       m.size_bytes, a.created_at, a.moderation_status
+		FROM attachments a
+		JOIN media m ON m.sha_hash = a.media_sha_hash
+		WHERE a.messages_id = ANY($1)
+		ORDER BY a.messages_id, a.created_at, a.id`, messageIDs)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao listar attachments dos resultados: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var messageID string
+		var attachment models.MessageAttachment
+		if err := rows.Scan(
+			&messageID,
+			&attachment.ID,
+			&attachment.MimeType,
+			&attachment.OriginalFileName,
+			&attachment.SizeBytes,
+			&attachment.CreatedAt,
+			&attachment.ModerationStatus,
+		); err != nil {
+			return nil, fmt.Errorf("falha ao ler attachment de resultado: %w", err)
+		}
+		out[messageID] = append(out[messageID], attachment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("falha ao listar attachments dos resultados: %w", err)
+	}
+	return out, nil
+}
+
 // SearchMessages busca mensagens com full-text search e filtros combináveis,
 // retornando apenas mensagens de canais legíveis pelo usuário: dono do
 // servidor, canais abertos (sem permissões definidas) ou canais em que uma
