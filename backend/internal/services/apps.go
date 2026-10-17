@@ -397,7 +397,8 @@ func DeleteAppMessage(ctx context.Context, a models.AppInstallation, channelID, 
 	return channelID, nil
 }
 
-// ListAppMessages monta o histórico completo sem consultar reações de um usuário fictício.
+// ListAppMessages monta o histórico com a mesma hidratação em lote da listagem
+// humana, sem reações próprias (o app não é usuário).
 func ListAppMessages(ctx context.Context, a models.AppInstallation, channelID string, since *time.Time, lastID, order string, limit int) (models.MessageList, error) {
 	if _, err := authorizeApp(ctx, a, channelID, true); err != nil {
 		return models.MessageList{}, err
@@ -424,11 +425,8 @@ func ListAppMessages(ctx context.Context, a models.AppInstallation, channelID st
 	if more {
 		items = items[:limit]
 	}
-	for i := range items {
-		items[i], err = messageWithRelations(ctx, items[i].Message)
-		if err != nil {
-			return models.MessageList{}, err
-		}
+	if err := hydrateMessages(ctx, items, ""); err != nil {
+		return models.MessageList{}, err
 	}
 	return models.MessageList{ChannelID: channelID, Messages: items, HasMore: more}, nil
 }
