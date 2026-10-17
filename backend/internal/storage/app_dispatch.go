@@ -153,7 +153,7 @@ func DispatchAppEvents(ctx context.Context, limit, cap int) (int, error) {
 
 // PruneAppEvents expira snapshots, inclusive claims ainda não atribuídos, em lotes.
 // Antes de apagar um fato expirado, registra a lacuna nos destinatários elegíveis.
-// O piso permite que o gateway futuro responda resync_required em vez de perder dados silenciosamente.
+// O piso permite responder resync_required em vez de perder dados silenciosamente.
 func PruneAppEvents(ctx context.Context, retention time.Duration, limit, cap int) (int, error) {
 	if retention <= 0 {
 		retention = DefaultAppEventRetention
@@ -276,7 +276,7 @@ type AppEventDelivery struct {
 }
 
 // ListAppEventDeliveries revalida leitura e escopo no momento da consulta.
-// O gateway deverá repetir essa consulta imediatamente antes do envio, sem cache de payloads.
+// A leitura de cada entrega repete essa consulta imediatamente antes do envio, sem cache de payloads.
 // Tombstones exigem somente instalação ativa; conteúdo perde autorização sem escopo.
 func ListAppEventDeliveries(ctx context.Context, installationID string, after int64, limit int) ([]AppEventDelivery, error) {
 	if limit <= 0 || limit > 100 {
