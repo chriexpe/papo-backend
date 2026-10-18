@@ -39,11 +39,13 @@ type ChannelPermissionEntry struct {
 // ChannelLastMessage é a última mensagem de um canal, como exibida na
 // listagem de canais.
 type ChannelLastMessage struct {
-	ID             string    `json:"id"`
-	Content        *string   `json:"content"`
-	AuthorID       *string   `json:"author_id"`
-	AuthorUsername *string   `json:"author_username"`
-	CreatedAt      time.Time `json:"created_at"`
+	AppInstallationID *string         `json:"app_installation_id,omitempty"`
+	ExternalAuthor    *ExternalAuthor `json:"external_author,omitempty"`
+	ID                string          `json:"id"`
+	Content           *string         `json:"content"`
+	AuthorID          *string         `json:"author_id"`
+	AuthorUsername    *string         `json:"author_username"`
+	CreatedAt         time.Time       `json:"created_at"`
 }
 
 // ChannelSummary é a visão de canal exposta pela API (GET /channels e

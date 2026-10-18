@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"papo/internal/config"
+	"papo/internal/models"
 	"papo/internal/storage"
 )
 
@@ -589,6 +590,32 @@ func TestCleanupMediaKeepsWebhookAvatar(t *testing.T) {
 	}
 	if mediaRowExists(t, unreferenced) {
 		t.Errorf("row antiga sem referência deveria ter sido removida")
+	}
+}
+
+// TestCleanupMediaKeepsAppAvatar aplica ao avatar de um app a mesma regra do
+// avatar de webhook: a referência mantém a row e o GC não é abortado.
+func TestCleanupMediaKeepsAppAvatar(t *testing.T) {
+	withTempMediaDir(t)
+
+	avatar := randHex(32)
+	insertOldMediaRow(t, avatar)
+	writeMediaBlob(t, avatar, []byte("avatar do app"))
+	user := newWebhookTestUser(t)
+	app, _, err := CreateApp(testCtx(), user.ID, "gc_"+randHex(4), "remote", "App", models.AppCapabilities{})
+	if err != nil {
+		t.Fatalf("falha ao criar app de apoio: %v", err)
+	}
+	if _, err := storage.GetDB().ExecContext(testCtx(),
+		"UPDATE app_installations SET avatar_media = $2 WHERE id = $1", app.ID, avatar); err != nil {
+		t.Fatalf("falha ao referenciar a mídia no avatar do app: %v", err)
+	}
+
+	if err := cleanupMedia(testCtx()); err != nil {
+		t.Fatalf("cleanupMedia retornou erro: %v", err)
+	}
+	if !mediaRowExists(t, avatar) {
+		t.Errorf("row do avatar do app deveria ter sido mantida")
 	}
 }
 

@@ -82,6 +82,18 @@ func AddReaction(ctx context.Context, messageID, userID string, emojiID, unicode
 	}
 	defer tx.Rollback()
 
+	reaction, created, count, err := addReactionInTx(ctx, tx, messageID, userID, emojiID, unicode)
+	if err != nil {
+		return models.MessageReaction{}, false, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.MessageReaction{}, false, 0, fmt.Errorf("falha ao reagir: %w", err)
+	}
+	notifyAppEvents()
+	return reaction, created, count, nil
+}
+
+func addReactionInTx(ctx context.Context, tx *sql.Tx, messageID, userID string, emojiID, unicode *string) (models.MessageReaction, bool, int, error) {
 	if _, err := tx.ExecContext(ctx,
 		"SELECT pg_advisory_xact_lock(hashtext($1))",
 		reactionLockKeyPrefix+messageID,
@@ -143,10 +155,9 @@ func AddReaction(ctx context.Context, messageID, userID string, emojiID, unicode
 		return models.MessageReaction{}, false, 0, err
 	}
 
-	if err := tx.Commit(); err != nil {
-		return models.MessageReaction{}, false, 0, fmt.Errorf("falha ao reagir: %w", err)
+	if err := createReactionEventInTx(ctx, tx, "reaction.added", messageID, userID, emojiID, unicode); err != nil {
+		return models.MessageReaction{}, false, 0, err
 	}
-
 	return reaction, true, count, nil
 }
 
@@ -155,8 +166,24 @@ func AddReaction(ctx context.Context, messageID, userID string, emojiID, unicode
 // é o número de usuários que reagiram com aquele emoji após a remoção (0
 // quando era o último).
 func RemoveReaction(ctx context.Context, messageID, userID string, emojiID, unicode *string) (int, error) {
-	db := GetDB()
-	res, err := db.ExecContext(ctx,
+	tx, err := GetDB().BeginTx(ctx, nil)
+	if err != nil {
+		return 0, mapStorageError(err)
+	}
+	defer tx.Rollback()
+	count, err := removeReactionInTx(ctx, tx, messageID, userID, emojiID, unicode)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, mapStorageError(err)
+	}
+	notifyAppEvents()
+	return count, nil
+}
+
+func removeReactionInTx(ctx context.Context, tx *sql.Tx, messageID, userID string, emojiID, unicode *string) (int, error) {
+	res, err := tx.ExecContext(ctx,
 		"DELETE FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji_id IS NOT DISTINCT FROM $3 AND unicode IS NOT DISTINCT FROM $4",
 		messageID, userID, emojiID, unicode,
 	)
@@ -167,10 +194,14 @@ func RemoveReaction(ctx context.Context, messageID, userID string, emojiID, unic
 		return 0, ErrNotFound
 	}
 
-	count, err := countReactionType(ctx, db, messageID, emojiID, unicode)
+	count, err := countReactionType(ctx, tx, messageID, emojiID, unicode)
 	if err != nil {
 		return 0, err
 	}
+	if err := createReactionEventInTx(ctx, tx, "reaction.removed", messageID, userID, emojiID, unicode); err != nil {
+		return 0, err
+	}
+
 	return count, nil
 }
 
