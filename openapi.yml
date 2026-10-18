@@ -32,6 +32,7 @@ tags:
   - name: Voice
   - name: WebSocket
   - name: Webhooks
+  - name: Apps
 
 security:
   - cookieAuth: []
@@ -2776,7 +2777,7 @@ paths:
 
         | Event            | Direction | Payload                                                                           |
         | ---------        | --------- | ---------------------------------------------------------------------             |
-        | `message`        | outbound  | `{ type: "message", id, channel_id, author_id, webhook_id?, external_author?, content, reply_to?, attachments?, created_at }` (reply_to: null quando não é resposta; sem reactions/embeds/user_reactions; webhook_id/external_author presentes somente em mensagens de webhook) |
+        | `message`        | outbound  | `{ type: "message", id, channel_id, author_id, webhook_id?, app_installation_id?, external_author?, content, reply_to?, attachments?, created_at }` (reply_to: null quando não é resposta; sem reactions/embeds/user_reactions; webhook_id identifica webhooks, app_installation_id identifica apps; external_author carrega o snapshot de máquinas e author_id fica vazio) |
         | `message_edit`   | outbound  | `{ type: "message_edit", id, channel_id, content, edited_at }`                          |
         | `message_delete` | outbound  | `{ type: "message_delete", id, channel_id }`                                            |
         | `attachment_moderation_update` | outbound  | `{ type: "attachment_moderation_update", channel_id, message_id, attachment_id, status }` (status: sensitive; o blocked exclui a mensagem e chega como `message_delete`) |
@@ -2825,8 +2826,518 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /apps:
+    post:
+      tags:
+      - Apps
+      summary: Instala app
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '201':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppCreated'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAppRequest'
+    get:
+      tags:
+      - Apps
+      summary: Lista instalações ativas
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppList'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: since
+        in: query
+        description: Timestamp created_at do último item da página anterior (ISO 8601).
+        schema:
+          type: string
+          format: date-time
+      - name: last_id
+        in: query
+        description: UUID do último item da página anterior; usado junto com since.
+        schema:
+          type: string
+          format: uuid
+      - name: order
+        in: query
+        schema:
+          type: string
+          enum:
+          - asc
+          - desc
+          default: desc
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 30
+  /apps/{app_id}:
+    parameters:
+    - name: app_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    patch:
+      tags:
+      - Apps
+      summary: Atualiza nome, identidade e capacidades
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppInstallation'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAppRequest'
+    delete:
+      tags:
+      - Apps
+      summary: Revoga instalação e remove escopos
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '204':
+          description: Operação concluída
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /apps/{app_id}/token:
+    parameters:
+    - name: app_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - Apps
+      summary: Rotaciona token remoto
+      description: Exige manage_apps. Somente remote; plugin retorna 400. O token antigo deixa de autenticar imediatamente.
+        O novo segredo aparece apenas nesta resposta.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppToken'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /apps/{app_id}/channels/{channel_id}:
+    parameters:
+    - name: app_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: channel_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    put:
+      tags:
+      - Apps
+      summary: Adiciona escopo de canal
+      description: 'Exige manage_apps e read_channel do ator no canal alvo; o dono sempre pode ler. Somente text/voice.
+        A linha de escopo é a ACL de máquina: a instalação passa a acessar o canal sem herdar channels.permissions
+        ou roles do instalador. Operação idempotente.'
+      responses:
+        '204':
+          description: Operação concluída
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+      - Apps
+      summary: Remove escopo de canal
+      description: Exige cookie de sessão e manage_apps; o dono possui a permissão implicitamente. A instalação pertence
+        ao servidor, não ao instalador.
+      responses:
+        '204':
+          description: Operação concluída
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /apps/{app_id}/avatar:
+    get:
+      description: 'Público (sem cookie): serve a imagem do avatar do app, como GET /users/{user_id}/avatar. 404 quando
+        o app não tem avatar.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/AppId'
+      responses:
+        '200':
+          content:
+            image/gif: {}
+            image/jpeg: {}
+            image/png: {}
+            image/webp: {}
+          description: Imagem do avatar
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Avatar persistente do app
+      tags:
+      - Apps
+  /app/channels/{channel_id}/messages:
+    parameters:
+    - name: channel_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - Apps
+      summary: Envia mensagem como app
+      description: 'Bearer remoto, send_messages e canal text/voice explicitamente autorizado. Cookie/JWT não autenticam.
+        Token ausente, errado, rotacionado ou revogado retorna o mesmo 401. Snapshot external_author sempre contém
+        source=app, id, name e avatar_url=/apps/<id>/avatar; não aceita override. Attachments e embeds pertencem ao
+        created_by para armazenamento, nunca autoria. Não dispara @everyone. Retry com a mesma external_message_id
+        retorna 200 com mensagem completa, payload ignorado e sem repetir efeitos. A chave é por instalação, não por
+        canal; uma chave de outro canal retorna 403. Limitação: a deduplicação dura somente enquanto a mensagem existir;
+        após exclusão, um retry cria outra mensagem. Chaves retidas estão fora do escopo. multipart/form-data, até
+        110MB de corpo; até 10 arquivos de 100MB, content até 8192 caracteres e até 10 embeds.'
+      responses:
+        '201':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '429':
+          description: 'Token bucket por instalação: 10 requisições/s, burst 20. Retry-After: 1. Além do limite global
+            por IP.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '200':
+          description: Retry idempotente; attachments, embeds e reações atuais
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+      security:
+      - appBearer: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                content:
+                  type: string
+                external_message_id:
+                  type: string
+                  maxLength: 200
+                reply_to:
+                  type: string
+                  format: uuid
+                embeds:
+                  type: string
+                  description: JSON array de embeds customizados
+                attachments:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+    get:
+      tags:
+      - Apps
+      summary: Lê histórico autorizado
+      description: Exige Bearer remoto, read_messages e canal text/voice no escopo em cada requisição. Inclui attachments,
+        thumbnails, embeds, contagens de reações e user_reactions vazio; não marca mensagens como lidas. Não há eventos
+        nem gateway neste PR.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageListResponse'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '429':
+          description: 'Token bucket por instalação: 10 requisições/s, burst 20. Retry-After: 1. Além do limite global
+            por IP.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - appBearer: []
+      parameters:
+      - name: since
+        in: query
+        description: Timestamp created_at do último item da página anterior (ISO 8601).
+        schema:
+          type: string
+          format: date-time
+      - name: last_id
+        in: query
+        description: UUID do último item da página anterior; usado junto com since.
+        schema:
+          type: string
+          format: uuid
+      - name: order
+        in: query
+        schema:
+          type: string
+          enum:
+          - asc
+          - desc
+          default: desc
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 30
+  /app/channels/{channel_id}/messages/{message_id}:
+    parameters:
+    - name: channel_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: message_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    put:
+      tags:
+      - Apps
+      summary: Edita mensagem própria
+      description: Exige Bearer, send_messages e escopo atual. Somente mensagem desta instalação e deste canal. Embeds
+        omitidos são preservados; [] remove embeds customizados.
+      responses:
+        '200':
+          description: Operação concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '429':
+          description: 'Token bucket por instalação: 10 requisições/s, burst 20. Retry-After: 1. Além do limite global
+            por IP.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppEditRequest'
+      security:
+      - appBearer: []
+    delete:
+      tags:
+      - Apps
+      summary: Exclui mensagem própria
+      description: Exige Bearer, send_messages e escopo atual. Somente mensagem desta instalação e deste canal. Humanos
+        com delete_messages também podem excluí-la pela rota humana.
+      responses:
+        '204':
+          description: Operação concluída
+        '400':
+          description: Parâmetro inválido (invalid-param)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '429':
+          description: 'Token bucket por instalação: 10 requisições/s, burst 20. Retry-After: 1. Além do limite global
+            por IP.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+      - appBearer: []
+
 components:
   securitySchemes:
+    appBearer:
+      type: http
+      scheme: bearer
+      description: Token remoto de app; cookies e JWT de usuários não são aceitos. View/wasm não possuem token.
     cookieAuth:
       type: apiKey
       in: cookie
@@ -2834,6 +3345,13 @@ components:
       description: JWT em cookie HttpOnly (Path=/, Secure, SameSite=Strict)
 
   parameters:
+    AppId:
+      name: app_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     UserId:
       name: user_id
       in: path
@@ -3786,6 +4304,10 @@ components:
       type: object
       nullable: true
       properties:
+        app_installation_id:
+          type: string
+          format: uuid
+          description: Presente somente em mensagens de app (campo aditivo e omitido nas demais).
         id:
           type: string
           format: uuid
@@ -3825,9 +4347,9 @@ components:
           allOf:
             - $ref: '#/components/schemas/ExternalAuthor'
           description: >
-            Identidade de exibição da mensagem de webhook (nunca um usuário do
-            Papo): nickname/avatar do webhook ou autoria temporária informada
-            no envio. Null em mensagens humanas.
+            Identidade de exibição de webhook ou app (nunca um usuário do Papo).
+            Apps gravam source=app e o snapshot da instalação; somente webhooks
+            aceitam autoria temporária no envio. Null em mensagens humanas.
         attachments:
           type: array
           items:
@@ -3923,9 +4445,9 @@ components:
     ExternalAuthor:
       type: object
       description: >
-        Identidade de exibição de mensagem de webhook. Não é um usuário do
-        Papo e nunca determina autorização. avatar_url pode ser URL absoluta
-        externa ou caminho do backend (avatar persistente do webhook).
+        Identidade de exibição de mensagem de webhook ou app. Não é um usuário
+        do Papo e nunca determina autorização. avatar_url pode ser URL absoluta
+        externa ou caminho do backend (/webhooks/{uuid}/avatar ou /apps/{uuid}/avatar).
       properties:
         source:
           type: string
@@ -3954,6 +4476,12 @@ components:
         inclui channel_id, edited_at, reply_to, attachments, embeds,
         reactions ou user_reactions.
       properties:
+        app_installation_id:
+          type: string
+          format: uuid
+          description: Presente somente em mensagens de app (campo aditivo e omitido nas demais).
+        external_author:
+          $ref: '#/components/schemas/ExternalAuthor'
         id:
           type: string
           format: uuid
@@ -4578,6 +5106,8 @@ components:
           type: boolean
         manage_roles:
           type: boolean
+        manage_apps:
+          type: boolean
         manage_webhooks:
           type: boolean
         ban_members:
@@ -4720,6 +5250,12 @@ components:
     SearchResult:
       type: object
       properties:
+        app_installation_id:
+          type: string
+          format: uuid
+          description: Presente somente em mensagens de app (campo aditivo e omitido nas demais).
+        external_author:
+          $ref: '#/components/schemas/ExternalAuthor'
         type:
           type: string
           example: message
@@ -4783,3 +5319,106 @@ components:
         has_more:
           type: boolean
           description: Indica se existe próxima página (cursor since + last_id)
+    AppCapabilities:
+      type: object
+      properties:
+        send_messages:
+          type: boolean
+          default: false
+        read_messages:
+          type: boolean
+          default: false
+        attach_views:
+          type: boolean
+          default: false
+    AppInstallation:
+      type: object
+      description: Identidade do servidor. created_by é histórico e propriedade de armazenamento; perder roles ou ser
+        banido não desativa o app. Hash nunca é exposto.
+      properties:
+        id:
+          type: string
+          format: uuid
+        app_key:
+          type: string
+        kind:
+          type: string
+          enum:
+          - remote
+          - plugin
+        name:
+          type: string
+        display_name:
+          type: string
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+        capabilities:
+          $ref: '#/components/schemas/AppCapabilities'
+    AppToken:
+      type: object
+      properties:
+        token:
+          type: string
+          description: 32 bytes aleatórios em hex; retornado uma única vez.
+    AppCreated:
+      allOf:
+      - $ref: '#/components/schemas/AppInstallation'
+      - $ref: '#/components/schemas/AppToken'
+    AppList:
+      type: object
+      properties:
+        apps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppInstallation'
+        has_more:
+          type: boolean
+    CreateAppRequest:
+      type: object
+      required:
+      - app_key
+      - kind
+      - name
+      properties:
+        app_key:
+          type: string
+          minLength: 1
+          maxLength: 200
+        kind:
+          type: string
+          enum:
+          - remote
+          - plugin
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        capabilities:
+          $ref: '#/components/schemas/AppCapabilities'
+    UpdateAppRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        display_name:
+          type: string
+          maxLength: 100
+          description: Vazio remove o nickname; omitido preserva.
+        avatar:
+          type: string
+          description: Base64 de GIF/JPEG/PNG/WEBP até 2MB e 512px. Vazio remove; omitido preserva.
+        avatar_format:
+          type: string
+        capabilities:
+          $ref: '#/components/schemas/AppCapabilities'
+    AppEditRequest:
+      $ref: '#/components/schemas/UpdateMessageRequest'

@@ -125,10 +125,10 @@ func UnpinMessage(ctx context.Context, channelID, messageID string) (bool, error
 // webhook carregam a atribuição externa (webhook_id/external_author), como na
 // listagem normal do canal.
 func ListPinnedMessagesWithAttachmentsByChannel(ctx context.Context, channelID string) ([]models.MessageWithAttachment, error) {
-	query := "SELECT p.id, p.channel_id, p.author_id, p.content, p.created_at, p.edited_at, p.reply_to, p.webhook_id, p.external_author, p.external_message_id, " +
+	query := "SELECT p.id, p.channel_id, p.author_id, p.content, p.created_at, p.edited_at, p.reply_to, p.webhook_id, p.external_author, p.external_message_id, p.app_installation_id, " +
 		"a.id, m.mime_type, a.original_file_name, m.size_bytes, a.created_at " +
 		"FROM (SELECT msg.id, msg.channel_id, msg.author_id, msg.content, msg.created_at, msg.edited_at, msg.reply_to, " +
-		"msg.webhook_id, msg.external_author, msg.external_message_id, pm.pinned_at " +
+		"msg.webhook_id, msg.external_author, msg.external_message_id, msg.app_installation_id, pm.pinned_at " +
 		"FROM messages msg " +
 		"JOIN pinned_messages pm ON pm.message_id = msg.id AND pm.channel_id = msg.channel_id " +
 		"WHERE msg.channel_id = $1) p " +
@@ -166,6 +166,7 @@ func ListPinnedMessagesWithAttachmentsByChannel(ctx context.Context, channelID s
 			&message.WebhookID,
 			&extJSON,
 			&message.ExternalMessageID,
+			&message.AppInstallationID,
 			&attachmentID,
 			&mimeType,
 			&fileName,

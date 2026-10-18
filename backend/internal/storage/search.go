@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -188,7 +189,7 @@ func SearchMessages(ctx context.Context, p SearchParams) ([]models.SearchResult,
 		"m.created_at, " +
 		"c.id, " +
 		"c.name, " +
-		"m.author_id, " +
+		"m.author_id, m.app_installation_id, m.external_author, " +
 		"COALESCE(u.username, m.external_author->>'name'), " +
 		scoreExpr + " AS score " +
 		"FROM messages m " +
@@ -208,6 +209,7 @@ func SearchMessages(ctx context.Context, p SearchParams) ([]models.SearchResult,
 
 	for rows.Next() {
 		var result models.SearchResult
+		var external []byte
 
 		if err := rows.Scan(
 			&result.ID,
@@ -216,12 +218,19 @@ func SearchMessages(ctx context.Context, p SearchParams) ([]models.SearchResult,
 			&result.ChannelID,
 			&result.ChannelName,
 			&result.AuthorID,
+			&result.AppInstallationID,
+			&external,
 			&result.AuthorUsername,
 			&result.Score,
 		); err != nil {
 			return nil, fmt.Errorf("falha ao ler resultado da busca: %w", err)
 		}
 
+		if len(external) > 0 {
+			if err := json.Unmarshal(external, &result.ExternalAuthor); err != nil {
+				return nil, err
+			}
+		}
 		result.Type = "message"
 		results = append(results, result)
 	}

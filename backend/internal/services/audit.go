@@ -47,6 +47,12 @@ const (
 	ActionUserRoleRemove           = "user_role.remove"
 	ActionEmojiCreate              = "emoji.create"
 	ActionEmojiDelete              = "emoji.delete"
+	ActionAppCreate                = "app.create"
+	ActionAppUpdate                = "app.update"
+	ActionAppRotate                = "app.rotate"
+	ActionAppRevoke                = "app.revoke"
+	ActionAppScopeAdd              = "app.scope_add"
+	ActionAppScopeRemove           = "app.scope_remove"
 	ActionWebhookCreate            = "webhook.create"
 	ActionWebhookUpdate            = "webhook.update"
 	ActionWebhookRevoke            = "webhook.revoke"
@@ -62,11 +68,13 @@ const (
 	EntityRole       = "role"
 	EntityUserRole   = "user_role"
 	EntityEmoji      = "emoji"
+	EntityApp        = "app"
 	EntityWebhook    = "webhook"
 )
 
 // AuditEntry descreve um evento de auditoria a registrar.
 type AuditEntry struct {
+	ActorLabel   string
 	ActorID      string
 	Action       string
 	EntityType   string
@@ -94,6 +102,9 @@ func RecordAudit(ctx context.Context, e AuditEntry) {
 		}
 	}
 
+	if e.ActorLabel != "" {
+		username = e.ActorLabel
+	}
 	metadata := e.Metadata
 	if metadata == nil {
 		metadata = map[string]any{}
