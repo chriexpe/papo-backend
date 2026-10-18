@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/labstack/echo/v4"
 	"io"
+	"net/http"
+	"strings"
+
+	"github.com/labstack/echo/v4"
 	"papo/internal/middleware"
 	"papo/internal/services"
 	"papo/internal/utils"
-	"strings"
 )
 
-// appJSON recusa campos desconhecidos, corpos grandes e múltiplos documentos.
+// appJSON decodifica um corpo JSON de até 64 KiB, recusando campos
+// desconhecidos e conteúdo depois do objeto.
 func appJSON(c echo.Context, out any) error {
 	d := json.NewDecoder(io.LimitReader(c.Request().Body, 65537))
 	d.DisallowUnknownFields()
@@ -25,20 +28,24 @@ func appJSON(c echo.Context, out any) error {
 	}
 	return nil
 }
-func interactionProblem(c echo.Context, base string, e error) error {
+
+// interactionProblem mapeia erros das rotas humanas e da ponte UI.
+func interactionProblem(c echo.Context, baseURL string, err error) error {
 	switch {
-	case errors.Is(e, context.DeadlineExceeded):
-		return utils.SendProblem(c, base, 504, "app-timeout", "O app não respondeu a tempo", "Tente novamente mais tarde.")
-	case errors.Is(e, services.ErrAppSession):
-		return utils.SendProblem(c, base, 401, "app-session", "Sessão do app inválida", e.Error())
-	case errors.Is(e, services.ErrAppRateLimit):
+	case errors.Is(err, context.DeadlineExceeded):
+		return utils.SendProblem(c, baseURL, http.StatusGatewayTimeout, "app-timeout",
+			"O app não respondeu a tempo", "Tente novamente mais tarde.")
+	case errors.Is(err, services.ErrAppSession):
+		return utils.SendProblem(c, baseURL, http.StatusUnauthorized, "app-session", "Sessão do app inválida", err.Error())
+	case errors.Is(err, services.ErrAppRateLimit):
 		c.Response().Header().Set("Retry-After", "60")
-		return utils.SendProblem(c, base, 429, "rate-limit", "Limite de chamadas", e.Error())
+		return utils.SendProblem(c, baseURL, http.StatusTooManyRequests, "rate-limit", "Limite de chamadas", err.Error())
 	}
-	return pluginProblem(c, base, e)
+	return pluginProblem(c, baseURL, err)
 }
 
-// appBridgeCORS autoriza apenas os dois endpoints públicos, sem ler cookies.
+// appBridgeCORS libera session e rpc para a origem opaca da UI, sem
+// credenciais: essas rotas nunca aceitam cookies como autenticação.
 func appBridgeCORS(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		h := c.Response().Header()
@@ -47,100 +54,105 @@ func appBridgeCORS(next echo.HandlerFunc) echo.HandlerFunc {
 		h.Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 		h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		h.Set("Cache-Control", "no-store")
-		if c.Request().Method == "OPTIONS" {
-			return c.NoContent(204)
+		if c.Request().Method == http.MethodOptions {
+			return c.NoContent(http.StatusNoContent)
 		}
 		return next(c)
 	}
 }
 
-// RegisterAppInteractionRoutes separa sessão humana de tokens confinados da UI.
-func RegisterAppInteractionRoutes(e *echo.Echo, base string, m *services.PluginManager) {
-	e.POST("/interactions", func(c echo.Context) error {
-		var in services.InteractionInput
-		if er := appJSON(c, &in); er != nil {
-			return interactionProblem(c, base, er)
-		}
-		user, _ := c.Get(middleware.UserIDContextKey).(string)
-		result, er := m.Interact(c.Request().Context(), user, in)
-		if er != nil {
-			return interactionProblem(c, base, er)
-		}
-		return c.JSON(200, result)
-	}, middleware.JWTMiddleware)
-	e.POST("/apps/:app_id/launch", func(c echo.Context) error {
-		var in services.LaunchInput
-		if er := appJSON(c, &in); er != nil {
-			return interactionProblem(c, base, er)
-		}
-		user, _ := c.Get(middleware.UserIDContextKey).(string)
-		v, er := m.LaunchAppUI(c.Request().Context(), user, c.Param("app_id"), in)
-		if er != nil {
-			return interactionProblem(c, base, er)
-		}
-		c.Response().Header().Set("Cache-Control", "no-store")
-		return c.JSON(200, v)
-	}, middleware.JWTMiddleware)
-	for _, action := range []string{"session", "rpc"} {
-		path := "/apps/:app_id/" + action
-		e.OPTIONS(path, func(c echo.Context) error { return c.NoContent(204) }, appBridgeCORS)
-		e.POST(path, func(c echo.Context) error {
-			if action == "session" {
-				var in struct {
-					Ticket string `json:"ticket"`
-				}
-				if er := appJSON(c, &in); er != nil {
-					return interactionProblem(c, base, er)
-				}
-				v, er := m.ExchangeAppTicket(c.Request().Context(), c.Param("app_id"), in.Ticket)
-				if er != nil {
-					return interactionProblem(c, base, er)
-				}
-				return c.JSON(200, v)
-			}
-			var in struct {
-				Method string          `json:"method"`
-				Params json.RawMessage `json:"params"`
-			}
-			if er := appJSON(c, &in); er != nil {
-				return interactionProblem(c, base, er)
-			}
-			auth := c.Request().Header.Get("Authorization")
-			if !strings.HasPrefix(auth, "Bearer ") {
-				return interactionProblem(c, base, services.ErrAppSession)
-			}
-			out, er := m.AppRPC(c.Request().Context(), c.Param("app_id"), strings.TrimPrefix(auth, "Bearer "), in.Method, in.Params)
-			if er != nil {
-				return interactionProblem(c, base, er)
-			}
-			return c.JSONBlob(200, out)
-		}, appBridgeCORS)
+// InteractHandler implementa POST /interactions: executa on_interaction de um
+// botão ou ação de usuário e devolve {interaction_id, result} a quem clicou.
+func InteractHandler(baseURL string, m *services.PluginManager, c echo.Context) error {
+	var in services.InteractionInput
+	if err := appJSON(c, &in); err != nil {
+		return interactionProblem(c, baseURL, err)
 	}
-	for _, decision := range []string{"accept", "decline"} {
-		e.POST("/notifications/:id/"+decision, func(c echo.Context) error {
-			user, _ := c.Get(middleware.UserIDContextKey).(string)
-			status := "declined"
-			if decision == "accept" {
-				status = "accepted"
-			}
-			v, er := m.DecideInvite(c.Request().Context(), user, c.Param("id"), status)
-			if er != nil {
-				return interactionProblem(c, base, er)
-			}
-			return c.JSON(200, v)
-		}, middleware.JWTMiddleware)
+	user, _ := c.Get(middleware.UserIDContextKey).(string)
+	result, err := m.Interact(c.Request().Context(), user, in)
+	if err != nil {
+		return interactionProblem(c, baseURL, err)
 	}
-	e.PATCH("/apps/:app_id/user-settings", func(c echo.Context) error {
-		var in struct {
-			Muted *bool `json:"invites_muted"`
-		}
-		if er := appJSON(c, &in); er != nil || in.Muted == nil {
-			return interactionProblem(c, base, services.ErrInvalidInput)
-		}
-		user, _ := c.Get(middleware.UserIDContextKey).(string)
-		if er := services.SetPluginInviteMute(c.Request().Context(), user, c.Param("app_id"), *in.Muted); er != nil {
-			return interactionProblem(c, base, er)
-		}
-		return c.NoContent(204)
-	}, middleware.JWTMiddleware)
+	return c.JSON(http.StatusOK, result)
+}
+
+// LaunchAppUIHandler implementa POST /apps/:app_id/launch: emite um ticket de
+// uso único para abrir a superfície.
+func LaunchAppUIHandler(baseURL string, m *services.PluginManager, c echo.Context) error {
+	var in services.LaunchInput
+	if err := appJSON(c, &in); err != nil {
+		return interactionProblem(c, baseURL, err)
+	}
+	user, _ := c.Get(middleware.UserIDContextKey).(string)
+	v, err := m.LaunchAppUI(c.Request().Context(), user, c.Param("app_id"), in)
+	if err != nil {
+		return interactionProblem(c, baseURL, err)
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return c.JSON(http.StatusOK, v)
+}
+
+// AppUISessionHandler implementa POST /apps/:app_id/session: troca o ticket
+// por um token de sessão UI.
+func AppUISessionHandler(baseURL string, m *services.PluginManager, c echo.Context) error {
+	var in struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := appJSON(c, &in); err != nil {
+		return interactionProblem(c, baseURL, err)
+	}
+	v, err := m.ExchangeAppTicket(c.Request().Context(), c.Param("app_id"), in.Ticket)
+	if err != nil {
+		return interactionProblem(c, baseURL, err)
+	}
+	return c.JSON(http.StatusOK, v)
+}
+
+// AppUIRPCHandler implementa POST /apps/:app_id/rpc com o Bearer da sessão UI
+// e devolve o envelope do on_ui_call.
+func AppUIRPCHandler(baseURL string, m *services.PluginManager, c echo.Context) error {
+	var in struct {
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	if err := appJSON(c, &in); err != nil {
+		return interactionProblem(c, baseURL, err)
+	}
+	auth := c.Request().Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return interactionProblem(c, baseURL, services.ErrAppSession)
+	}
+	token := strings.TrimPrefix(auth, "Bearer ")
+	out, err := m.AppRPC(c.Request().Context(), c.Param("app_id"), token, in.Method, in.Params)
+	if err != nil {
+		return interactionProblem(c, baseURL, err)
+	}
+	return c.JSONBlob(http.StatusOK, out)
+}
+
+// DecideInviteHandler implementa POST /notifications/:id/accept e /decline,
+// somente pelo destinatário do convite.
+func DecideInviteHandler(baseURL string, m *services.PluginManager, status string, c echo.Context) error {
+	user, _ := c.Get(middleware.UserIDContextKey).(string)
+	v, err := m.DecideInvite(c.Request().Context(), user, c.Param("id"), status)
+	if err != nil {
+		return interactionProblem(c, baseURL, err)
+	}
+	return c.JSON(http.StatusOK, v)
+}
+
+// AppUserSettingsHandler implementa PATCH /apps/:app_id/user-settings: a
+// preferência pessoal invites_muted.
+func AppUserSettingsHandler(baseURL string, c echo.Context) error {
+	var in struct {
+		Muted *bool `json:"invites_muted"`
+	}
+	if err := appJSON(c, &in); err != nil || in.Muted == nil {
+		return interactionProblem(c, baseURL, services.ErrInvalidInput)
+	}
+	user, _ := c.Get(middleware.UserIDContextKey).(string)
+	if err := services.SetPluginInviteMute(c.Request().Context(), user, c.Param("app_id"), *in.Muted); err != nil {
+		return interactionProblem(c, baseURL, err)
+	}
+	return c.NoContent(http.StatusNoContent)
 }
