@@ -2,21 +2,15 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"papo/internal/models"
 	"papo/internal/storage"
-	"papo/internal/utils"
 
 	"github.com/google/uuid"
 )
@@ -76,14 +70,12 @@ func CreateWebhook(ctx context.Context, actorID, channelID, name string) (models
 		return models.Webhook{}, "", err
 	}
 
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
+	secret, hash, err := newMachineToken()
+	if err != nil {
 		return models.Webhook{}, "", err
 	}
-	secret := hex.EncodeToString(tokenBytes)
-	hash := sha256.Sum256([]byte(secret))
 
-	webhook, err := storage.CreateWebhook(ctx, channelID, name, actorID, hex.EncodeToString(hash[:]))
+	webhook, err := storage.CreateWebhook(ctx, channelID, name, actorID, hash)
 	if err != nil {
 		return models.Webhook{}, "", err
 	}
@@ -196,7 +188,7 @@ func UpdateWebhookIdentity(ctx context.Context, actorID, webhookID string, displ
 		return models.Webhook{}, err
 	}
 
-	var displayNameArg, avatarArg any
+	var displayNameArg any
 	if displayName != nil {
 		trimmed := strings.TrimSpace(*displayName)
 		if trimmed == "" {
@@ -209,27 +201,9 @@ func UpdateWebhookIdentity(ctx context.Context, actorID, webhookID string, displ
 		}
 	}
 
-	if avatar != nil {
-		if *avatar == "" {
-			avatarArg = sql.NullString{Valid: false}
-		} else {
-			decoded, err := base64.StdEncoding.DecodeString(*avatar)
-			if err != nil {
-				return models.Webhook{}, ErrInvalidInput
-			}
-			upperFormat := normalizeImageFormat(avatarFormat)
-			if !avatarContentMatchesFormat(decoded, upperFormat) || len(decoded) > maxAvatarBytes {
-				return models.Webhook{}, ErrInvalidInput
-			}
-			if err := utils.ValidateImage(decoded, utils.MaxImageDimension); err != nil {
-				return models.Webhook{}, ErrInvalidInput
-			}
-			sha, _, err := StoreMediaFromBytes(ctx, decoded, formatToMime(upperFormat))
-			if err != nil {
-				return models.Webhook{}, fmt.Errorf("falha ao gravar o avatar do webhook: %w", err)
-			}
-			avatarArg = sql.NullString{String: sha, Valid: true}
-		}
+	avatarArg, err := machineAvatarArg(ctx, avatar, avatarFormat, "webhook")
+	if err != nil {
+		return models.Webhook{}, err
 	}
 
 	webhook, err := storage.UpdateWebhookIdentity(ctx, webhookID, displayNameArg, avatarArg)
@@ -314,9 +288,7 @@ func AuthenticateWebhook(ctx context.Context, id, token string) (models.Webhook,
 	if err != nil {
 		return models.Webhook{}, ErrWebhookUnauthorized
 	}
-	sum := sha256.Sum256([]byte(token))
-	actual := hex.EncodeToString(sum[:])
-	if subtle.ConstantTimeCompare([]byte(actual), []byte(hash)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(machineTokenHash(token)), []byte(hash)) != 1 {
 		return models.Webhook{}, ErrWebhookUnauthorized
 	}
 	return w, nil

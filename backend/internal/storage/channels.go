@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -300,7 +301,22 @@ func ChangeChannelPosition(ctx context.Context, channelID string, oldPosition, n
 
 // DeleteChannel exclui um canal pelo id.
 func DeleteChannel(ctx context.Context, id string) error {
-	result, err := GetDB().ExecContext(ctx,
+	tx, err := GetDB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("falha ao excluir canal: %w", err)
+	}
+	defer tx.Rollback()
+	if err := deleteChannelInTx(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("falha ao excluir canal: %w", err)
+	}
+	return nil
+}
+
+func deleteChannelInTx(ctx context.Context, tx *sql.Tx, id string) error {
+	result, err := tx.ExecContext(ctx,
 		"DELETE FROM channels WHERE id = $1",
 		id,
 	)
@@ -319,13 +335,13 @@ func DeleteChannel(ctx context.Context, id string) error {
 // do canal, última mensagem (LATERAL, pode ser NULL) e o username do autor da
 // última mensagem (LEFT JOIN, pode ser NULL).
 const channelSummaryBaseColumns = `c.id, c.name, c.permissions, c.type, c.position, c.created_at, c.topic,
-	lm.id, lm.content, lm.author_id, COALESCE(u.username, lm.external_author->>'name'), lm.created_at`
+	lm.id, lm.content, lm.author_id, COALESCE(u.username, lm.external_author->>'name'), lm.created_at, lm.app_installation_id, lm.external_author`
 
 // channelSummaryBaseJoins traz a última mensagem de cada canal (mesma ordem
 // de ListMessagesByChannel) e o username do autor.
 const channelSummaryBaseJoins = `FROM channels c
 	LEFT JOIN LATERAL (
-		SELECT m.id, m.content, m.author_id, m.external_author, m.created_at
+		SELECT m.id, m.content, m.author_id, m.external_author, m.created_at, m.app_installation_id
 		FROM messages m
 		WHERE m.channel_id = c.id
 		ORDER BY m.created_at DESC, m.id DESC
@@ -362,6 +378,8 @@ const channelSummaryNullNotification = `, NULL`
 func scanChannelSummary(row rowScanner, roleNames map[string]string) (models.ChannelSummary, error) {
 	var summary models.ChannelSummary
 	var permissions []byte
+	var lastAppID *string
+	var external []byte
 	var lastMessageID *string
 	var lastMessageContent *string
 	var lastMessageAuthorID *string
@@ -384,6 +402,8 @@ func scanChannelSummary(row rowScanner, roleNames map[string]string) (models.Cha
 		&lastMessageAuthorID,
 		&lastMessageUsername,
 		&lastMessageCreatedAt,
+		&lastAppID,
+		&external,
 		&lastReadMessageID,
 		&lastReadAt,
 		&notificationSettings,
@@ -400,14 +420,20 @@ func scanChannelSummary(row rowScanner, roleNames map[string]string) (models.Cha
 
 	if lastMessageID != nil && lastMessageCreatedAt != nil {
 		summary.LastMessage = &models.ChannelLastMessage{
-			ID:             *lastMessageID,
-			Content:        lastMessageContent,
-			AuthorID:       lastMessageAuthorID,
-			AuthorUsername: lastMessageUsername,
-			CreatedAt:      *lastMessageCreatedAt,
+			AppInstallationID: lastAppID,
+			ID:                *lastMessageID,
+			Content:           lastMessageContent,
+			AuthorID:          lastMessageAuthorID,
+			AuthorUsername:    lastMessageUsername,
+			CreatedAt:         *lastMessageCreatedAt,
 		}
 	}
 
+	if summary.LastMessage != nil && len(external) > 0 {
+		if err := json.Unmarshal(external, &summary.LastMessage.ExternalAuthor); err != nil {
+			return models.ChannelSummary{}, err
+		}
+	}
 	summary.LastReadMessage = lastReadMessageID
 	summary.LastReadAt = lastReadAt
 
