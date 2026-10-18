@@ -263,7 +263,7 @@ func (c *Client) handleTyping(raw []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), typingCheckTimeout)
 	defer cancel()
 
-	switch err := services.CanReadChannel(ctx, event.ChannelID, c.userID); {
+	switch err := services.CanTypeChannel(ctx, event.ChannelID, c.userID); {
 	case errors.Is(err, services.ErrChannelNotFound):
 		c.sendEvent(ErrorOutbound{Type: EventTypeError, Message: "canal não encontrado"})
 		return

@@ -227,6 +227,9 @@ func MarkChannelRead(ctx context.Context, actorID, channelID, messageID string) 
 		return err
 	}
 
+	if channel.Type == "app" {
+		return ErrPermissionDenied
+	}
 	allowed, err := userHasChannelPermission(ctx, channel, actorID, true, func(p models.ChannelPermission) bool {
 		return p.ReadChannel
 	})

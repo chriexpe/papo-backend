@@ -39,7 +39,25 @@ const maxChannels = 500
 // ListChannels lista os canais com permissões expandidas, a última mensagem
 // de cada um e o último read de userID em cada canal (README).
 func ListChannels(ctx context.Context, userID string) ([]models.ChannelSummary, error) {
-	return storage.ListChannelSummaries(ctx, userID)
+	channels, err := storage.ListChannelSummaries(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range channels {
+		if channels[i].Type != "app" {
+			continue
+		}
+		if err := CanReadChannel(ctx, channels[i].ID, userID); errors.Is(err, ErrPermissionDenied) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		channels[i].App, err = channelAppPayload(ctx, channels[i].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return channels, nil
 }
 
 // CreateChannel cria um novo canal
@@ -97,7 +115,7 @@ func CreateChannel(ctx context.Context, actorID, name, channelType, topic string
 
 	// Reconsulta a visão summary para que a resposta da criação tenha a
 	// mesma forma da listagem (permissões expandidas e last_message).
-	return storage.GetChannelSummary(ctx, channel.ID)
+	return channelSummaryForActor(ctx, channel.ID, actorID)
 }
 
 // UpdateChannel renomeia um canal pelo id e, opcionalmente, atualiza o topic
@@ -161,7 +179,7 @@ func UpdateChannel(ctx context.Context, actorID, id, name string, topic *string)
 
 	// Reconsulta a visão summary para que a resposta da edição tenha a
 	// mesma forma da listagem (permissões expandidas e last_message).
-	return storage.GetChannelSummary(ctx, id)
+	return channelSummaryForActor(ctx, id, actorID)
 }
 
 // ChangeChannelPosition move um canal para newPosition e recalcula as
@@ -210,7 +228,7 @@ func ChangeChannelPosition(ctx context.Context, actorID, channelID string, oldPo
 
 	// Reconsulta a visão summary para que a resposta tenha a mesma forma da
 	// listagem (permissões expandidas e last_message).
-	return storage.GetChannelSummary(ctx, channel.ID)
+	return channelSummaryForActor(ctx, channel.ID, actorID)
 }
 
 // DeleteChannel exclui um canal pelo id (README: 204 when successful).
@@ -228,6 +246,9 @@ func DeleteChannel(ctx context.Context, actorID, id string) error {
 			return ErrChannelNotFound
 		}
 		return err
+	}
+	if channel.Type == "app" {
+		return ErrAppChannelManaged
 	}
 	if channel.Type == "dm" {
 		return ErrChannelNotFound
@@ -335,8 +356,14 @@ func ChannelReaders(ctx context.Context, channelID string, userIDs []string) (ma
 		return allowed, err
 	}
 
+	return ChannelReadersSnapshot(ctx, channel, userIDs)
+}
+
+// ChannelReadersSnapshot autoriza leitores usando a ACL capturada antes de uma exclusão.
+func ChannelReadersSnapshot(ctx context.Context, channel models.Channel, userIDs []string) (map[string]bool, error) {
+	allowed := make(map[string]bool, len(userIDs))
 	if channel.Type == "dm" {
-		return storage.DirectConversationReaders(ctx, channelID, userIDs)
+		return storage.DirectConversationReaders(ctx, channel.ID, userIDs)
 	}
 
 	// Canal aberto (sem roles definidas): leitura livre para todos.
@@ -464,5 +491,40 @@ func DeleteChannelRolePermission(ctx context.Context, actorID, channelID, roleID
 		EntityType: EntityChannel, EntityID: &channelID,
 		Metadata: map[string]any{"role_id": roleID, "removed": true},
 	})
+	return nil
+}
+
+// channelSummaryForActor inclui a superfície app nas respostas de gestão apenas quando o ator lê o canal.
+func channelSummaryForActor(ctx context.Context, channelID, actorID string) (models.ChannelSummary, error) {
+	summary, err := storage.GetChannelSummary(ctx, channelID)
+	if err != nil {
+		return summary, err
+	}
+	if summary.Type == "app" {
+		if err := CanReadChannel(ctx, channelID, actorID); errors.Is(err, ErrPermissionDenied) {
+			return summary, nil
+		} else if err != nil {
+			return summary, err
+		}
+		summary.App, err = channelAppPayload(ctx, channelID)
+	}
+	return summary, err
+}
+
+// ValidateChannelTypeChange torna explícita a imutabilidade do tipo do canal.
+func ValidateChannelTypeChange(ctx context.Context, id, wanted string) error {
+	ch, err := storage.GetChannelByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if wanted == ch.Type {
+		return nil
+	}
+	if ch.Type == "app" || wanted == "app" {
+		return ErrAppChannelManaged
+	}
+	if wanted != ch.Type {
+		return ErrInvalidInput
+	}
 	return nil
 }

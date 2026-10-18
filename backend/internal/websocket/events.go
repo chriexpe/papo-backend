@@ -183,12 +183,13 @@ type MessageOutbound struct {
 	AuthorID  string    `json:"author_id"`
 	// WebhookID/ExternalAuthor estão presentes somente em mensagens enviadas
 	// por webhook (author_id vazio nesse caso).
-	WebhookID      *string                    `json:"webhook_id,omitempty"`
-	ExternalAuthor *models.ExternalAuthor     `json:"external_author,omitempty"`
-	Content        string                     `json:"content"`
-	CreatedAt      time.Time                  `json:"created_at"`
-	ReplyTo        *string                    `json:"reply_to"`
-	Attachments    []models.MessageAttachment `json:"attachments,omitempty"`
+	AppInstallationID *string                    `json:"app_installation_id,omitempty"`
+	WebhookID         *string                    `json:"webhook_id,omitempty"`
+	ExternalAuthor    *models.ExternalAuthor     `json:"external_author,omitempty"`
+	Content           string                     `json:"content"`
+	CreatedAt         time.Time                  `json:"created_at"`
+	ReplyTo           *string                    `json:"reply_to"`
+	Attachments       []models.MessageAttachment `json:"attachments,omitempty"`
 }
 
 // MessageEditOutbound é o evento de edição de mensagem distribuído aos clientes.
@@ -262,22 +263,24 @@ type MessagePinOutbound struct {
 // ChannelCreateOutbound é o evento de criação de canal distribuído aos clientes.
 // Topic é null para canais category (ou sem tópico).
 type ChannelCreateOutbound struct {
-	Type        EventType `json:"type"`
-	ChannelID   string    `json:"channel_id"`
-	Name        string    `json:"name"`
-	ChannelType string    `json:"channel_type"`
-	Position    int       `json:"position"`
-	Topic       *string   `json:"topic"`
+	App         *models.AppChannel `json:"app,omitempty"`
+	Type        EventType          `json:"type"`
+	ChannelID   string             `json:"channel_id"`
+	Name        string             `json:"name"`
+	ChannelType string             `json:"channel_type"`
+	Position    int                `json:"position"`
+	Topic       *string            `json:"topic"`
 }
 
 // ChannelUpdateOutbound é o evento de atualização de canal distribuído aos clientes.
 // Topic é null para canais category (ou sem tópico).
 type ChannelUpdateOutbound struct {
-	Type      EventType `json:"type"`
-	ChannelID string    `json:"channel_id"`
-	Name      string    `json:"name"`
-	Position  int       `json:"position"`
-	Topic     *string   `json:"topic"`
+	App       *models.AppChannel `json:"app,omitempty"`
+	Type      EventType          `json:"type"`
+	ChannelID string             `json:"channel_id"`
+	Name      string             `json:"name"`
+	Position  int                `json:"position"`
+	Topic     *string            `json:"topic"`
 }
 
 // ChannelDeleteOutbound é o evento de exclusão de canal distribuído aos clientes.

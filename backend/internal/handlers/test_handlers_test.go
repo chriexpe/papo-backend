@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"papo/internal/appgateway"
 	"papo/internal/config"
 	"papo/internal/middleware"
 	"papo/internal/models"
@@ -108,6 +109,10 @@ func runRoutesTests(m *testing.M) int {
 	return code
 }
 
+// testAppGateway é o registry do último newApp; os testes do gateway o acordam
+// depois de distribuir eventos, como o dispatcher faz em produção.
+var testAppGateway *appgateway.Registry
+
 // newApp monta a instância do Echo com as rotas de autenticação, usuários,
 // servidores, canais e roles consolidadas em handlers/routes.go
 // (tarefas 4.9, 5.2, 5.4 e 6.2).
@@ -119,7 +124,7 @@ func newApp() *echo.Echo {
 	// Mesma política de main.go: limite global JSON, /messages e o upload de
 	// webhook com limite de upload próprio (registrado na rota).
 	e.Use(middleware.BodyLimit(middleware.MaxJSONBodySize, func(c echo.Context) bool {
-		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages"
+		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
 	}))
 
 	cfg := config.LoadConfig()
@@ -137,6 +142,8 @@ func newApp() *echo.Echo {
 	RegisterSearchRoutes(e, cfg)
 	RegisterWebSocketRoutes(e, cfg)
 	RegisterWebhookRoutes(e, cfg)
+	testAppGateway = appgateway.NewRegistry()
+	RegisterAppRoutes(e, cfg, testAppGateway)
 	return e
 }
 
@@ -1262,7 +1269,8 @@ func TestListUsersRouteWithAuth(t *testing.T) {
 		t.Fatalf("PUT /users/:id retornou %d (corpo: %s)", putRec.Code, putRec.Body.String())
 	}
 
-	rec := do(t, e, http.MethodGet, "/users", nil, authCookie(token))
+	// A fixture recém-criada está na página mais recente, mesmo com outros usuários anteriores.
+	rec := do(t, e, http.MethodGet, "/users?order=desc", nil, authCookie(token))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("esperava status 200, obtive %d (corpo: %s)", rec.Code, rec.Body.String())
@@ -1306,7 +1314,8 @@ func TestListUsersRouteIncludesRoles(t *testing.T) {
 		t.Fatalf("falha ao atribuir role: %v", err)
 	}
 
-	rec := do(t, e, http.MethodGet, "/users", nil, authCookie(token))
+	// O usuário recém-criado deve estar na primeira página, mesmo com fixtures anteriores.
+	rec := do(t, e, http.MethodGet, "/users?order=desc", nil, authCookie(token))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("esperava status 200, obtive %d (corpo: %s)", rec.Code, rec.Body.String())
