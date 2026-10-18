@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"net/http"
+
 	"papo/internal/appgateway"
 	"papo/internal/config"
 	"papo/internal/middleware"
@@ -347,7 +349,7 @@ func RegisterWebhookRoutes(e *echo.Echo, cfg *config.Config) {
 
 // RegisterAppRoutes registra gestão humana e execução remota com ACL própria.
 func RegisterAppRoutes(e *echo.Echo, cfg *config.Config, gateway *appgateway.Registry) {
-	e.GET("/apps/:app_id/ui/*", func(c echo.Context) error { return AppUIHandler(cfg.BaseURL, c) })
+	e.GET("/apps/:app_id/ui/:digest/*", func(c echo.Context) error { return AppUIHandler(cfg.BaseURL, c) })
 	management := e.Group("/apps", middleware.JWTMiddleware, middleware.RequireManageApps())
 	management.POST("", func(c echo.Context) error { return CreateAppHandler(cfg.BaseURL, c) })
 	management.GET("", func(c echo.Context) error { return ListAppsHandler(cfg.BaseURL, c) })
@@ -368,11 +370,41 @@ func RegisterAppRoutes(e *echo.Echo, cfg *config.Config, gateway *appgateway.Reg
 // RegisterPluginRoutes expõe somente descoberta e consentimento; não há upload de artefatos.
 func RegisterPluginRoutes(e *echo.Echo, baseURL string, m *services.PluginManager) {
 	g := e.Group("/plugins", middleware.JWTMiddleware, middleware.RequireManageApps())
-	g.GET("", func(c echo.Context) error { return PluginHandler(baseURL, m, "list", c) })
-	g.POST("/rescan", func(c echo.Context) error { return PluginHandler(baseURL, m, "rescan", c) })
-	for _, action := range []string{"preview", "enable", "disable", "trigger"} {
-		a := action
-		g.POST("/:id/"+a, func(c echo.Context) error { return PluginHandler(baseURL, m, a, c) }, middleware.BodyLimit(plugins.MaxPayload, nil))
-	}
-	g.PATCH("/:id", func(c echo.Context) error { return PluginHandler(baseURL, m, "patch", c) }, middleware.BodyLimit(plugins.MaxPayload, nil))
+	limit := middleware.BodyLimit(plugins.MaxPayload, nil)
+	g.GET("", func(c echo.Context) error { return ListPluginsHandler(baseURL, m, c) })
+	g.POST("/rescan", func(c echo.Context) error { return RescanPluginsHandler(baseURL, m, c) })
+	g.POST("/:id/preview", func(c echo.Context) error { return PreviewPluginHandler(baseURL, m, c) }, limit)
+	g.POST("/:id/enable", func(c echo.Context) error { return EnablePluginHandler(baseURL, m, c) }, limit)
+	g.POST("/:id/disable", func(c echo.Context) error { return DisablePluginHandler(baseURL, m, c) }, limit)
+	g.POST("/:id/trigger", func(c echo.Context) error { return TriggerPluginHandler(baseURL, m, c) }, limit)
+	g.PATCH("/:id", func(c echo.Context) error { return PatchPluginHandler(baseURL, m, c) }, limit)
+}
+
+// RegisterAppInteractionRoutes registra as rotas humanas dos plugins
+// (interações, lançamento de UI, convites e preferências) e a ponte UI. session
+// e rpc são públicas para a origem opaca e autenticam só por ticket ou Bearer.
+func RegisterAppInteractionRoutes(e *echo.Echo, baseURL string, m *services.PluginManager) {
+	e.POST("/interactions", func(c echo.Context) error {
+		return InteractHandler(baseURL, m, c)
+	}, middleware.JWTMiddleware)
+	e.POST("/apps/:app_id/launch", func(c echo.Context) error {
+		return LaunchAppUIHandler(baseURL, m, c)
+	}, middleware.JWTMiddleware)
+	e.OPTIONS("/apps/:app_id/session", func(c echo.Context) error { return c.NoContent(http.StatusNoContent) }, appBridgeCORS)
+	e.POST("/apps/:app_id/session", func(c echo.Context) error {
+		return AppUISessionHandler(baseURL, m, c)
+	}, appBridgeCORS)
+	e.OPTIONS("/apps/:app_id/rpc", func(c echo.Context) error { return c.NoContent(http.StatusNoContent) }, appBridgeCORS)
+	e.POST("/apps/:app_id/rpc", func(c echo.Context) error {
+		return AppUIRPCHandler(baseURL, m, c)
+	}, appBridgeCORS)
+	e.POST("/notifications/:id/accept", func(c echo.Context) error {
+		return DecideInviteHandler(baseURL, m, "accepted", c)
+	}, middleware.JWTMiddleware)
+	e.POST("/notifications/:id/decline", func(c echo.Context) error {
+		return DecideInviteHandler(baseURL, m, "declined", c)
+	}, middleware.JWTMiddleware)
+	e.PATCH("/apps/:app_id/user-settings", func(c echo.Context) error {
+		return AppUserSettingsHandler(baseURL, c)
+	}, middleware.JWTMiddleware)
 }

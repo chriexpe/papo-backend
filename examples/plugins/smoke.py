@@ -123,7 +123,7 @@ def main():
             embed = message["embeds"][0]
             assert embed["source_type"] == "app" and embed["surface"]["id"] == "result" and embed["entry"]
             print("PASS: reference trigger reads template and posts own inline embed")
-            ui = base + "/apps/" + installed["reference"]["id"] + "/ui/index.html"
+            ui = base + "/apps/" + installed["reference"]["id"] + "/ui/" + installed["reference"]["plugin_digest"] + "/index.html"
             headers = subprocess.check_output(["curl", "-fsS", "-D", "-", "-o", str(Path(work) / "ui.html"), ui], text=True)
             assert "sandbox allow-scripts allow-forms" in headers and "allow-same-origin" not in headers
             assert "nosniff" in headers and "no-referrer" in headers and "Set-Cookie:" not in headers
@@ -178,7 +178,7 @@ def main():
                 "app_installation_id": app_id, "channel_id": app_channel["id"],
                 "kind": "user_action", "action_id": "convidar", "target_user_id": player["id"],
             })
-            assert status == 202
+            assert status == 200
             cookie = player_cookie
             _, notifications, _ = request("GET", f"/users/{player['id']}/notifications")
             invite = next(n for n in notifications["notifications"] if n["kind"] == "app_invite")
@@ -242,7 +242,7 @@ def main():
             game_message = next(m for m in chat["messages"] if m["id"] == final["game"]["message_id"])
             assert game_message["components"][0][1]["opens"] == "result"
             assert game_message["embeds"][0]["display"] == "overlay"
-            assert request("POST", "/interactions", {"app_installation_id": app_id, "channel_id": channel["id"], "kind": "button", "message_id": game_message["id"], "component_id": "revanche"})[0] == 202
+            assert request("POST", "/interactions", {"app_installation_id": app_id, "channel_id": channel["id"], "kind": "button", "message_id": game_message["id"], "component_id": "revanche"})[0] == 200
             assert rpc(player_token, "game.state")["game"]["winner"] == ""
             print("PASS: message components and opens overlay; Revanche resets persisted game")
             _, only, _ = request("POST", "/plugins/reference/trigger", {"request": {
@@ -262,7 +262,7 @@ def main():
                     if surface == "result":
                         selection["message_id"] = game_message["id"]
                     _, ticket, _ = request("POST", f"/apps/{app_id}/launch", selection)
-                    page = base + f"/apps/{app_id}/ui/{file}#papo_ticket=" + ticket["ticket"]
+                    page = base + ticket["surface"]["entry"].rsplit("/", 1)[0] + f"/{file}#papo_ticket=" + ticket["ticket"]
                     checked = subprocess.run([str(Path(args.avatar_browser).resolve())], input=page + "\n", text=True, capture_output=True, timeout=30)
                     if checked.returncode:
                         # O ticket não é exibido, nem em falha do verificador.

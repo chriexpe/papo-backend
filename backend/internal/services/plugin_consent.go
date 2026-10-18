@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -55,34 +54,47 @@ type PluginPreview struct {
 
 // Preview revalida pasta, settings e leitura humana dos escopos antes de assinar o consentimento.
 func (m *PluginManager) Preview(ctx context.Context, actor, id string, o PluginOptions) (PluginPreview, error) {
-	b, e := m.bundle(ctx, id, true)
-	if errors.Is(e, plugins.ErrBusy) {
-		return PluginPreview{}, e
+	b, err := m.liveBundle(ctx, id, true)
+	if err != nil {
+		return PluginPreview{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	if e != nil {
-		return PluginPreview{}, fmt.Errorf("%w: %v", ErrInvalidInput, e)
-	}
-	p, e := m.preview(ctx, actor, b, o)
-	if e == nil {
+	p, err := m.preview(ctx, actor, b, o)
+	if err == nil {
 		p.Consent = m.consentToken(actor, p)
 	}
-	return p, e
+	return p, err
 }
 
 // preview resolve valores e fontes sem conceder nada nem instanciar Wasm.
 func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundle.Bundle, o PluginOptions) (PluginPreview, error) {
-	p := PluginPreview{ID: b.Manifest.ID, Digest: b.Digest, Version: b.Manifest.Version, Name: b.Manifest.Name, Settings: map[string]any{}, RequestedPermissions: sorted(b.Manifest.Permissions.Request), Permissions: []string{}, BlockedPermissions: []string{}, Scopes: []string{}, ExplicitScopes: []string{}, Origins: []string{}, Surfaces: []AppSurfaceDeclaration{}, MaxMemoryMB: b.Manifest.Runtime.MaxMemoryMB, State: "discovered", ExpiresAt: o.ExpiresAt}
+	p := PluginPreview{
+		ID:                   b.Manifest.ID,
+		Digest:               b.Digest,
+		Version:              b.Manifest.Version,
+		Name:                 b.Manifest.Name,
+		Settings:             map[string]any{},
+		RequestedPermissions: sorted(b.Manifest.Permissions.Request),
+		Permissions:          []string{},
+		BlockedPermissions:   []string{},
+		Scopes:               []string{},
+		ExplicitScopes:       []string{},
+		Origins:              []string{},
+		Surfaces:             []AppSurfaceDeclaration{},
+		MaxMemoryMB:          b.Manifest.Runtime.MaxMemoryMB,
+		State:                "discovered",
+		ExpiresAt:            o.ExpiresAt,
+	}
 	if p.ExpiresAt == 0 {
 		p.ExpiresAt = time.Now().Add(15 * time.Minute).Unix()
 	}
 	if p.ExpiresAt < time.Now().Unix() || p.ExpiresAt > time.Now().Add(15*time.Minute+time.Second).Unix() {
 		return p, ErrPluginConsent
 	}
-	current, e := storage.FindPlugin(ctx, p.ID)
-	if e != nil && e != storage.ErrNotFound {
-		return p, e
+	current, err := storage.FindPlugin(ctx, p.ID)
+	if err != nil && err != storage.ErrNotFound {
+		return p, err
 	}
-	if e == nil {
+	if err == nil {
 		p.StorageQuotaOverrides = current.StorageQuotaOverrides
 		p.Revision = current.PluginRevision
 		p.State = current.PluginState
@@ -102,8 +114,8 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 			p.StorageQuotaOverrides.MaxValueBytes = v.MaxValueBytes
 		}
 	}
-	p.StorageQuota, e = config.EffectiveAppStorageQuota(p.StorageQuotaOverrides)
-	if e != nil {
+	p.StorageQuota, err = config.EffectiveAppStorageQuota(p.StorageQuotaOverrides)
+	if err != nil {
 		return p, ErrInvalidInput
 	}
 	values := map[string]any{}
@@ -180,8 +192,8 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 		p.ExplicitScopes = o.Scopes
 	}
 	for i, v := range p.ExplicitScopes {
-		id, e := uuid.Parse(v)
-		if e != nil {
+		id, err := uuid.Parse(v)
+		if err != nil {
 			return p, ErrInvalidInput
 		}
 		p.ExplicitScopes[i] = id.String()
@@ -189,26 +201,26 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 	p.ExplicitScopes = sorted(p.ExplicitScopes)
 	p.Scopes = sorted(append(p.Scopes, p.ExplicitScopes...))
 	for _, channel := range p.Scopes {
-		if _, e = uuid.Parse(channel); e != nil {
+		if _, err = uuid.Parse(channel); err != nil {
 			return p, ErrInvalidInput
 		}
-		ch, e := storage.GetChannelByID(ctx, channel)
-		if e != nil {
-			return p, e
+		ch, err := storage.GetChannelByID(ctx, channel)
+		if err != nil {
+			return p, err
 		}
 		if ch.Type != "text" && ch.Type != "voice" {
 			return p, ErrPermissionDenied
 		}
 		if actor != "" {
-			if e = requireWebhookChannelRead(ctx, ch, actor); e != nil {
-				return p, e
+			if err = requireWebhookChannelRead(ctx, ch, actor); err != nil {
+				return p, err
 			}
 		}
 	}
 	for _, s := range b.Manifest.RemoteOrigins {
-		normalized, e := validateRemoteSurfaceURL(ctx, s, config.LoadConfig().BaseURL)
-		if e != nil {
-			return p, e
+		normalized, err := validateRemoteSurfaceURL(ctx, s, config.LoadConfig().BaseURL)
+		if err != nil {
+			return p, err
 		}
 		u, _ := url.Parse(normalized)
 		p.Origins = append(p.Origins, utils.OriginURL(u))
@@ -216,9 +228,6 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 	p.Origins = sorted(p.Origins)
 	for _, s := range b.Manifest.Surfaces {
 		d := AppSurfaceDeclaration{ID: s.ID, Kind: s.Kind, DefaultName: s.DefaultName, Source: "bundled", Entry: s.Entry, Size: s.Size, Load: s.Load, Display: s.Display, Poster: s.Poster}
-		if d.Size.Width == 0 && d.Size.Height == 0 {
-			d.Size = models.AppSurfaceSize{Width: s.Frame.Width, Height: s.Frame.Height}
-		}
 		if s.EntryURL != "" {
 			d.Source = "remote"
 			d.Entry = s.EntryURL
@@ -233,9 +242,9 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 		}
 		p.Surfaces = append(p.Surfaces, d)
 	}
-	p.Surfaces, e = validateAppSurfaces(ctx, PluginSurfaceBundle{Directory: b.Directory, ApprovedOrigins: p.Origins}, p.Surfaces)
-	if e != nil {
-		return p, e
+	p.Surfaces, err = validateAppSurfaces(ctx, PluginSurfaceBundle{Directory: b.Directory, ApprovedOrigins: p.Origins}, p.Surfaces)
+	if err != nil {
+		return p, err
 	}
 	for _, permission := range p.RequestedPermissions {
 		if !m.Config.PermissionAllowed(permission) {
@@ -261,8 +270,8 @@ func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundl
 	if p.MaxMemoryMB < 1 || p.MaxMemoryMB > b.Manifest.Runtime.MaxMemoryMB || p.MaxMemoryMB > m.Config.MaxMemoryMB {
 		return p, ErrInvalidInput
 	}
-	if e = m.Host.Validate(plugins.WithMemoryLimit(ctx, p.MaxMemoryMB), b.Module); e != nil {
-		return p, e
+	if err = m.Host.Validate(plugins.WithMemoryLimit(ctx, p.MaxMemoryMB), b.Module); err != nil {
+		return p, err
 	}
 	return p, nil
 }
@@ -303,7 +312,13 @@ func expanded(next, old []string) bool {
 
 // capabilities converte somente grants conhecidos para os checks comuns do REST.
 func capabilities(p []string) models.AppCapabilities {
-	return models.AppCapabilities{SendMessages: has(p, "send_messages"), ReadMessages: has(p, "read_messages"), PostAppEmbeds: has(p, "post_app_embeds"), PrivateStorage: has(p, "private_storage"), SendInvites: has(p, "send_invites")}
+	return models.AppCapabilities{
+		SendMessages:   has(p, "send_messages"),
+		ReadMessages:   has(p, "read_messages"),
+		PostAppEmbeds:  has(p, "post_app_embeds"),
+		PrivateStorage: has(p, "private_storage"),
+		SendInvites:    has(p, "send_invites"),
+	}
 }
 
 // jsonValue mantém uma representação SQL/JSON canônica sem expor objetos mutáveis.

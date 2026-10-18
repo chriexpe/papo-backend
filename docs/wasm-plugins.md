@@ -1,12 +1,9 @@
-# Plugins de pasta — plano v7
+# Plugins de pasta
 
-Esta correção é empilhada sobre a #18 corrigida (`a4e80e1`, merge `584fa53`).
-A #19 usa a mesma branch, com commits novos e sem reescrever histórico.
-A migration **021** vem depois da 019 de superfícies e da 020 já publicada.
-Ela converte `view`/`wasm` em `plugin`, preservando identidade e mensagens;
-instalações legadas ficam desabilitadas, sem grants/backlog, até consentimento novo.
-`remote` continua separado, com token. Os campos de artefato antigos são legados;
-plugins novos usam exclusivamente a pasta e `plugin_digest`.
+Plugins (`kind = plugin`) são pastas em `PLUGINS_DIR` com `plugin.wasm` e
+`plugin.toml`, executadas pelo próprio backend depois de um consentimento
+explícito; apps `remote` continuam separados, com token próprio. O schema está
+em `migrations/022_app_plugins.sql`.
 
 ## Pasta e ferramentas
 
@@ -88,8 +85,8 @@ só é concedido pelo enable aprovado. Não concede capacidade send/read sozinho
 Cada superfície escolhe exatamente uma fonte: `entry` dentro de `ui/`,
 `entry_url` HTTPS de origem declarada, ou `entry_url_setting` referindo um setting
 `https_url`. Origens desses settings entram explicitamente no consentimento.
-As regras de URL/DNS/host são as da #18; não há proxy remoto. Canal exige
-`default_name`; embed exige size positivo e segue os tetos da C4 (padrão 560×420), load e display. O campo frame antigo é aceito como alias de size.
+As regras de URL/DNS/host são as das superfícies remotas (docs/app-surfaces.md); não há proxy remoto. Canal exige
+`default_name`; embed exige size positivo e segue os tetos do servidor (padrão 560×420), load e display.
 
 ## Configuração
 
@@ -116,12 +113,19 @@ nega tudo. Blocked sempre prevalece. O consentimento pode restringir ainda mais.
 O override de memória não excede o pedido no manifest nem o teto global.
 
 Rejeitam-se links, arquivos especiais, traversal, caminhos não canônicos/absolutos,
-colisões de nomes ignorando caixa e extensões de UI fora do allowlist da #18.
+colisões de nomes ignorando caixa e extensões de UI fora do allowlist da rota de UI.
 Entradas de diretório também são limitadas (até `2*PLUGINS_MAX_FILES+1`). Ícones
 precisam decodificar como PNG/WebP, dimensão até 4096². O digest SHA-256 usa arquivos
 ordenados, comprimento/caminho, comprimento/conteúdo; inclui manifest, ícone, UI,
-templates, locales e todos os demais arquivos. É reconferido na fronteira de
-invocação, antes de compilar e nas leituras de host/UI.
+templates, locales e todos os demais arquivos.
+
+Ao habilitar (ou no hot reload), a pasta é copiada para
+`PLUGINS_DIR/.approved/<digest>/<id>` e a cópia é validada e hasheada de novo;
+ela só é publicada se o digest for o do consentimento. Execução, `asset.read`,
+UI e superfícies usam somente essa cópia, carregada uma vez em memória. Editar a
+pasta viva não afeta nada até o próximo rescan (manual, no startup ou pelo watch
+do hot reload). Cópias que não pertencem a um plugin habilitado são removidas
+no rescan. Pastas que começam com `.` não são candidatas à descoberta.
 
 ## Endpoints e consentimento
 
@@ -146,7 +150,7 @@ Enable recebe a **mesma seleção** e os campos `consent`/`expires_at` do previe
 O HMAC vincula ator e payload completo; expira em 15 minutos e invalida em restart.
 Mudança de arquivo, política, revisão, settings, escopo ou origem rejeita aprovação
 antiga (409). A leitura humana de cada canal é verificada novamente no enable.
-Grants/settings/escopos são persistidos em uma transação; depois os hooks da #18
+Grants/settings/escopos são persistidos em uma transação; depois os hooks de canais app
 reconciliam canais e executa-se on_enable. Falha de callback/hook remove grants e
 canais em cleanup com contexto próprio, mesmo que a requisição tenha sido cancelada.
 Efeitos de mensagem já confirmados não são revertidos.
@@ -159,10 +163,10 @@ autoridade e não requer consentimento novo. Renomear/reordenar canais app conti
 nas rotas normais de gestão de canais; reconciliação conserva ID/nome/posição/ACL
 quando `surface_id` persiste.
 
-Sem hot reload, qualquer digest novo em plugin habilitado põe em quarentena até
-reaprovação. Com hot reload, sem expansão do pedido de permissões/origens/escopos,
-a troca é automática na próxima fronteira de invocação; expansão exige consentimento.
-Novos bytes nunca são executados pelo on_disable da versão antiga. Quarentena
+No rescan, sem hot reload, um digest novo em plugin habilitado põe em quarentena
+até reaprovação. Com hot reload (watch de 1 s), sem expansão do pedido de
+permissões/origens/escopos, a versão nova é aprovada e aplicada automaticamente;
+expansão exige consentimento. on_disable sempre executa a versão aprovada. Quarentena
 persiste no banco, conserva canais (indisponíveis) e impede novas invocações.
 Disable/remove revoga grants, apaga backlog/escopos/canais e deixa embeds históricos
 inertes. Falha de on_disable é reportada, mas não interrompe esse cleanup.
@@ -212,7 +216,7 @@ Asset retorna `result.data` em base64, `offset` e `length`; leituras parciais pe
 arquivos maiores até o teto de asset. KV exige `private_storage`: 256 chaves,
 1 MiB agregado de chave + JSON normalizado, chave de 1–200 bytes, valor padrão até 16 KiB (configurável),
 revisão incrementada em update (delete + put reinicia em 1). SQL serializa a quota.
-`message.send` usa `CreatePluginMessage` da #18, mesmo armazenamento/publicação de
+`message.send` usa `CreatePluginMessage`, mesmo armazenamento/publicação de
 mensagens, capacidade send e escopo atual; até um embed da própria superfície
 `embed` com `post_app_embeds`. Humanos/webhooks e superfícies alheias são recusados.
 Edit/delete só atingem mensagens próprias. Não há `external_author` arbitrário.
@@ -306,9 +310,10 @@ efetiva em storage_quota e configuração persistida em storage_quota_overrides.
 O consentimento assinado inclui ambas. Overrides não podem vir do manifest,
 setting do guest ou RPC. PATCH exige manage_apps, como max_memory_mb.
 
-A mutation KV resolve os limites dentro da transação e lock da instalação,
-incluindo JSONB normalizado e bytes UTF-8 das chaves. A redução não apaga dados;
-novas escritas precisam caber e delete continua disponível. Reaprovação, restart
-e hot reload preservam o override. Migration 023 amplia o CHECK físico legado;
-down restaura o teto antigo para novas escritas com NOT VALID, preservando valores
-maiores já gravados. Up subsequente aceita esses valores novamente.
+A mutation KV resolve os limites dentro da transação, travando somente a linha
+de uso da instalação (`app_storage_usage`, atualizada na mesma transação), com
+JSONB normalizado e bytes UTF-8 das chaves; não soma todas as chaves a cada
+escrita. A redução não apaga dados; novas escritas precisam caber e delete
+continua disponível. Reaprovação, restart e hot reload preservam o override. O
+CHECK físico de app_storage limita cada valor a 64 KiB, acima do teto
+configurável por valor.

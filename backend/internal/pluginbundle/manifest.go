@@ -57,10 +57,6 @@ type Surface struct {
 	Load            string                `toml:"load" json:"load"`
 	Display         string                `toml:"display" json:"display"`
 	Poster          string                `toml:"poster" json:"poster"`
-	Frame           struct {
-		Width  int `toml:"width" json:"width"`
-		Height int `toml:"height" json:"height"`
-	} `toml:"frame" json:"frame"`
 }
 
 // SafePath aceita somente caminhos portáveis relativos e canônicos.
@@ -80,8 +76,8 @@ func SafePath(s string) bool {
 func Parse(data []byte, c Config) (Manifest, error) {
 	var m Manifest
 	d := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
-	if e := d.Decode(&m); e != nil {
-		return m, e
+	if err := d.Decode(&m); err != nil {
+		return m, err
 	}
 	if m.ManifestVersion != 1 || !identifier.MatchString(m.ID) || !displayName(m.Name) || utf8.RuneCountInString(m.Name) > 80 || !validVersion(m.Version) || m.MinPapoAPI != 1 {
 		return m, fmt.Errorf("identidade/API do manifest inválida")
@@ -139,8 +135,8 @@ func Parse(data []byte, c Config) (Manifest, error) {
 			return m, fmt.Errorf("entry inválido")
 		}
 		if s.EntryURL != "" {
-			if _, e := HTTPSOrigin(s.EntryURL); e != nil {
-				return m, e
+			if _, err := HTTPSOrigin(s.EntryURL); err != nil {
+				return m, err
 			}
 		}
 		if s.EntryURLSetting != "" && settings[s.EntryURLSetting].Type != "https_url" {
@@ -164,9 +160,6 @@ func Parse(data []byte, c Config) (Manifest, error) {
 		if s.Poster != "" && (!SafePath(s.Poster) || !strings.HasPrefix(s.Poster, "ui/")) {
 			return m, fmt.Errorf("poster inválido")
 		}
-		if s.Frame.Width < 0 || s.Frame.Width > 1920 || s.Frame.Height < 0 || s.Frame.Height > 1080 {
-			return m, fmt.Errorf("frame inválido")
-		}
 	}
 	seen = map[string]bool{}
 	if len(m.UserActions) > 20 {
@@ -182,24 +175,24 @@ func Parse(data []byte, c Config) (Manifest, error) {
 		}
 	}
 	for _, s := range m.RemoteOrigins {
-		o, e := HTTPSOrigin(s)
-		if e != nil || o != s {
+		o, err := HTTPSOrigin(s)
+		if err != nil || o != s {
 			return m, fmt.Errorf("origem inválida: %s", s)
 		}
 	}
 	return m, nil
 }
 
-// HTTPSOrigin faz validação sintática; o serviço aplica a política SSRF/DNS da PR 18.
+// HTTPSOrigin faz validação sintática; o serviço aplica a política SSRF/DNS das superfícies remotas.
 func HTTPSOrigin(raw string) (string, error) {
-	u, e := url.Parse(raw)
-	if e != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Port() != "" && u.Port() != "443") || len(raw) > 2048 {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Port() != "" && u.Port() != "443") || len(raw) > 2048 {
 		return "", fmt.Errorf("URL HTTPS inválida")
 	}
 	return "https://" + strings.ToLower(u.Host), nil
 }
 
-// UIExtension coincide com o allowlist da rota pública da PR 18.
+// UIExtension coincide com o allowlist da rota pública de UI (handlers.AppUIHandler).
 func UIExtension(name string) bool {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".html", ".css", ".js", ".mjs", ".json", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".otf", ".txt", ".wasm":
@@ -271,15 +264,15 @@ func validDefault(s Setting) bool {
 		if !ok {
 			return false
 		}
-		_, e := uuid.Parse(v)
-		return e == nil
+		_, err := uuid.Parse(v)
+		return err == nil
 	case "https_url":
 		v, ok := s.Default.(string)
 		if !ok {
 			return false
 		}
-		_, e := HTTPSOrigin(v)
-		return e == nil
+		_, err := HTTPSOrigin(v)
+		return err == nil
 	}
 	return false
 }

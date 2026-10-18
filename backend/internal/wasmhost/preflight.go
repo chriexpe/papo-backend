@@ -16,16 +16,16 @@ func preflight(data []byte) error {
 	}
 	r := bytes.NewReader(data[8:])
 	for r.Len() > 0 {
-		section, e := r.ReadByte()
-		if e != nil {
+		section, err := r.ReadByte()
+		if err != nil {
 			return plugins.ErrInvalidArtifact
 		}
-		n, e := binary.ReadUvarint(r)
-		if e != nil || n > uint64(r.Len()) {
+		n, err := binary.ReadUvarint(r)
+		if err != nil || n > uint64(r.Len()) {
 			return plugins.ErrInvalidArtifact
 		}
 		payload := make([]byte, int(n))
-		if _, e = io.ReadFull(r, payload); e != nil {
+		if _, err = io.ReadFull(r, payload); err != nil {
 			return plugins.ErrInvalidArtifact
 		}
 		if section == 8 {
@@ -35,25 +35,25 @@ func preflight(data []byte) error {
 		// Limita tabelas de funções: WithMemoryLimitPages cobre apenas memória linear.
 		if section == 4 {
 			table := bytes.NewReader(payload)
-			count, e := binary.ReadUvarint(table)
-			if e != nil || count > 1 {
+			count, err := binary.ReadUvarint(table)
+			if err != nil || count > 1 {
 				return plugins.ErrInvalidArtifact
 			}
 			for i := uint64(0); i < count; i++ {
-				ref, e := table.ReadByte()
-				if e != nil || ref != 0x70 {
+				ref, err := table.ReadByte()
+				if err != nil || ref != 0x70 {
 					return plugins.ErrInvalidArtifact
 				}
-				flags, e := table.ReadByte()
-				if e != nil || flags != 1 {
+				flags, err := table.ReadByte()
+				if err != nil || flags != 1 {
 					return plugins.ErrInvalidArtifact
 				}
-				min, e := binary.ReadUvarint(table)
-				if e != nil {
+				min, err := binary.ReadUvarint(table)
+				if err != nil {
 					return plugins.ErrInvalidArtifact
 				}
-				max, e := binary.ReadUvarint(table)
-				if e != nil || min > max || max > 4096 {
+				max, err := binary.ReadUvarint(table)
+				if err != nil || min > max || max > 4096 {
 					return plugins.ErrInvalidArtifact
 				}
 			}
@@ -63,8 +63,8 @@ func preflight(data []byte) error {
 		}
 		// Contagens também limitam metadados/compilação de módulos pequenos artificiais.
 		if section == 1 || section == 3 || section == 6 || section == 9 || section == 11 {
-			count, e := binary.ReadUvarint(bytes.NewReader(payload))
-			if e != nil || count > 4096 {
+			count, err := binary.ReadUvarint(bytes.NewReader(payload))
+			if err != nil || count > 4096 {
 				return plugins.ErrInvalidArtifact
 			}
 		}
@@ -72,23 +72,23 @@ func preflight(data []byte) error {
 			continue
 		}
 		imports := bytes.NewReader(payload)
-		count, e := binary.ReadUvarint(imports)
-		if e != nil || count > 64 {
+		count, err := binary.ReadUvarint(imports)
+		if err != nil || count > 64 {
 			return plugins.ErrInvalidArtifact
 		}
 		for i := uint64(0); i < count; i++ {
 			for j := 0; j < 2; j++ {
-				size, e := binary.ReadUvarint(imports)
-				if e != nil || size > uint64(imports.Len()) {
+				size, err := binary.ReadUvarint(imports)
+				if err != nil || size > uint64(imports.Len()) {
 					return plugins.ErrInvalidArtifact
 				}
 				imports.Seek(int64(size), io.SeekCurrent)
 			}
-			kind, e := imports.ReadByte()
-			if e != nil || kind != 0 {
+			kind, err := imports.ReadByte()
+			if err != nil || kind != 0 {
 				return plugins.ErrInvalidArtifact
 			}
-			if _, e = binary.ReadUvarint(imports); e != nil {
+			if _, err = binary.ReadUvarint(imports); err != nil {
 				return plugins.ErrInvalidArtifact
 			}
 		}

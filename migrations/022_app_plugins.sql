@@ -29,6 +29,15 @@ CREATE TABLE app_storage (
     PRIMARY KEY (installation, key)
 );
 
+-- Uso acumulado de app_storage por instalação (chaves e bytes de chave + JSONB
+-- normalizado), mantido na mesma transação de cada escrita para checar a
+-- quota sem somar todas as chaves.
+CREATE TABLE app_storage_usage (
+    installation UUID PRIMARY KEY REFERENCES app_installations(id) ON DELETE CASCADE,
+    keys         INTEGER NOT NULL DEFAULT 0 CHECK (keys >= 0),
+    bytes        BIGINT NOT NULL DEFAULT 0 CHECK (bytes >= 0)
+);
+
 -- Botões de mensagens de apps (até duas linhas de cinco).
 ALTER TABLE messages ADD COLUMN components JSONB NOT NULL DEFAULT '[]';
 
@@ -56,6 +65,9 @@ CREATE TABLE app_user_settings (
 );
 
 -- Tickets e sessões da ponte UI↔plugin; somente o SHA-256 do segredo.
+-- generation é comparada com app_installations.ui_generation: disable,
+-- quarentena e nova aprovação incrementam a geração e invalidam tudo. Leitura
+-- do canal, banimento e estado da instalação são revalidados a cada chamada.
 CREATE TABLE app_ui_tokens (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token_hash          TEXT NOT NULL UNIQUE,
@@ -76,32 +88,7 @@ CREATE TABLE app_ui_tokens (
 CREATE INDEX app_ui_tokens_expiry ON app_ui_tokens (expires_at);
 CREATE INDEX app_ui_tokens_installation ON app_ui_tokens (installation_id, user_id);
 
-CREATE TABLE app_rate_limits (
-    key       TEXT PRIMARY KEY,
-    window_at TIMESTAMPTZ NOT NULL,
-    count     INT NOT NULL
-);
-
--- Mudanças de ACL revogam tokens mesmo se o acesso for concedido novamente antes do próximo RPC.
--- +goose StatementBegin
-CREATE FUNCTION revoke_app_ui_acl() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    DELETE FROM app_ui_tokens;
-    RETURN NULL;
-END $$;
--- +goose StatementEnd
-CREATE TRIGGER app_ui_channel_acl AFTER UPDATE OF permissions ON channels FOR EACH STATEMENT EXECUTE FUNCTION revoke_app_ui_acl();
-CREATE TRIGGER app_ui_role_acl AFTER UPDATE OF permissions ON roles FOR EACH STATEMENT EXECUTE FUNCTION revoke_app_ui_acl();
-CREATE TRIGGER app_ui_membership_acl AFTER INSERT OR UPDATE OR DELETE ON user_roles FOR EACH STATEMENT EXECUTE FUNCTION revoke_app_ui_acl();
-CREATE TRIGGER app_ui_ban_acl AFTER UPDATE OF banned ON users FOR EACH STATEMENT EXECUTE FUNCTION revoke_app_ui_acl();
-
 -- +goose Down
-DROP TRIGGER app_ui_channel_acl ON channels;
-DROP TRIGGER app_ui_role_acl ON roles;
-DROP TRIGGER app_ui_membership_acl ON user_roles;
-DROP TRIGGER app_ui_ban_acl ON users;
-DROP FUNCTION revoke_app_ui_acl();
-DROP TABLE app_rate_limits;
 DROP TABLE app_ui_tokens;
 DROP TABLE app_user_settings;
 DELETE FROM push_outbox WHERE notification_id IN (SELECT id FROM notifications WHERE kind = 'app_invite');
@@ -116,6 +103,7 @@ ALTER TABLE notifications
     DROP COLUMN invite_status;
 ALTER TABLE notifications ALTER COLUMN message_id SET NOT NULL;
 ALTER TABLE messages DROP COLUMN components;
+DROP TABLE app_storage_usage;
 DROP TABLE app_storage;
 DROP INDEX idx_app_installations_plugin_key;
 ALTER TABLE app_installations

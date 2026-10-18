@@ -1,10 +1,13 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
+	"image"
+	imagepng "image/png"
 	"papo/internal/models"
 	"papo/internal/plugins"
 	"papo/internal/storage"
@@ -18,7 +21,7 @@ type profileHost struct {
 	inputs map[string]json.RawMessage
 }
 
-func (h *profileHost) Invoke(ctx context.Context, id string, b, input []byte, call plugins.Call) ([]byte, error) {
+func (h *profileHost) Invoke(ctx context.Context, id string, b plugins.Module, input []byte, call plugins.Call) ([]byte, error) {
 	var event struct {
 		Type  string          `json:"type"`
 		Input json.RawMessage `json:"input"`
@@ -31,7 +34,11 @@ func (h *profileHost) Invoke(ctx context.Context, id string, b, input []byte, ca
 func assertPublicProfile(t *testing.T, b json.RawMessage, user models.User) {
 	t.Helper()
 	var p map[string]any
-	if json.Unmarshal(b, &p) != nil || len(p) != 4 || p["id"] != user.ID || p["username"] != user.Username || p["avatar_url"] != "/users/"+user.ID+"/avatar" {
+	var avatar any
+	if user.AvatarMedia != nil {
+		avatar = "/users/" + user.ID + "/avatar"
+	}
+	if json.Unmarshal(b, &p) != nil || len(p) != 4 || p["id"] != user.ID || p["username"] != user.Username || p["avatar_url"] != avatar {
 		t.Fatalf("perfil público inválido: %s", b)
 	}
 	want := user.Username
@@ -69,6 +76,31 @@ func TestAppCallbackProfiles(t *testing.T) {
 }
 
 // TestAppUsersResolve aplica a união de canais próprios/escopos atuais, sem distinguir ausentes de negados.
+// TestAppUsersResolveAvatar devolve avatar_url null sem avatar e o caminho
+// público quando o usuário tem avatar.
+func TestAppUsersResolveAvatar(t *testing.T) {
+	m, u, _, a, _, _ := interactionFixture(t)
+	profiles, err := m.ResolveUsers(testCtx(), a.ID, []string{u.ID})
+	if err != nil || len(profiles) != 1 || profiles[0].AvatarURL != nil {
+		t.Fatal("avatar inexistente exposto", profiles, err)
+	}
+	var png bytes.Buffer
+	if err = imagepng.Encode(&png, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	sha, _, err := StoreMediaFromBytes(testCtx(), png.Bytes(), "image/png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = storage.GetDB().Exec(`UPDATE users SET avatar_media=$2 WHERE id=$1`, u.ID, sha); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err = m.ResolveUsers(testCtx(), a.ID, []string{u.ID})
+	if err != nil || len(profiles) != 1 || profiles[0].AvatarURL == nil || *profiles[0].AvatarURL != "/users/"+u.ID+"/avatar" {
+		t.Fatal("avatar existente ausente", profiles, err)
+	}
+}
+
 func TestAppUsersResolve(t *testing.T) {
 	m, u, v, a, channel, text := interactionFixture(t)
 	role, e := storage.CreateRole(testCtx(), "profiles_"+uuid.NewString(), nil, models.RolePermissions{})
@@ -126,10 +158,8 @@ func TestAppUsersResolve(t *testing.T) {
 	if _, e = m.ResolveUsers(testCtx(), a.ID, append(ids, u.ID)); !errors.Is(e, ErrInvalidInput) {
 		t.Fatal("mais de 50", e)
 	}
-	if _, e = storage.GetDB().Exec(`DELETE FROM app_rate_limits WHERE key=$1`, "users.resolve:"+a.ID); e != nil {
-		t.Fatal(e)
-	}
-	t.Setenv("PLUGINS_USERS_RESOLVE_PER_PLUGIN", "1")
+	m.limits = newAppLimiter()
+	m.Config.Limits.UsersResolvePerPlugin = 1
 	if _, e = m.ResolveUsers(testCtx(), a.ID, []string{u.ID}); e != nil {
 		t.Fatal(e)
 	}
@@ -150,7 +180,7 @@ func TestAppStorageQuotaOverrides(t *testing.T) {
 	if updated.StorageQuota.MaxKeys != 2 || updated.StorageQuota.MaxTotalBytes != 64 || updated.StorageQuota.MaxValueBytes != 12 {
 		t.Fatal(updated.StorageQuota)
 	}
-	if _, e = storage.GetDB().Exec(`DELETE FROM app_storage WHERE installation=$1`, a.ID); e != nil {
+	if e = storage.ClearAppStorage(testCtx(), a.ID); e != nil {
 		t.Fatal(e)
 	}
 	put := func(key, raw string) error {
@@ -190,7 +220,7 @@ func TestAppStorageEnvAndLargeHostValue(t *testing.T) {
 	t.Setenv("PLUGINS_STORAGE_MAX_KEYS", "1")
 	t.Setenv("PLUGINS_STORAGE_MAX_TOTAL_BYTES", "65536")
 	t.Setenv("PLUGINS_STORAGE_MAX_VALUE_BYTES", "32768")
-	if _, e := storage.GetDB().Exec(`DELETE FROM app_storage WHERE installation=$1`, a.ID); e != nil {
+	if e := storage.ClearAppStorage(testCtx(), a.ID); e != nil {
 		t.Fatal(e)
 	}
 	large := strings.Repeat("x", 20000)

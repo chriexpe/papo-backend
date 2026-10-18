@@ -2856,15 +2856,17 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /apps/{installation_id}/ui/{path}:
+  /apps/{installation_id}/ui/{digest}/{path}:
     get:
       tags: [Apps]
       summary: Assets públicos estáticos de uma superfície bundled
       security: []
       description: |
         Rota pública porque a WebView isolada não tem sessão. Serve somente arquivos
-        estáticos da pasta ui/ do plugin resolvido pelo provedor de metadados;
-        nunca dados por usuário, templates, plugin.toml ou plugin.wasm. Não lê nem
+        estáticos da pasta ui/ da cópia aprovada do plugin; digest precisa ser o da
+        versão habilitada (outro digest responde 404). As URLs chegam prontas nos
+        payloads (entry, poster, ícones de ações) e mudam a cada versão; nunca dados
+        por usuário, templates, plugin.toml ou plugin.wasm. Não lê nem
         emite cookies. Instalação desabilitada, revogada, removida ou sem provedor: 404.
         Não lista diretórios; rejeita traversal, caminhos absolutos e symlinks.
         Nada é executado pelo backend. Tipos permitidos: HTML/CSS/JS/JSON, imagens,
@@ -2880,13 +2882,18 @@ paths:
         Access-Control-Allow-Origin: *
         Access-Control-Allow-Credentials: ausente (mesmo com o CORS global habilitado)
         ETag: derivado do digest do plugin e do caminho do asset.
-        Cache-Control: public, max-age=0, must-revalidate (revalida o digest em cada uso).
+        Cache-Control: public, max-age=31536000, immutable (a URL contém o digest da versão).
         Os mesmos headers de isolamento/CORS acompanham respostas 304. UI estática permite
         a leitura por páginas de origem opaca, inclusive fontes, módulos JS e fetch().
         Indisponibilidade responde no-store. O restante da API nunca permite Origin: null,
         mesmo quando CORS_ORIGINS contiver wildcard ou null.
       parameters:
         - {name: installation_id, in: path, required: true, schema: {type: string, format: uuid}}
+        - name: digest
+          in: path
+          required: true
+          description: Digest SHA-256 (hex) da versão aprovada do plugin.
+          schema: {type: string}
         - name: path
           in: path
           required: true
@@ -2908,7 +2915,7 @@ paths:
             application/octet-stream: {schema: {type: string, format: binary}}
         '206': {description: Intervalo do asset estático}
         '304': {description: Asset não modificado para o digest/caminho}
-        '404': {description: Instalação desabilitada ou asset inexistente/não permitido}
+        '404': {description: Instalação desabilitada, digest de outra versão ou asset inexistente/não permitido}
   /apps:
     post:
       tags:
@@ -3751,16 +3758,17 @@ paths:
       summary: Executar botão ou ação de usuário
       description: Valida leitura, plugin habilitado e seletor existente. on_interaction
         recebe identidades verificadas. Botões com opens não usam esta rota. Prazo padrão
-        de 3 s, com limites por usuário e instalação.
+        de 3 s, com limites por usuário e instalação. A resposta é síncrona e leva o
+        result devolvido pelo on_interaction, visível somente a quem clicou.
       security:
       - cookieAuth: []
       responses:
-        '202':
-          description: Operação concluída
+        '200':
+          description: on_interaction concluído
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AppInteractionAccepted'
+                $ref: '#/components/schemas/AppInteractionResult'
         '400':
           description: Parâmetros inválidos
         '401':
@@ -3884,7 +3892,7 @@ paths:
       description: 'CORS *, sem credenciais. Bearer UI com vínculo restrito. Revalida
         ACL, estado, digest e geração em cada chamada. on_ui_call recebe user_id verificado,
         channel_id, session_id, method, params e convite aceito opcional. Disable/app_invalidate
-        ou alteração de ACL revogam tokens; inválidos retornam 401. Polling padrão do
+        revogam tokens e a perda de leitura do canal os invalida; inválidos retornam 401. Polling padrão do
         SDK: 1500 ms, configurável.'
       security:
       - appUIBearer: []
@@ -6896,14 +6904,19 @@ components:
         absolute_expires_at:
           type: string
           format: date-time
-    AppInteractionAccepted:
+    AppInteractionResult:
       type: object
       additionalProperties: false
-      required: []
+      required: [interaction_id, result]
       properties:
         interaction_id:
           type: string
           format: uuid
+        result:
+          description: >
+            Valor de result no envelope {"ok":true,"result":...} do on_interaction,
+            sem alteração; null quando o plugin não devolve result.
+          nullable: true
 
     AppUserProfile:
       type: object
@@ -6925,9 +6938,10 @@ components:
           type: string
         avatar_url:
           type: string
+          nullable: true
           pattern: ^/users/[0-9a-f-]{36}/avatar$
           description: Caminho relativo ao servidor; endpoint público com CORS * sem credenciais
-            e CORP cross-origin.
+            e CORP cross-origin. null quando o usuário não tem avatar.
     AppStorageQuotaOverride:
       type: object
       additionalProperties: false

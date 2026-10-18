@@ -104,7 +104,7 @@ func TestPluginRoutes(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"source_type":"app"`) {
 		t.Fatalf("trigger %d %s", rec.Code, rec.Body.String())
 	}
-	rec = do(t, e, "GET", "/apps/"+installed[1].ID+"/ui/index.html", nil, nil)
+	rec = do(t, e, "GET", "/apps/"+installed[1].ID+"/ui/"+*installed[1].PluginDigest+"/index.html", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("UI %d %s", rec.Code, rec.Body.String())
 	}
@@ -125,7 +125,7 @@ func TestPluginRoutes(t *testing.T) {
 	if err := storage.GetDB().QueryRow("SELECT count(*) FROM app_channels WHERE app_installation_id IN ($1,$2)", installed[0].ID, installed[1].ID).Scan(&count); err != nil || count != 0 {
 		t.Fatal("canais sobrevivem disable", count, err)
 	}
-	rec = do(t, e, "GET", "/apps/"+installed[1].ID+"/ui/index.html", nil, nil)
+	rec = do(t, e, "GET", "/apps/"+installed[1].ID+"/ui/"+*installed[1].PluginDigest+"/index.html", nil, nil)
 	if rec.Code != 404 || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("UI desabilitada disponível", rec.Code)
 	}

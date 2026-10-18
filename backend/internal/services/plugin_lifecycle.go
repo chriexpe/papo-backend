@@ -11,35 +11,109 @@ import (
 	"papo/internal/pluginbundle"
 	"papo/internal/plugins"
 	"papo/internal/storage"
+	"papo/internal/utils"
 )
 
-// Enable exige o mesmo preview assinado, inclusive ator, digest, settings e revisão.
+// Enable exige o mesmo preview assinado, inclusive ator, digest, settings e
+// revisão. Os bytes aprovados são copiados da pasta e conferidos contra o
+// digest do preview: uma pasta alterada depois do preview é recusada.
 func (m *PluginManager) Enable(ctx context.Context, actor, id string, o PluginOptions) (models.AppInstallation, error) {
-	unlock, e := m.lock(ctx, id)
-	if e != nil {
-		return models.AppInstallation{}, e
+	unlock, err := m.lock(ctx, id)
+	if err != nil {
+		return models.AppInstallation{}, err
 	}
 	defer unlock()
 	if o.ExpiresAt == 0 {
 		return models.AppInstallation{}, ErrPluginConsent
 	}
-	b, e := m.bundle(ctx, id, true)
-	if e != nil {
-		return models.AppInstallation{}, fmt.Errorf("%w: %v", ErrInvalidInput, e)
+	live, err := m.liveBundle(ctx, id, true)
+	if err != nil {
+		return models.AppInstallation{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	p, e := m.preview(ctx, actor, b, o)
-	if e != nil {
-		return models.AppInstallation{}, e
+	p, err := m.preview(ctx, actor, live, o)
+	if err != nil {
+		return models.AppInstallation{}, err
 	}
 	if !consentEqual(o.Consent, m.consentToken(actor, p)) {
 		return models.AppInstallation{}, ErrPluginConsent
 	}
+	b, err := m.approve(ctx, id, p.Digest)
+	if err != nil {
+		return models.AppInstallation{}, err
+	}
 	return m.apply(ctx, actor, b, p, true)
 }
 
-// apply persiste grants antes dos hooks; falhas de lifecycle desativam e removem canais.
+// apply persiste grants a partir da cópia aprovada b antes dos hooks; falhas
+// de lifecycle desativam e removem canais.
 func (m *PluginManager) apply(ctx context.Context, actor string, b pluginbundle.Bundle, p PluginPreview, enable bool) (models.AppInstallation, error) {
-	var avatar *string
+	avatar, err := m.storeIcon(ctx, b)
+	if err != nil {
+		return models.AppInstallation{}, err
+	}
+	a, err := storage.SavePlugin(ctx, storage.PluginApproval{
+		Key:              p.ID,
+		Name:             p.Name,
+		Actor:            actor,
+		Digest:           p.Digest,
+		Version:          p.Version,
+		Settings:         jsonValue(p.Settings),
+		Origins:          jsonValue(p.Origins),
+		Permissions:      jsonValue(p.Permissions),
+		Surfaces:         jsonValue(p.Surfaces),
+		ExplicitScopes:   jsonValue(p.ExplicitScopes),
+		MemoryMB:         p.MaxMemoryMB,
+		StorageQuota:     p.StorageQuotaOverrides,
+		Capabilities:     capabilities(p.Permissions),
+		Scopes:           p.Scopes,
+		ExpectedRevision: p.Revision,
+		Avatar:           avatar,
+	})
+	if errors.Is(err, storage.ErrUniqueViolation) {
+		return a, ErrPluginConsent
+	}
+	if err != nil {
+		return a, err
+	}
+	m.invalidate(ctx, a.ID)
+	m.Host.Reset(a.ID)
+	transitionCtx := context.WithValue(ctx, pluginTransitionKey{}, a.ID)
+	changes, err := ReconcileAppChannels(transitionCtx, actor, a.ID, p.Surfaces)
+	if err == nil {
+		m.emit(ctx, changes)
+	}
+	if err == nil && enable {
+		_, err = m.invoke(transitionCtx, a, b, "on_enable", nil)
+	}
+	if err == nil {
+		err = storage.FinishPlugin(ctx, a.ID, a.PluginRevision)
+	}
+	if err != nil {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		m.invalidate(cleanup, a.ID)
+		changes, removeErr := DeleteAppChannels(cleanup, actor, a.ID)
+		m.emit(cleanup, changes)
+		stateErr := storage.SetPluginState(cleanup, a.ID, "disabled")
+		return a, errors.Join(err, removeErr, stateErr)
+	}
+	RecordAudit(ctx, AuditEntry{
+		ActorID:    actor,
+		Action:     ActionAppUpdate,
+		EntityType: EntityApp,
+		EntityID:   &a.ID,
+		Metadata: map[string]any{
+			"plugin_digest": p.Digest,
+			"state":         "enabled",
+			"permissions":   p.Permissions,
+			"scopes":        p.Scopes,
+		},
+	})
+	return storage.GetApp(ctx, a.ID)
+}
+
+// storeIcon grava icon.png ou icon.webp da cópia aprovada como avatar do app.
+func (m *PluginManager) storeIcon(ctx context.Context, b pluginbundle.Bundle) (*string, error) {
 	for _, name := range []string{"icon.png", "icon.webp"} {
 		if !has(b.Files, name) {
 			continue
@@ -47,84 +121,46 @@ func (m *PluginManager) apply(ctx context.Context, actor string, b pluginbundle.
 		c := m.Config
 		c.AssetBytes = c.IconBytes
 		c.ReadBytes = c.IconBytes
-		data, e := pluginbundle.ReadAsset(b.Directory, name, 0, c.IconBytes, c)
-		if e != nil {
-			return models.AppInstallation{}, e
+		data, err := pluginbundle.ReadAsset(b.Directory, name, 0, c.IconBytes, c)
+		if err != nil {
+			return nil, err
 		}
 		mime := "image/png"
 		if name == "icon.webp" {
 			mime = "image/webp"
 		}
-		sha, _, e := StoreMediaFromBytes(ctx, data, mime)
-		if e != nil {
-			return models.AppInstallation{}, e
+		sha, _, err := StoreMediaFromBytes(ctx, data, mime)
+		if err != nil {
+			return nil, err
 		}
-		avatar = &sha
-		break
+		return &sha, nil
 	}
-	// Revalidação imediatamente antes do commit evita aprovar assets alterados após preview.
-	fresh, e := m.bundle(ctx, b.Manifest.ID, false)
-	if transientPluginError(e) {
-		return models.AppInstallation{}, e
-	}
-	if e != nil || fresh.Digest != p.Digest {
-		return models.AppInstallation{}, ErrPluginConsent
-	}
-	a, e := storage.SavePlugin(ctx, storage.PluginApproval{Key: p.ID, Name: p.Name, Actor: actor, Digest: p.Digest, Version: p.Version, Settings: jsonValue(p.Settings), Origins: jsonValue(p.Origins), Permissions: jsonValue(p.Permissions), Surfaces: jsonValue(p.Surfaces), ExplicitScopes: jsonValue(p.ExplicitScopes), MemoryMB: p.MaxMemoryMB, StorageQuota: p.StorageQuotaOverrides, Capabilities: capabilities(p.Permissions), Scopes: p.Scopes, ExpectedRevision: p.Revision, Avatar: avatar})
-	if errors.Is(e, storage.ErrUniqueViolation) {
-		return a, ErrPluginConsent
-	}
-	if e != nil {
-		return a, e
-	}
-	m.invalidate(ctx, a.ID)
-	m.Host.Reset(a.ID)
-	transitionCtx := context.WithValue(ctx, pluginTransitionKey{}, a.ID)
-	changes, e := ReconcileAppChannels(transitionCtx, actor, a.ID, p.Surfaces)
-	if e == nil {
-		m.emit(ctx, changes)
-	}
-	if e == nil && enable {
-		_, e = m.invoke(transitionCtx, a, b, "on_enable", nil)
-	}
-	if e == nil {
-		e = storage.FinishPlugin(ctx, a.ID, a.PluginRevision)
-	}
-	if e != nil {
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		defer cancel()
-		m.invalidate(cleanup, a.ID)
-		changes, removeErr := DeleteAppChannels(cleanup, actor, a.ID)
-		m.emit(cleanup, changes)
-		stateErr := storage.SetPluginState(cleanup, a.ID, "disabled")
-		return a, errors.Join(e, removeErr, stateErr)
-	}
-	RecordAudit(ctx, AuditEntry{ActorID: actor, Action: ActionAppUpdate, EntityType: EntityApp, EntityID: &a.ID, Metadata: map[string]any{"plugin_digest": p.Digest, "state": "enabled", "permissions": p.Permissions, "scopes": p.Scopes}})
-	return storage.GetApp(ctx, a.ID)
+	return nil, nil
 }
 
 // Disable bloqueia novas invocações antes de on_disable e faz cleanup mesmo após trap.
 func (m *PluginManager) Disable(ctx context.Context, actor, id string) error {
-	unlock, e := m.lock(ctx, id)
-	if e != nil {
-		return e
+	unlock, err := m.lock(ctx, id)
+	if err != nil {
+		return err
 	}
 	defer unlock()
-	a, e := storage.FindPlugin(ctx, id)
-	if e == storage.ErrNotFound {
+	a, err := storage.FindPlugin(ctx, id)
+	if errors.Is(err, storage.ErrNotFound) {
 		return ErrAppNotFound
 	}
-	if e != nil {
-		return e
+	if err != nil {
+		return err
 	}
 	return m.disableLocked(ctx, a, actor, false)
 }
 
-// disableLocked nunca executa bytes diferentes do digest aprovado durante remoção.
+// disableLocked executa on_disable somente com os bytes aprovados e fecha a
+// autoridade mesmo quando o callback falha.
 func (m *PluginManager) disableLocked(ctx context.Context, a models.AppInstallation, actor string, removed bool) error {
 	var callbackErr error
 	if a.PluginState == "enabled" {
-		if b, e := m.bundle(ctx, a.AppKey, false); e == nil && a.PluginDigest != nil && b.Digest == *a.PluginDigest {
+		if b, err := m.snapshot(ctx, a); err == nil {
 			_, callbackErr = m.invoke(ctx, a, b, "on_disable", nil)
 		}
 	}
@@ -142,136 +178,129 @@ func (m *PluginManager) disableLocked(ctx context.Context, a models.AppInstallat
 	changes, channelErr := DeleteAppChannels(cleanup, actor, a.ID)
 	m.emit(cleanup, changes)
 	m.Host.Reset(a.ID)
-	RecordAudit(cleanup, AuditEntry{ActorID: actor, Action: ActionAppUpdate, EntityType: EntityApp, EntityID: &a.ID, Metadata: map[string]any{"state": state, "on_disable_failed": callbackErr != nil}})
+	RecordAudit(cleanup, AuditEntry{
+		ActorID:    actor,
+		Action:     ActionAppUpdate,
+		EntityType: EntityApp,
+		EntityID:   &a.ID,
+		Metadata:   map[string]any{"state": state, "on_disable_failed": callbackErr != nil},
+	})
 	return errors.Join(callbackErr, stateErr, channelErr)
 }
 
-// reloadLocked aplica somente mudanças sem novos grants, origens ou escopos.
+// reloadLocked aprova a versão atual da pasta somente quando ela não pede
+// permissões, origens ou escopos novos; caso contrário, põe em quarentena.
 func (m *PluginManager) reloadLocked(ctx context.Context, a models.AppInstallation) error {
-	b, e := m.bundle(ctx, a.AppKey, true)
-	if e != nil {
+	live, err := m.liveBundle(ctx, a.AppKey, true)
+	if err != nil {
 		_ = m.quarantine(ctx, a)
 		return plugins.ErrQuarantined
 	}
 	old := permissionList(a)
-	o := PluginOptions{Permissions: &old, MaxMemoryMB: min(a.MaxMemoryMB, b.Manifest.Runtime.MaxMemoryMB)}
-	p, e := m.preview(ctx, "", b, o)
+	o := PluginOptions{Permissions: &old, MaxMemoryMB: min(a.MaxMemoryMB, live.Manifest.Runtime.MaxMemoryMB)}
+	p, err := m.preview(ctx, "", live, o)
 	var origins []string
 	_ = json.Unmarshal(a.ApprovedOrigins, &origins)
 	scopes, scopeErr := storage.PluginScopes(ctx, a.ID)
 	// Expansão é definida pelo pedido novo, mesmo que o admin antes tenha concedido um subconjunto.
 	var requested []string
-	for _, v := range b.Manifest.Permissions.Request {
+	for _, v := range live.Manifest.Permissions.Request {
 		if m.Config.PermissionAllowed(v) {
 			requested = append(requested, v)
 		}
 	}
-	if e != nil || scopeErr != nil || expanded(requested, old) || expanded(p.Origins, origins) || expanded(p.Scopes, scopes) {
+	if err != nil || scopeErr != nil || expanded(requested, old) || expanded(p.Origins, origins) || expanded(p.Scopes, scopes) {
 		_ = m.quarantine(ctx, a)
 		return ErrPluginConsent
 	}
-	_, e = m.apply(ctx, "", b, p, true)
-	return e
+	b, err := m.approve(ctx, a.AppKey, p.Digest)
+	if err != nil {
+		_ = m.quarantine(ctx, a)
+		return ErrPluginConsent
+	}
+	_, err = m.apply(ctx, "", b, p, true)
+	return err
 }
 
-// Patch atualiza settings/memória habilitados; escopos/origens novos exigem novo consentimento.
+// Patch atualiza settings, memória e quotas da versão aprovada; escopos ou
+// origens novos exigem novo consentimento.
 func (m *PluginManager) Patch(ctx context.Context, actor, id string, o PluginOptions) (models.AppInstallation, error) {
-	unlock, e := m.lock(ctx, id)
-	if e != nil {
-		return models.AppInstallation{}, e
+	unlock, err := m.lock(ctx, id)
+	if err != nil {
+		return models.AppInstallation{}, err
 	}
 	defer unlock()
-	a, e := storage.FindPlugin(ctx, id)
-	if e != nil {
-		return a, e
+	a, err := storage.FindPlugin(ctx, id)
+	if err != nil {
+		return a, err
 	}
 	if a.PluginState != "enabled" || a.LifecyclePending {
 		return a, plugins.ErrQuarantined
 	}
-	b, e := m.bundle(ctx, id, true)
-	if e != nil {
-		return a, e
-	}
-	if a.PluginDigest == nil || b.Digest != *a.PluginDigest {
-		_ = m.quarantine(ctx, a)
-		return a, ErrPluginConsent
-	}
 	if o.Permissions != nil || o.Scopes != nil {
 		return a, ErrInvalidInput
 	}
+	b, err := m.snapshot(ctx, a)
+	if err != nil {
+		return a, err
+	}
 	granted := permissionList(a)
 	o.Permissions = &granted
-	p, e := m.preview(ctx, actor, b, o)
-	if e != nil {
-		return a, e
+	p, err := m.preview(ctx, actor, b, o)
+	if err != nil {
+		return a, err
 	}
-	scopes, e := storage.PluginScopes(ctx, a.ID)
-	if e != nil {
-		return a, e
+	scopes, err := storage.PluginScopes(ctx, a.ID)
+	if err != nil {
+		return a, err
 	}
 	var origins []string
 	_ = json.Unmarshal(a.ApprovedOrigins, &origins)
-	changed := string(jsonValue(sorted(scopes))) != string(jsonValue(p.Scopes)) || string(jsonValue(sorted(origins))) != string(jsonValue(p.Origins))
+	changed := string(jsonValue(sorted(scopes))) != string(jsonValue(p.Scopes)) ||
+		string(jsonValue(sorted(origins))) != string(jsonValue(p.Origins))
 	if changed && !consentEqual(o.Consent, m.consentToken(actor, p)) {
 		return a, ErrPluginConsent
 	}
 	return m.apply(ctx, actor, b, p, false)
 }
 
-// Trigger aplica upgrades na fronteira e entrega apenas on_trigger nesta rodada.
+// Trigger entrega on_trigger, chamado pela gestão.
 func (m *PluginManager) Trigger(parent context.Context, id string, input json.RawMessage) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	return m.callEvent(ctx, id, "on_trigger", input)
 }
 
-// callEvent compartilha fila, upgrade e quarentena entre todos os callbacks.
+// callEvent serializa as invocações da instalação e executa a versão aprovada.
 func (m *PluginManager) callEvent(ctx context.Context, id, event string, input json.RawMessage) ([]byte, error) {
-	unlock, e := m.lock(ctx, id)
-	if e != nil {
-		return nil, e
+	unlock, err := m.lock(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 	defer unlock()
-	a, e := storage.FindPlugin(ctx, id)
-	if e == storage.ErrNotFound {
+	a, err := storage.FindPlugin(ctx, id)
+	if errors.Is(err, storage.ErrNotFound) {
 		return nil, ErrAppNotFound
 	}
-	if e != nil {
-		return nil, e
+	if err != nil {
+		return nil, err
 	}
 	if a.PluginState != "enabled" || a.LifecyclePending {
 		return nil, plugins.ErrQuarantined
 	}
-	b, e := m.bundle(ctx, id, false)
-	if transientPluginError(e) {
-		return nil, e
+	b, err := m.snapshot(ctx, a)
+	if err != nil {
+		if transientPluginError(err) {
+			return nil, err
+		}
+		utils.Errorf("plugins: cópia aprovada de %s indisponível: %v", a.AppKey, err)
+		return nil, plugins.ErrExecution
 	}
-	if e != nil {
-		_ = m.quarantine(ctx, a)
-		return nil, plugins.ErrQuarantined
-	}
-	if a.PluginDigest == nil || b.Digest != *a.PluginDigest {
-		if !m.Config.HotReload {
-			_ = m.quarantine(ctx, a)
-			return nil, ErrPluginConsent
-		}
-		if e = m.reloadLocked(ctx, a); e != nil {
-			return nil, e
-		}
-		a, e = storage.FindPlugin(ctx, id)
-		if e != nil {
-			return nil, e
-		}
-		b, e = m.bundle(ctx, id, false)
-		if e != nil {
-			return nil, e
-		}
-	}
-	out, e := m.invoke(ctx, a, b, event, input)
-	if errors.Is(e, plugins.ErrQuarantined) {
+	out, err := m.invoke(ctx, a, b, event, input)
+	if errors.Is(err, plugins.ErrQuarantined) {
 		_ = m.quarantine(ctx, a)
 	}
-	return out, e
+	return out, err
 }
 
 // invoke entrega settings em cada envelope; globals de guest nunca são persistência.
@@ -288,14 +317,15 @@ func (m *PluginManager) invoke(ctx context.Context, a models.AppInstallation, b 
 		ctx = context.WithValue(ctx, appHumanKey{}, false)
 	}
 	envelope := jsonValue(map[string]any{"type": event, "settings": json.RawMessage(a.PluginSettings), "input": input})
-	out, e := m.Host.Invoke(plugins.WithMemoryLimit(ctx, a.MaxMemoryMB), a.ID, b.Module, envelope, func(c context.Context, data []byte) ([]byte, error) { return m.hostCall(c, a.ID, data) })
-	if e == nil && event != "on_trigger" {
+	call := func(c context.Context, data []byte) ([]byte, error) { return m.hostCall(c, a.ID, b, data) }
+	out, err := m.Host.Invoke(plugins.WithMemoryLimit(ctx, a.MaxMemoryMB), a.ID, b.Code(), envelope, call)
+	if err == nil && event != "on_trigger" {
 		var result struct {
 			OK bool `json:"ok"`
 		}
 		if json.Unmarshal(out, &result) != nil || !result.OK {
-			e = plugins.ErrExecution
+			err = plugins.ErrExecution
 		}
 	}
-	return out, e
+	return out, err
 }

@@ -1,7 +1,8 @@
-# Interações, convites e ponte UI — PR 5
+# Interações, convites e ponte UI
 
-A implementação inclui §9.0 e §10.1–10.4 do plano v7, depois do merge C4.
-Não inclui on_event, comandos ou SSE. Domínio não importa wazero.
+Botões em mensagens de plugins, ações de usuário nos canais app, convites e a
+ponte HTTP entre a UI isolada e o plugin. Não inclui on_event, comandos ou SSE.
+O domínio não importa wazero.
 
 ## Mensagens e ações
 
@@ -11,7 +12,7 @@ até duas linhas de cinco botões. `id` é único por mensagem (1–64 caractere
 é booleano. `opens` opcional referencia somente superfície embed própria.
 Esse botão abre diretamente o frame e pede launch; não chama on_interaction.
 Uma mensagem pode conter só botões. Cards nativos continuam permitidos, junto
-de no máximo um frame. O contrato de frames da C4 permanece size/load/display/poster.
+de no máximo um frame. O contrato de frames continua size/load/display/poster (docs/app-surfaces.md).
 
 Listagem e fixados hidratam os botões atuais; instalações indisponíveis os
 retornam desabilitados. WS `message` inclui components quando existem;
@@ -35,8 +36,11 @@ Mantém exports alloc/free/invoke e o import papo_host_v1.call. Novos tipos de e
 Interação de botão substitui action_id/target_user_id por message_id/component_id.
 `invite` é opcional e vem do convite aceito pelo destinatário. Nunca recebe
 identidade ou token fornecido dentro de params. Resposta segue `{ok,result,error}`.
-Callbacks usam a mesma fila, fronteira de hot reload, memória, circuito e limites
-de host calls do trigger. O prazo externo é 3 s configurável; o teto Wasm global
+O `result` de on_interaction volta sem alteração na resposta de `POST /interactions`
+(`{"interaction_id":...,"result":...}`), somente para quem clicou; use-o para
+feedback individual, e mensagens (`message.send`/`message.edit`) para o que todos
+devem ver. Callbacks usam a mesma fila, memória, circuito e limites de host calls
+do trigger. O prazo externo é 3 s configurável; o teto Wasm global
 pode interromper antes. Timeout HTTP responde 504 com erro curto em português.
 Efeitos já confirmados não são revertidos após falha posterior do guest.
 
@@ -58,7 +62,7 @@ Push conserva a outbox e inclui o tipo e a instalação, sem credenciais.
 
 | Método | Rota | Autorização |
 |---|---|---|
-| POST | /interactions | Sessão humana; valida seletor e leitura; 202 |
+| POST | /interactions | Sessão humana; valida seletor e leitura; 200 com o `result` do plugin |
 | POST | /notifications/:id/accept | Destinatário; retorna contexto canal/superfície |
 | POST | /notifications/:id/decline | Destinatário |
 | PATCH | /apps/:installation_id/user-settings | Sessão humana; invites_muted |
@@ -84,13 +88,16 @@ Ticket dura 60 s; uma atualização condicional garante consumo único concorren
 Sessão começa com 30 min de inatividade, renovados após RPC válido, sem exceder
 8 h desde a troca. RPC recusado não estende o prazo. Cada chamada revalida ACL,
 banimento, digest e disponibilidade. Invalidação da instalação muda sua geração;
-tokens antigos não voltam a funcionar. Mudanças de ACL de canais, roles,
-associações e banimento revogam tokens no banco, mesmo com perda/restauração de
-acesso entre dois RPCs. Nesta primeira versão essa revogação de ACL é conservadora:
-encerra todas as sessões UI, inclusive de leitores que conservaram acesso.
+tokens antigos não voltam a funcionar. Um RPC recusado por perda de leitura
+apaga os tokens daquele usuário na instalação, de modo que restaurar o acesso
+depois não os reativa. Mudanças de ACL, roles ou banimento de outros usuários não
+afetam sessões de quem continua lendo o canal.
 
-Rotina periódica remove lotes de tokens consumidos/expirados, convites expirados
-(e seus pushes pendentes) e buckets antigos. Usa contexto cancelável, limites,
+Os limites por minuto (interações, lançamentos, RPC, convites, users.resolve)
+ficam em memória, por chave, como os demais rate limits do servidor.
+
+Rotina periódica remove lotes de tokens consumidos/expirados e convites expirados
+(e seus pushes pendentes). Usa contexto cancelável, limites,
 SKIP LOCKED e transação, e sua parada é aguardada no ciclo do servidor.
 
 ## Limites e SDK
@@ -135,7 +142,7 @@ acontece dentro de um hot reload iniciado por interação/RPC.
 Os callbacks humanos incluem `input.user: {id,username,display_name,avatar_url}`;
 user_action também inclui `target_user`. São perfis dos IDs verificados pelo host,
 nunca de params. IDs legados permanecem. display_name usa nickname não vazio,
-com fallback para username; avatar_url é `/users/<id>/avatar`.
+com fallback para username; avatar_url é `/users/<id>/avatar`, ou null sem avatar.
 
 Host call `users.resolve {ids}` retorna `result: [perfil,...]`, até 50 IDs de entrada.
 Ausentes, banidos e usuários sem leitura de nenhum canal app próprio ou escopo

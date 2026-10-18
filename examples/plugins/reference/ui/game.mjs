@@ -36,7 +36,9 @@ try {
         image.alt = `Avatar de ${profile.display_name}`;
         image.width = image.height = 40;
         image.crossOrigin = 'anonymous';
-        image.src = app.avatarURL(profile);
+        const url = app.avatarURL(profile);
+        if (url) image.src = url;
+        else image.hidden = true;
         const label = document.createElement('span');
         label.textContent = profile.display_name;
         player.append(image, label);

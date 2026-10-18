@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"papo/internal/models"
+	"papo/internal/pluginbundle"
 	"papo/internal/plugins"
 	"papo/internal/storage"
 )
@@ -132,7 +133,7 @@ func TestAppInteractionsGame(t *testing.T) {
 		t.Fatal(e)
 	}
 	surface, ok := launch["surface"].(models.AppChannel)
-	if !ok || surface.SurfaceID != "result" || surface.Entry != "/apps/"+a.ID+"/ui/result.html" || launch["display"] != "overlay" {
+	if !ok || surface.SurfaceID != "result" || surface.Entry != "/apps/"+a.ID+"/ui/"+*a.PluginDigest+"/result.html" || launch["display"] != "overlay" {
 		t.Fatalf("opens-only launch: %+v", launch)
 	}
 	if _, e = m.LaunchAppUI(testCtx(), u.ID, a.ID, LaunchInput{SurfaceID: "missing", ChannelID: text.ID, MessageID: msg.ID}); e == nil {
@@ -174,7 +175,7 @@ func TestAppInteractionDenials(t *testing.T) {
 		t.Fatal("trigger convidou", raw)
 	}
 	in := InteractionInput{InstallationID: a.ID, Kind: "user_action", ChannelID: channel, ActionID: "convidar", TargetUserID: v.ID}
-	t.Setenv("PLUGINS_INTERACTIONS_PER_USER", "1")
+	m.Config.Limits.InteractionsPerUser = 1
 	if _, e := m.Interact(testCtx(), u.ID, in); e != nil {
 		t.Fatal(e)
 	}
@@ -251,7 +252,7 @@ func TestAppUITokenBoundaries(t *testing.T) {
 	if e = storage.CleanAppInteractions(testCtx()); e != nil {
 		t.Fatal(e)
 	}
-	stop := StartAppInteractionCleanup(testCtx())
+	stop := m.StartInteractionCleanup(testCtx())
 	stop()
 }
 
@@ -259,19 +260,19 @@ func TestAppUITokenBoundaries(t *testing.T) {
 func TestAppInviteLimitsMuteAndUICall(t *testing.T) {
 	m, u, v, a, channel, _ := interactionFixture(t)
 	ctx := context.WithValue(testCtx(), appHumanKey{}, appHuman{u.ID, channel})
-	t.Setenv("PLUGINS_INVITES_PER_SENDER", "1")
+	m.Config.Limits.InvitesPerSender = 1
 	if _, e := m.SendAppInvite(ctx, a, v.ID, "Jogar", json.RawMessage(`{}`)); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := m.SendAppInvite(ctx, a, v.ID, "Jogar", json.RawMessage(`{}`)); !errors.Is(e, ErrAppRateLimit) {
 		t.Fatal("limite remetente", e)
 	}
-	t.Setenv("PLUGINS_INVITES_PER_SENDER", "100")
-	t.Setenv("PLUGINS_INVITES_PER_TARGET", "1")
+	m.Config.Limits.InvitesPerSender = 100
+	m.Config.Limits.InvitesPerTarget = 1
 	if _, e := m.SendAppInvite(ctx, a, v.ID, "Jogar", json.RawMessage(`{}`)); !errors.Is(e, ErrAppRateLimit) {
 		t.Fatal("limite alvo", e)
 	}
-	t.Setenv("PLUGINS_INVITES_PER_TARGET", "100")
+	m.Config.Limits.InvitesPerTarget = 100
 	if e := SetPluginInviteMute(testCtx(), v.ID, a.ID, true); e != nil {
 		t.Fatal(e)
 	}
@@ -285,7 +286,7 @@ func TestAppInviteLimitsMuteAndUICall(t *testing.T) {
 	if _, e := m.AppRPC(testCtx(), a.ID, token, "game.invite", jsonValue(map[string]string{"target_user_id": v.ID})); e != nil {
 		t.Fatal("on_ui_call não convidou", e)
 	}
-	t.Setenv("PLUGINS_RPC_PER_SESSION", "1")
+	m.Config.Limits.RPCPerSession = 1
 	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); !errors.Is(e, ErrAppRateLimit) {
 		t.Fatal("limite RPC", e)
 	}
@@ -294,7 +295,7 @@ func TestAppInviteLimitsMuteAndUICall(t *testing.T) {
 // stalledCallback conserva o runtime real para provar que o prazo também cobre a espera do callback.
 type stalledCallback struct{ plugins.PluginHost }
 
-func (h stalledCallback) Invoke(ctx context.Context, _ string, _ []byte, _ []byte, _ plugins.Call) ([]byte, error) {
+func (h stalledCallback) Invoke(ctx context.Context, _ string, _ plugins.Module, _ []byte, _ plugins.Call) ([]byte, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
@@ -302,7 +303,7 @@ func (h stalledCallback) Invoke(ctx context.Context, _ string, _ []byte, _ []byt
 // TestAppCallbackTimeout mantém o processo saudável depois de um callback que não termina.
 func TestAppCallbackTimeout(t *testing.T) {
 	m, u, v, a, channel, _ := interactionFixture(t)
-	t.Setenv("PLUGINS_INTERACTION_TIMEOUT_MS", "20")
+	m.Config.InteractionTimeout = 20 * time.Millisecond
 	real := m.Host
 	m.Host = stalledCallback{real}
 	_, e := m.Interact(testCtx(), u.ID, InteractionInput{InstallationID: a.ID, ChannelID: channel, Kind: "user_action", ActionID: "convidar", TargetUserID: v.ID})
@@ -363,10 +364,7 @@ func TestAppInviteTargetAndCapabilities(t *testing.T) {
 // TestAppInstallationRateLimits confirma limites distintos por instalação e por usuário.
 func TestAppInstallationRateLimits(t *testing.T) {
 	m, u, v, a, channel, _ := interactionFixture(t)
-	t.Setenv("PLUGINS_INTERACTIONS_PER_PLUGIN", "1")
-	if _, e := storage.GetDB().Exec(`DELETE FROM app_rate_limits WHERE key=$1`, "interaction:plugin:"+a.ID); e != nil {
-		t.Fatal(e)
-	}
+	m.Config.Limits.InteractionsPerPlugin = 1
 	in := InteractionInput{InstallationID: a.ID, Kind: "user_action", ChannelID: channel, ActionID: "convidar", TargetUserID: v.ID}
 	if _, e := m.Interact(testCtx(), u.ID, in); e != nil {
 		t.Fatal(e)
@@ -375,10 +373,7 @@ func TestAppInstallationRateLimits(t *testing.T) {
 		t.Fatal("limite plugin", e)
 	}
 	token := launchSession(t, m, u.ID, a.ID, channel)
-	t.Setenv("PLUGINS_RPC_PER_PLUGIN", "1")
-	if _, e := storage.GetDB().Exec(`DELETE FROM app_rate_limits WHERE key=$1`, "rpc:plugin:"+a.ID); e != nil {
-		t.Fatal(e)
-	}
+	m.Config.Limits.RPCPerPlugin = 1
 	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); e != nil {
 		t.Fatal(e)
 	}
@@ -394,8 +389,8 @@ func TestAppCleanupWorkerTicks(t *testing.T) {
 	if _, e := storage.GetDB().Exec(`UPDATE app_ui_tokens SET expires_at=now()-interval '1 second' WHERE token_hash=$1`, appHash(token)); e != nil {
 		t.Fatal(e)
 	}
-	t.Setenv("PLUGINS_CLEANUP_SECONDS", "1")
-	stop := StartAppInteractionCleanup(context.Background())
+	m.Config.CleanupInterval = time.Second
+	stop := m.StartInteractionCleanup(context.Background())
 	defer stop()
 	deadline := time.Now().Add(4 * time.Second)
 	for {
@@ -419,7 +414,7 @@ type lifecycleInvite struct {
 	output string
 }
 
-func (h *lifecycleInvite) Invoke(ctx context.Context, _ string, _ []byte, _ []byte, call plugins.Call) ([]byte, error) {
+func (h *lifecycleInvite) Invoke(ctx context.Context, _ string, _ plugins.Module, _ []byte, call plugins.Call) ([]byte, error) {
 	out, e := call(ctx, []byte(`{"method":"invite.send","to_user_id":"00000000-0000-0000-0000-000000000001","text":"não deve enviar","data":{}}`))
 	h.output = string(out)
 	if e != nil {
@@ -431,7 +426,7 @@ func (h *lifecycleInvite) Invoke(ctx context.Context, _ string, _ []byte, _ []by
 // TestAppLifecycleCannotInheritHuman previne convites em on_enable durante hot reload humano.
 func TestAppLifecycleCannotInheritHuman(t *testing.T) {
 	m, u, _, a, channel, _ := interactionFixture(t)
-	b, e := m.bundle(testCtx(), a.AppKey, false)
+	b, e := m.snapshot(testCtx(), a)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -453,6 +448,13 @@ func TestAppHumanHotReload(t *testing.T) {
 	token := launchSession(t, m, u.ID, a.ID, channel)
 	path := filepath.Join(m.Config.Directory, "reference", "ui", "data.json")
 	if e := os.WriteFile(path, []byte(`{"message":"versão atualizada"}`), 0600); e != nil {
+		t.Fatal(e)
+	}
+	// A pasta alterada não afeta a sessão até o Rescan/Watch aprovar a versão nova.
+	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); e != nil {
+		t.Fatal("sessão encerrada antes do rescan", e)
+	}
+	if e := m.Rescan(testCtx()); e != nil {
 		t.Fatal(e)
 	}
 	if _, e := m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); !errors.Is(e, ErrAppSession) {
@@ -509,29 +511,76 @@ func TestAppActionsInChannelSnapshots(t *testing.T) {
 		}
 	}
 	a := enableReference(t, m, u, ch)
-	if snapshot == nil || len(snapshot.UserActions) != 1 || snapshot.UserActions[0].ID != "convidar" || snapshot.UserActions[0].Icon != "/apps/"+a.ID+"/ui/image.svg" {
+	if snapshot == nil || len(snapshot.UserActions) != 1 || snapshot.UserActions[0].ID != "convidar" || snapshot.UserActions[0].Icon != "/apps/"+a.ID+"/ui/"+*a.PluginDigest+"/image.svg" {
 		t.Fatal("ações ausentes no snapshot", snapshot)
 	}
 }
 
-// TestAppSaturationPreservesTickets responde fila cheia sem invalidar identidade ou artefato.
-func TestAppSaturationPreservesTickets(t *testing.T) {
-	m, u, _, a, channel, _ := interactionFixture(t)
-	ticket, e := m.LaunchAppUI(testCtx(), u.ID, a.ID, LaunchInput{SurfaceID: "home", ChannelID: channel})
-	if e != nil {
-		t.Fatal(e)
+// TestAppConcurrentResolveStaysAvailable garante que leituras simultâneas da
+// superfície usam a cópia aprovada em memória e nunca degradam para
+// indisponível, como acontecia com a releitura da pasta por chamada.
+func TestAppConcurrentResolveStaysAvailable(t *testing.T) {
+	m, _, _, a, _, _ := interactionFixture(t)
+	errs := make(chan error, 64)
+	for range 64 {
+		go func() {
+			b, err := ResolvePluginSurfaceBundle(context.Background(), a.ID)
+			if err == nil && (!b.Enabled || b.Directory == "") {
+				err = errors.New("superfície degradada")
+			}
+			errs <- err
+		}()
 	}
-	for range cap(m.ioSlots) {
-		m.ioSlots <- struct{}{}
+	for range 64 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
 	}
-	_, e = m.ExchangeAppTicket(testCtx(), a.ID, ticket["ticket"].(string))
-	for range cap(m.ioSlots) {
-		<-m.ioSlots
+	if !strings.Contains(m.snapshots[*a.PluginDigest].Directory, pluginbundle.ApprovedDir) {
+		t.Fatal("superfície servida fora da cópia aprovada")
 	}
-	if !errors.Is(e, plugins.ErrBusy) {
-		t.Fatal("saturação não preservada", e)
+}
+
+// TestReferenceGamesDoNotOverwrite mantém partidas simultâneas em chaves
+// próprias no jogo de referência.
+func TestReferenceGamesDoNotOverwrite(t *testing.T) {
+	m, u, v, a, channel, _ := interactionFixture(t)
+	w, x := newWebhookTestUser(t), newWebhookTestUser(t)
+	ids := []string{}
+	for _, pair := range [][2]string{{u.ID, v.ID}, {w.ID, x.ID}} {
+		in := InteractionInput{InstallationID: a.ID, Kind: "user_action", ChannelID: channel, ActionID: "convidar", TargetUserID: pair[1]}
+		res, err := m.Interact(testCtx(), pair[0], in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, res.InteractionID)
 	}
-	if _, e = m.ExchangeAppTicket(testCtx(), a.ID, ticket["ticket"].(string)); e != nil {
-		t.Fatal("ticket revogado por saturação", e)
+	for i, id := range ids {
+		entry, err := storage.GetAppStorage(testCtx(), a.ID, "game:"+id)
+		if err != nil || !strings.Contains(string(entry.Value), id) {
+			t.Fatal("partida sobrescrita", i, string(entry.Value), err)
+		}
+	}
+}
+
+// TestAppUISessionSurvivesUnrelatedModeration garante que banir outro usuário,
+// atribuir roles a terceiros ou editar a ACL de outro canal não encerra sessões
+// de quem continua lendo o canal app.
+func TestAppUISessionSurvivesUnrelatedModeration(t *testing.T) {
+	m, u, v, a, channel, text := interactionFixture(t)
+	token := launchSession(t, m, u.ID, a.ID, channel)
+	role, err := storage.CreateRole(testCtx(), "terceiros", nil, models.RolePermissions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = storage.AssignUserRole(testCtx(), v.ID, role.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = storage.GetDB().Exec(`UPDATE users SET banned=true WHERE id=$1`, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	denyAppRead(t, text.ID)
+	if _, err = m.AppRPC(testCtx(), a.ID, token, "identity", json.RawMessage(`{}`)); err != nil {
+		t.Fatal("sessão encerrada por moderação não relacionada", err)
 	}
 }

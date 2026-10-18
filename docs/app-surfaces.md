@@ -53,11 +53,13 @@ manualmente ou mudar o tipo de um canal app é recusado. `GET /channels` inclui 
 
 ## UI bundled
 
-`GET /apps/:installation_id/ui/*path` é **público**: a página roda num iframe sandbox
-sem sessão. Serve somente arquivos estáticos de `ui/`, nunca dados por usuário, código
-do plugin, manifest ou templates, e não lê nem emite cookies. Traversal, diretórios,
-symlinks e extensões fora do allowlist são recusados; instalação desabilitada ou
-revogada responde 404.
+`GET /apps/:installation_id/ui/:digest/*path` é **público**: a página roda num iframe
+sandbox sem sessão. O digest é o da versão aprovada; as URLs chegam prontas nos
+payloads (`entry`, `poster`, ícones de ações) e mudam a cada versão, e um digest de
+outra versão responde 404. Serve somente arquivos estáticos de `ui/`, nunca dados por
+usuário, código do plugin, manifest ou templates, e não lê nem emite cookies.
+Traversal, diretórios, symlinks e extensões fora do allowlist são recusados; instalação
+desabilitada ou revogada responde 404.
 
 Headers:
 
@@ -69,8 +71,8 @@ Headers:
 - `Access-Control-Allow-Origin: *` sem `Access-Control-Allow-Credentials`, inclusive
   em 304, para CSS, imagens, fontes, módulos e fetch de JSON a partir da origem opaca.
   O restante da API continua recusando `Origin: null`.
-- `ETag` derivado do digest do plugin e do caminho, com revalidação; respostas
-  indisponíveis usam `no-store`.
+- `Cache-Control: public, max-age=31536000, immutable` (a URL já identifica a versão) e
+  `ETag` derivado do digest e do caminho; respostas indisponíveis usam `no-store`.
 
 ## Superfícies remotas
 
@@ -113,11 +115,11 @@ declaração. Payload na leitura:
   "id": "<embed_id>",
   "source_type": "app",
   "surface": {"app_installation_id": "<installation_id>", "id": "resultado"},
-  "entry": "/apps/<installation_id>/ui/result.html",
+  "entry": "/apps/<installation_id>/ui/<digest>/result.html",
   "size": {"width": 480, "height": 320},
   "load": "click",
   "display": "overlay",
-  "poster": "/apps/<installation_id>/ui/result-poster.webp",
+  "poster": "/apps/<installation_id>/ui/<digest>/result-poster.webp",
   "title": "Resultado da rodada"
 }
 ```

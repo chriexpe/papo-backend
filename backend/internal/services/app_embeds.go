@@ -6,20 +6,36 @@ import (
 	"papo/internal/storage"
 )
 
-// declaredEmbed aceita exclusivamente superfície embed da própria instalação e origem aprovada.
+// declaredEmbed aceita exclusivamente superfície embed da própria instalação.
+// As superfícies e origens do bundle já foram validadas no consentimento.
 func declaredEmbed(ctx context.Context, id, surfaceID string) (AppSurfaceDeclaration, error) {
 	b, err := ResolvePluginSurfaceBundle(ctx, id)
 	if err != nil {
 		return AppSurfaceDeclaration{}, err
 	}
-	validated, err := validateAppSurfaces(ctx, b, b.Surfaces)
-	if err != nil {
-		return AppSurfaceDeclaration{}, err
-	}
-	for _, s := range validated {
-		if s.ID == surfaceID && s.Kind == "embed" {
-			return s, nil
+	return embedSurface(b, surfaceID)
+}
+
+// embedSurface procura a superfície embed surfaceID entre as aprovadas, com os
+// mesmos padrões de validateAppSurfaces (load=click, display=inline) e a
+// política de tamanho atual do servidor. Não refaz a validação das origens
+// remotas: o backend nunca busca superfícies remotas, então resolver DNS a
+// cada leitura não protegeria nada.
+func embedSurface(b PluginSurfaceBundle, surfaceID string) (AppSurfaceDeclaration, error) {
+	for _, s := range b.Surfaces {
+		if s.ID != surfaceID || s.Kind != "embed" {
+			continue
 		}
+		if s.Load == "" {
+			s.Load = "click"
+		}
+		if s.Display == "" {
+			s.Display = "inline"
+		}
+		if err := validateAppFramePolicy(s.Size, s.Load, s.Display); err != nil {
+			return AppSurfaceDeclaration{}, err
+		}
+		return s, nil
 	}
 	return AppSurfaceDeclaration{}, ErrInvalidEmbed
 }
@@ -108,23 +124,23 @@ func decorateAppEmbed(ctx context.Context, e *models.Embed) {
 	if e.Size == nil || validateAppFramePolicy(*e.Size, e.Load, e.Display) != nil {
 		return
 	}
-	s, err := declaredEmbed(ctx, *e.AppInstallationID, *e.AppSurfaceID)
+	b, err := ResolvePluginSurfaceBundle(ctx, *e.AppInstallationID)
+	if err != nil {
+		return
+	}
+	s, err := embedSurface(b, *e.AppSurfaceID)
 	if err != nil {
 		return
 	}
 	if e.AppPoster != nil {
-		b, err := ResolvePluginSurfaceBundle(ctx, *e.AppInstallationID)
-		if err != nil {
-			return
-		}
 		if err := validateAppPoster(b, *e.AppPoster); err != nil {
 			return
 		}
-		e.Poster = "/apps/" + *e.AppInstallationID + "/" + *e.AppPoster
+		e.Poster = pluginAssetURL(*e.AppInstallationID, b.Digest, *e.AppPoster)
 	}
 	e.Entry = s.Entry
 	if s.Source == "bundled" {
-		e.Entry = "/apps/" + *e.AppInstallationID + "/" + s.Entry
+		e.Entry = pluginAssetURL(*e.AppInstallationID, b.Digest, s.Entry)
 	}
 }
 

@@ -221,7 +221,14 @@ func TestPluginDigestAndConsent(t *testing.T) {
 	if e := os.WriteFile(name, []byte("alterado"), 0600); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := m.Trigger(testCtx(), "reference", json.RawMessage(`{}`)); !errors.Is(e, ErrPluginConsent) {
+	// Até o rescan, a execução usa os bytes aprovados, não a pasta alterada.
+	if out, e := m.Trigger(testCtx(), "reference", json.RawMessage(`{}`)); e != nil || strings.Contains(string(out), "alterado") {
+		t.Fatal("executou bytes não aprovados", string(out), e)
+	}
+	if e := m.Rescan(testCtx()); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := m.Trigger(testCtx(), "reference", json.RawMessage(`{}`)); !errors.Is(e, plugins.ErrQuarantined) {
 		t.Fatal(e)
 	}
 	current, e := storage.GetApp(testCtx(), a.ID)
@@ -281,6 +288,9 @@ func TestPluginHotReload(t *testing.T) {
 	if e := os.WriteFile(file, []byte("hot reload"), 0600); e != nil {
 		t.Fatal(e)
 	}
+	if e := m.Rescan(testCtx()); e != nil {
+		t.Fatal(e)
+	}
 	if out, e := m.Trigger(testCtx(), "reference", json.RawMessage(`{}`)); e != nil || !strings.Contains(string(out), "hot reload") {
 		t.Fatal(string(out), e)
 	}
@@ -297,7 +307,10 @@ func TestPluginHotReload(t *testing.T) {
 	if e = os.WriteFile(manifest, b, 0600); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = m.Trigger(testCtx(), "reference", json.RawMessage(`{}`)); !errors.Is(e, ErrPluginConsent) {
+	if e = m.Rescan(testCtx()); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = m.Trigger(testCtx(), "reference", json.RawMessage(`{}`)); !errors.Is(e, plugins.ErrQuarantined) {
 		t.Fatal("expansão automática", e)
 	}
 }
@@ -361,14 +374,14 @@ type faultyLifecycle struct {
 }
 
 // Invoke permite confirmar que descoberta/check nunca executam callbacks.
-func (h *faultyLifecycle) Invoke(ctx context.Context, id string, artifact, input []byte, call plugins.Call) ([]byte, error) {
+func (h *faultyLifecycle) Invoke(ctx context.Context, id string, artifact plugins.Module, input []byte, call plugins.Call) ([]byte, error) {
 	h.calls++
 	var ev struct {
 		Type string `json:"type"`
 	}
 	_ = json.Unmarshal(input, &ev)
 	if ev.Type == h.event {
-		return h.PluginHost.Invoke(ctx, id, h.evil, []byte(`{"op":"trap"}`), call)
+		return h.PluginHost.Invoke(ctx, id, plugins.NewModule(h.evil), []byte(`{"op":"trap"}`), call)
 	}
 	return h.PluginHost.Invoke(ctx, id, artifact, input, call)
 }
@@ -453,7 +466,10 @@ func TestPluginOriginExpansion(t *testing.T) {
 	if e = os.WriteFile(file, b, 0600); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = m.Trigger(testCtx(), "reference", json.RawMessage(`{}`)); !errors.Is(e, ErrPluginConsent) {
+	if e = m.Rescan(testCtx()); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = m.Trigger(testCtx(), "reference", json.RawMessage(`{}`)); !errors.Is(e, plugins.ErrQuarantined) {
 		t.Fatal("origem nova aplicada sem consentimento", e)
 	}
 }
@@ -462,7 +478,7 @@ func TestPluginOriginExpansion(t *testing.T) {
 func TestPluginQuotaConcurrent(t *testing.T) {
 	m, u, ch := managerFixture(t, false)
 	a := enableReference(t, m, u, ch)
-	if _, e := storage.GetDB().Exec("DELETE FROM app_storage WHERE installation=$1", a.ID); e != nil {
+	if e := storage.ClearAppStorage(testCtx(), a.ID); e != nil {
 		t.Fatal(e)
 	}
 	for i := 0; i < 255; i++ {

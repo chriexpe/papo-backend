@@ -4,8 +4,6 @@ package wasmhost
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,12 +19,34 @@ import (
 
 // Limits fixa os tetos de admissão; o orçamento de cache é uma estimativa conservadora.
 type Limits struct {
-	Concurrency, Queue, Installations, Failures, CacheBytes int
-	Deadline                                                time.Duration
+	// Concurrency é o número de invocações simultâneas no processo.
+	Concurrency int
+	// Queue é quantas invocações de uma instalação podem aguardar a atual.
+	Queue int
+	// Installations limita instalações com estado vivo no host.
+	Installations int
+	// Failures é o número de falhas consecutivas que abre o circuito.
+	Failures int
+	// CacheBytes é o orçamento estimado do cache de módulos compilados.
+	CacheBytes int
+	// ArtifactBytes é o tamanho máximo de plugin.wasm.
+	ArtifactBytes int
+	// Deadline limita cada invocação, inclusive a espera e os host calls.
+	Deadline time.Duration
 }
 
 // DefaultLimits limita trabalho compilado, instâncias vivas e espera por instalação.
-func DefaultLimits() Limits { return Limits{4, 8, 1024, 3, 128 << 20, time.Second} }
+func DefaultLimits() Limits {
+	return Limits{
+		Concurrency:   4,
+		Queue:         8,
+		Installations: 1024,
+		Failures:      3,
+		CacheBytes:    128 << 20,
+		ArtifactBytes: plugins.MaxArtifact,
+		Deadline:      time.Second,
+	}
+}
 
 type compiled struct {
 	runtime     wazero.Runtime
@@ -60,13 +80,21 @@ type Host struct {
 
 // New inicia apenas as importações WASI necessárias ao reactor TinyGo.
 func New(ctx context.Context, l Limits) (*Host, error) {
-	if l.Concurrency < 1 || l.Queue < 0 || l.Installations < 1 || l.Failures < 1 || l.CacheBytes < 1 || l.Deadline <= 0 {
+	if l.Concurrency < 1 || l.Queue < 0 || l.Installations < 1 || l.Failures < 1 || l.CacheBytes < 1 ||
+		l.ArtifactBytes < 1 || l.Deadline <= 0 {
 		return nil, fmt.Errorf("limites inválidos")
 	}
-	h := &Host{limits: l, slots: make(chan struct{}, l.Concurrency), compiler: make(chan struct{}, 1), cache: map[string]*compiled{}, states: map[string]*installation{}, runtimes: map[int]wazero.Runtime{}}
-	r, e := h.newRuntime(ctx, 16)
-	if e != nil {
-		return nil, e
+	h := &Host{
+		limits:   l,
+		slots:    make(chan struct{}, l.Concurrency),
+		compiler: make(chan struct{}, 1),
+		cache:    map[string]*compiled{},
+		states:   map[string]*installation{},
+		runtimes: map[int]wazero.Runtime{},
+	}
+	r, err := h.newRuntime(ctx, 16)
+	if err != nil {
+		return nil, err
 	}
 	h.runtime = r
 	h.runtimes[16] = r
@@ -83,13 +111,13 @@ func (h *Host) newRuntime(ctx context.Context, mb int) (wazero.Runtime, error) {
 	wasi_snapshot_preview1.NewFunctionExporter().ExportFunctions(allowed)
 	// encoding/json do TinyGo referencia clock/args; argumentos ficam vazios e relógio nega acesso.
 	allowed.NewFunctionBuilder().WithFunc(func(context.Context, api.Module, uint32, uint64, uint32) uint32 { return 52 }).Export("clock_time_get")
-	if _, e := allowed.Instantiate(ctx); e != nil {
+	if _, err := allowed.Instantiate(ctx); err != nil {
 		r.Close(ctx)
-		return nil, e
+		return nil, err
 	}
-	if _, e := r.NewHostModuleBuilder("papo_host_v1").NewFunctionBuilder().WithFunc(h.call).Export("call").Instantiate(ctx); e != nil {
+	if _, err := r.NewHostModuleBuilder("papo_host_v1").NewFunctionBuilder().WithFunc(h.call).Export("call").Instantiate(ctx); err != nil {
 		r.Close(ctx)
-		return nil, e
+		return nil, err
 	}
 	return r, nil
 }
@@ -117,22 +145,32 @@ func validate(c wazero.CompiledModule) error {
 		return plugins.ErrInvalidArtifact
 	}
 	f := c.ExportedFunctions()
-	if !signature(f["alloc"], []api.ValueType{i32}, []api.ValueType{i32}) || !signature(f["free"], []api.ValueType{i32}, nil) || !signature(f["invoke"], []api.ValueType{i32, i32}, []api.ValueType{i64}) || !signature(f["_initialize"], nil, nil) || f["_start"] != nil {
+	exports := signature(f["alloc"], []api.ValueType{i32}, []api.ValueType{i32}) &&
+		signature(f["free"], []api.ValueType{i32}, nil) &&
+		signature(f["invoke"], []api.ValueType{i32, i32}, []api.ValueType{i64}) &&
+		signature(f["_initialize"], nil, nil)
+	if !exports || f["_start"] != nil {
 		return plugins.ErrInvalidArtifact
 	}
 	return nil
 }
 
-// acquire compila sob admissão global e mantém handles ativos fora da eviction.
-func (h *Host) acquire(ctx context.Context, data []byte) (*compiled, error) {
-	if len(data) == 0 || len(data) > plugins.ArtifactLimit() {
+// acquire devolve o módulo compilado do cache pelo digest já conhecido; só em
+// um miss valida o binário e compila sob a admissão global de compilação.
+// Handles em uso nunca são removidos do cache.
+func (h *Host) acquire(ctx context.Context, module plugins.Module) (*compiled, error) {
+	mb := plugins.MemoryLimit(ctx)
+	key := fmt.Sprintf("%d:%s", mb, module.Digest)
+	if c := h.cached(key); c != nil {
+		return c, nil
+	}
+	data := module.Code
+	if len(data) == 0 || len(data) > h.limits.ArtifactBytes {
 		return nil, plugins.ErrInvalidArtifact
 	}
 	if err := preflight(data); err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(data)
-	digest := fmt.Sprintf("%d:%s", plugins.MemoryLimit(ctx), hex.EncodeToString(sum[:]))
 	// A espera por compilação também respeita o contexto; não segura o lock do scheduler.
 	select {
 	case h.compiler <- struct{}{}:
@@ -140,21 +178,18 @@ func (h *Host) acquire(ctx context.Context, data []byte) (*compiled, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	h.mu.Lock()
-	h.tick++
-	if c := h.cache[digest]; c != nil {
-		c.users++
-		c.used = h.tick
-		h.mu.Unlock()
+	// Outra invocação pode ter compilado o mesmo módulo enquanto esta esperava.
+	if c := h.cached(key); c != nil {
 		return c, nil
 	}
 	cost := max(1<<20, len(data)*4)
+	h.mu.Lock()
 	for h.budget+cost > h.limits.CacheBytes {
 		var victim string
 		var oldest *compiled
-		for key, c := range h.cache {
+		for k, c := range h.cache {
 			if c.users == 0 && (oldest == nil || c.used < oldest.used) {
-				victim, oldest = key, c
+				victim, oldest = k, c
 			}
 		}
 		if oldest == nil {
@@ -165,16 +200,13 @@ func (h *Host) acquire(ctx context.Context, data []byte) (*compiled, error) {
 		delete(h.cache, victim)
 		h.budget -= oldest.cost
 	}
-	h.mu.Unlock()
-	mb := plugins.MemoryLimit(ctx)
-	h.mu.Lock()
 	r := h.runtimes[mb]
 	h.mu.Unlock()
 	if r == nil {
-		var e error
-		r, e = h.newRuntime(ctx, mb)
-		if e != nil {
-			return nil, e
+		var err error
+		r, err = h.newRuntime(ctx, mb)
+		if err != nil {
+			return nil, err
 		}
 		h.mu.Lock()
 		h.runtimes[mb] = r
@@ -190,10 +222,25 @@ func (h *Host) acquire(ctx context.Context, data []byte) (*compiled, error) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.tick++
 	entry := &compiled{runtime: r, module: c, cost: cost, users: 1, used: h.tick}
-	h.cache[digest] = entry
+	h.cache[key] = entry
 	h.budget += cost
 	return entry, nil
+}
+
+// cached reserva o módulo compilado de key, se existir.
+func (h *Host) cached(key string) *compiled {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c := h.cache[key]
+	if c == nil {
+		return nil
+	}
+	h.tick++
+	c.users++
+	c.used = h.tick
+	return c
 }
 
 // release libera somente a referência, mantendo o código no cache limitado.
@@ -209,7 +256,7 @@ func (h *Host) Validate(ctx context.Context, data []byte) error {
 	default:
 		return plugins.ErrBusy
 	}
-	c, err := h.acquire(ctx, data)
+	c, err := h.acquire(ctx, plugins.NewModule(data))
 	if err == nil {
 		h.release(c)
 	}
@@ -256,7 +303,7 @@ func (h *Host) leave(id string, s *installation, ran, failed bool) {
 }
 
 // Invoke serializa por instalação e impõe prazo também à espera e aos host calls.
-func (h *Host) Invoke(parent context.Context, id string, artifact, input []byte, call plugins.Call) (out []byte, err error) {
+func (h *Host) Invoke(parent context.Context, id string, module plugins.Module, input []byte, call plugins.Call) (out []byte, err error) {
 	if len(input) > plugins.MaxPayload || !utf8.Valid(input) || !json.Valid(input) {
 		return nil, plugins.ErrExecution
 	}
@@ -305,7 +352,7 @@ func (h *Host) Invoke(parent context.Context, id string, artifact, input []byte,
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	c, err := h.acquire(ctx, artifact)
+	c, err := h.acquire(ctx, module)
 	if err != nil {
 		return nil, err
 	}
@@ -406,8 +453,8 @@ func (h *Host) Close(ctx context.Context) error {
 	defer h.mu.Unlock()
 	var first error
 	for _, r := range h.runtimes {
-		if e := r.Close(ctx); e != nil && first == nil {
-			first = e
+		if err := r.Close(ctx); err != nil && first == nil {
+			first = err
 		}
 	}
 	return first
