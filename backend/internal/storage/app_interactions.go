@@ -117,8 +117,8 @@ func CleanAppInteractions(ctx context.Context) error {
 
 type messageComponentsKey struct{}
 
-// WithMessageComponents faz a mensagem criada com este contexto gravar os
-// botões na mesma transação do INSERT, sem mensagem órfã de botões.
+// WithMessageComponents faz a mensagem criada ou editada com este contexto gravar
+// os botões na mesma transação da escrita, sem mensagem órfã de botões.
 func WithMessageComponents(ctx context.Context, buttons [][]models.AppButton) context.Context {
 	return context.WithValue(ctx, messageComponentsKey{}, buttons)
 }
@@ -137,26 +137,23 @@ func saveMessageComponentsInTx(ctx context.Context, tx *sql.Tx, messageID string
 	return err
 }
 
-// SaveAppComponents só altera mensagens pertencentes à instalação e ao canal.
-func SaveAppComponents(ctx context.Context, id, channel, message string, buttons [][]models.AppButton) error {
+// replaceMessageComponentsInTx aplica, na edição, os botões do contexto quando
+// presentes: uma lista vazia remove os botões; sem valor no contexto, os botões
+// atuais são mantidos.
+func replaceMessageComponentsInTx(ctx context.Context, tx *sql.Tx, messageID string) error {
+	buttons, ok := ctx.Value(messageComponentsKey{}).([][]models.AppButton)
+	if !ok {
+		return nil
+	}
 	if buttons == nil {
 		buttons = [][]models.AppButton{}
 	}
-	b, err := json.Marshal(buttons)
+	data, err := json.Marshal(buttons)
 	if err != nil {
 		return err
 	}
-	r, err := GetDB().ExecContext(ctx,
-		"UPDATE messages SET components = $4 WHERE id = $1 AND app_installation_id = $2 AND channel_id = $3",
-		message, id, channel, b)
-	if err != nil {
-		return err
-	}
-	n, _ := r.RowsAffected()
-	if n != 1 {
-		return ErrNotFound
-	}
-	return nil
+	_, err = tx.ExecContext(ctx, "UPDATE messages SET components = $2 WHERE id = $1", messageID, data)
+	return err
 }
 
 // AppComponents retorna uma cópia de botões, desabilitando instalações indisponíveis.

@@ -405,6 +405,9 @@ func updateMessageInTx(ctx context.Context, tx *sql.Tx, id string, message model
 		return models.Message{}, mapStorageError(err)
 	}
 
+	if err := replaceMessageComponentsInTx(ctx, tx, updated.ID); err != nil {
+		return models.Message{}, err
+	}
 	if err := createMessageEventInTx(ctx, tx, "message.updated", updated); err != nil {
 		return models.Message{}, err
 	}

@@ -141,11 +141,11 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 		if frames > 1 {
 			return pluginResponse(nil, ErrInvalidEmbed)
 		}
+		if req.Components != nil {
+			ctx = storage.WithMessageComponents(ctx, *req.Components)
+		}
 		var msg models.MessageWithAttachment
 		msg, err = EditAppMessage(ctx, a, req.ChannelID, req.MessageID, req.Content, req.Embeds)
-		if err == nil && req.Components != nil {
-			err = storage.SaveAppComponents(ctx, id, req.ChannelID, msg.ID, *req.Components)
-		}
 		if err == nil {
 			comps, err := storage.AppComponents(ctx, []string{msg.ID})
 			if err != nil {

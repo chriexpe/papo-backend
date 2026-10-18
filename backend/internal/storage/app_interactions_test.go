@@ -74,3 +74,39 @@ func TestAppInteractionCleanup(t *testing.T) {
 		t.Fatal(n, e)
 	}
 }
+
+// TestMessageComponentsInEditTransaction grava os botões da edição na mesma
+// transação: lista vazia remove, contexto sem botões preserva os atuais.
+func TestMessageComponentsInEditTransaction(t *testing.T) {
+	ctx := testCtx()
+	u := newTestUser(t)
+	ch := newTestChannel(t)
+	buttons := [][]models.AppButton{{{ID: "jogar", Label: "Jogar", Style: "primary"}}}
+	msg, err := CreateMessage(WithMessageComponents(ctx, buttons), ch.ID, u.ID, "com botões", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	components := func() string {
+		var raw string
+		if err := GetDB().QueryRowContext(ctx, "SELECT components::text FROM messages WHERE id=$1", msg.ID).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	if !strings.Contains(components(), "jogar") {
+		t.Fatal("criação sem botões", components())
+	}
+	content := "editada"
+	if _, err := UpdateMessage(ctx, msg.ID, models.Message{Content: &content}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(components(), "jogar") {
+		t.Fatal("edição sem botões no contexto apagou os atuais", components())
+	}
+	if _, err := UpdateMessage(WithMessageComponents(ctx, [][]models.AppButton{}), msg.ID, models.Message{Content: &content}); err != nil {
+		t.Fatal(err)
+	}
+	if got := components(); got != "[]" {
+		t.Fatal("lista vazia deveria remover os botões", got)
+	}
+}
