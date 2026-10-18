@@ -55,7 +55,7 @@ func webhookAvatarPath(webhookID string) string {
 // Retorna ErrInvalidInput quando o nome é vazio ou excede 80 caracteres,
 // ErrChannelNotFound quando o canal não existe e ErrPermissionDenied quando o
 // canal não aceita webhook (dm) ou o ator não pode ler o canal.
-// ErrWebhookLimitReached indica que o canal tem 50 webhooks ativos.
+// ErrWebhookLimitReached indica que o canal atingiu storage.MaxActiveWebhooksPerChannel webhooks ativos.
 func CreateWebhook(ctx context.Context, actorID, channelID, name string) (models.Webhook, string, error) {
 	if strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 80 {
 		return models.Webhook{}, "", ErrInvalidInput
