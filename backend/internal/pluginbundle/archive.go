@@ -14,25 +14,25 @@ import (
 // Extract publica atomicamente uma pasta validada e nunca sobrescreve uma existente.
 func Extract(ctx context.Context, archive, directory string, c Config, v Validator) (Bundle, error) {
 	var empty Bundle
-	z, e := zip.OpenReader(archive)
-	if e != nil {
-		return empty, e
+	z, err := zip.OpenReader(archive)
+	if err != nil {
+		return empty, err
 	}
 	defer z.Close()
 	if len(z.File) > c.Files*2+1 {
 		return empty, fmt.Errorf("muitas entradas ZIP")
 	}
-	staging, e := os.MkdirTemp(directory, ".extract-")
-	if e != nil {
-		return empty, e
+	staging, err := os.MkdirTemp(directory, ".extract-")
+	if err != nil {
+		return empty, err
 	}
 	defer os.RemoveAll(staging)
 	var id string
 	seen := map[string]bool{}
 	var total int64
 	for _, f := range z.File {
-		if e = ctx.Err(); e != nil {
-			return empty, e
+		if err = ctx.Err(); err != nil {
+			return empty, err
 		}
 		name := strings.TrimSuffix(f.Name, "/")
 		if !SafePath(name) || f.Mode()&os.ModeSymlink != 0 || (!f.Mode().IsRegular() && !f.FileInfo().IsDir()) || f.Flags&1 != 0 {
@@ -52,8 +52,8 @@ func Extract(ctx context.Context, archive, directory string, c Config, v Validat
 		seen[lower] = true
 		target := filepath.Join(staging, filepath.FromSlash(name))
 		if f.FileInfo().IsDir() {
-			if e = os.MkdirAll(target, 0700); e != nil {
-				return empty, e
+			if err = os.MkdirAll(target, 0700); err != nil {
+				return empty, err
 			}
 			continue
 		}
@@ -68,17 +68,17 @@ func Extract(ctx context.Context, archive, directory string, c Config, v Validat
 		if total > c.FolderBytes {
 			return empty, fmt.Errorf("pasta ZIP excedida")
 		}
-		if e = os.MkdirAll(filepath.Dir(target), 0700); e != nil {
-			return empty, e
+		if err = os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			return empty, err
 		}
-		src, e := f.Open()
-		if e != nil {
-			return empty, e
+		src, err := f.Open()
+		if err != nil {
+			return empty, err
 		}
-		dst, e := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if e != nil {
+		dst, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
 			src.Close()
-			return empty, e
+			return empty, err
 		}
 		n, copyErr := io.Copy(dst, io.LimitReader(src, limit+1))
 		closeErr := dst.Close()
@@ -93,19 +93,19 @@ func Extract(ctx context.Context, archive, directory string, c Config, v Validat
 			return empty, fmt.Errorf("tamanho ZIP inválido")
 		}
 	}
-	b, e := Load(ctx, filepath.Join(staging, id), c, v)
-	if e != nil {
-		return empty, e
+	b, err := Load(ctx, filepath.Join(staging, id), c, v)
+	if err != nil {
+		return empty, err
 	}
 	if strings.TrimSuffix(filepath.Base(archive), ".papoplugin") != id {
 		return empty, fmt.Errorf("nome do pacote deve coincidir com id")
 	}
 	destination := filepath.Join(directory, id)
-	if _, e = os.Lstat(destination); !os.IsNotExist(e) {
+	if _, err = os.Lstat(destination); !os.IsNotExist(err) {
 		return empty, fmt.Errorf("plugin já existe")
 	}
-	if e = os.Rename(b.Directory, destination); e != nil {
-		return empty, e
+	if err = os.Rename(b.Directory, destination); err != nil {
+		return empty, err
 	}
 	b.Directory = destination
 	return b, nil
@@ -113,13 +113,13 @@ func Extract(ctx context.Context, archive, directory string, c Config, v Validat
 
 // Pack escreve um ZIP determinístico em temporário fora da pasta validada.
 func Pack(ctx context.Context, dir, output string, c Config, v Validator) error {
-	b, e := Load(ctx, dir, c, v)
-	if e != nil {
-		return e
+	b, err := Load(ctx, dir, c, v)
+	if err != nil {
+		return err
 	}
-	out, e := filepath.Abs(output)
-	if e != nil {
-		return e
+	out, err := filepath.Abs(output)
+	if err != nil {
+		return err
 	}
 	if filepath.Ext(out) != ".papoplugin" {
 		return fmt.Errorf("saída deve usar .papoplugin")
@@ -127,67 +127,67 @@ func Pack(ctx context.Context, dir, output string, c Config, v Validator) error 
 	if out == b.Directory || strings.HasPrefix(out, b.Directory+string(os.PathSeparator)) {
 		return fmt.Errorf("saída deve ficar fora da pasta")
 	}
-	f, e := os.CreateTemp(filepath.Dir(out), ".pack-")
-	if e != nil {
-		return e
+	f, err := os.CreateTemp(filepath.Dir(out), ".pack-")
+	if err != nil {
+		return err
 	}
 	defer os.Remove(f.Name())
 	z := zip.NewWriter(f)
-	root, e := os.OpenRoot(dir)
-	if e != nil {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
 		f.Close()
-		return e
+		return err
 	}
 	defer root.Close()
 	for _, name := range b.Files {
-		dst, e := z.CreateHeader(&zip.FileHeader{Name: path.Join(b.Manifest.ID, name), Method: zip.Deflate})
-		if e != nil {
+		dst, err := z.CreateHeader(&zip.FileHeader{Name: path.Join(b.Manifest.ID, name), Method: zip.Deflate})
+		if err != nil {
 			z.Close()
 			f.Close()
-			return e
+			return err
 		}
-		src, e := root.Open(name)
-		if e != nil {
+		src, err := root.Open(name)
+		if err != nil {
 			z.Close()
 			f.Close()
-			return e
+			return err
 		}
-		_, e = io.Copy(dst, io.LimitReader(src, fileLimit(name, c)+1))
+		_, err = io.Copy(dst, io.LimitReader(src, fileLimit(name, c)+1))
 		src.Close()
-		if e != nil {
+		if err != nil {
 			z.Close()
 			f.Close()
-			return e
+			return err
 		}
 	}
-	if e = z.Close(); e != nil {
+	if err = z.Close(); err != nil {
 		f.Close()
-		return e
+		return err
 	}
-	if e = f.Close(); e != nil {
-		return e
+	if err = f.Close(); err != nil {
+		return err
 	}
 	// Detecta alteração durante o empacotamento antes de publicar.
-	check, e := Load(ctx, dir, c, v)
-	if e != nil {
-		return e
+	check, err := Load(ctx, dir, c, v)
+	if err != nil {
+		return err
 	}
 	if check.Digest != b.Digest {
 		return fmt.Errorf("pasta alterada durante pack")
 	}
-	verifyDir, e := os.MkdirTemp(filepath.Dir(out), ".pack-verify-")
-	if e != nil {
-		return e
+	verifyDir, err := os.MkdirTemp(filepath.Dir(out), ".pack-verify-")
+	if err != nil {
+		return err
 	}
 	defer os.RemoveAll(verifyDir)
 	// O nome temporário precisa seguir o mesmo contrato id.papoplugin da descoberta.
 	packed := filepath.Join(verifyDir, b.Manifest.ID+".papoplugin")
-	if e = os.Rename(f.Name(), packed); e != nil {
-		return e
+	if err = os.Rename(f.Name(), packed); err != nil {
+		return err
 	}
-	extracted, e := Extract(ctx, packed, verifyDir, c, v)
-	if e != nil {
-		return e
+	extracted, err := Extract(ctx, packed, verifyDir, c, v)
+	if err != nil {
+		return err
 	}
 	if extracted.Digest != b.Digest {
 		return fmt.Errorf("conteúdo do ZIP difere do digest validado")

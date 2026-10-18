@@ -10,9 +10,9 @@ import (
 
 // callerProfile não recebe uma identidade do guest e não expõe structs de usuário completas.
 func callerProfile(ctx context.Context, id string) (models.AppUserProfile, error) {
-	list, e := storage.AppPublicProfiles(ctx, []string{id})
-	if e != nil {
-		return models.AppUserProfile{}, e
+	list, err := storage.AppPublicProfiles(ctx, []string{id})
+	if err != nil {
+		return models.AppUserProfile{}, err
 	}
 	if len(list) != 1 {
 		return models.AppUserProfile{}, ErrPermissionDenied
@@ -28,8 +28,8 @@ func (m *PluginManager) ResolveUsers(ctx context.Context, id string, ids []strin
 	unique := []string{}
 	seen := map[string]bool{}
 	for _, s := range ids {
-		u, e := uuid.Parse(s)
-		if e != nil {
+		u, err := uuid.Parse(s)
+		if err != nil {
 			return nil, ErrInvalidInput
 		}
 		s = u.String()
@@ -38,23 +38,23 @@ func (m *PluginManager) ResolveUsers(ctx context.Context, id string, ids []strin
 			seen[s] = true
 		}
 	}
-	a, e := activeApp(ctx, id)
-	if e != nil {
-		return nil, e
+	a, err := activeApp(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 	if a.Kind != "plugin" || a.PluginState != "enabled" {
 		return nil, ErrPermissionDenied
 	}
-	if e = m.limit("users.resolve:"+id, m.Config.Limits.UsersResolvePerPlugin); e != nil {
-		return nil, e
+	if err = m.limit("users.resolve:"+id, m.Config.Limits.UsersResolvePerPlugin); err != nil {
+		return nil, err
 	}
-	channels, e := storage.AppProfileChannels(ctx, id)
-	if e != nil {
-		return nil, e
+	channels, err := storage.AppProfileChannels(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	profiles, e := storage.AppPublicProfiles(ctx, unique)
-	if e != nil {
-		return nil, e
+	profiles, err := storage.AppPublicProfiles(ctx, unique)
+	if err != nil {
+		return nil, err
 	}
 	allowed := map[string]models.AppUserProfile{}
 	for _, channel := range channels {

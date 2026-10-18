@@ -12,8 +12,8 @@ func AppStorageDefaults() (models.AppStorageQuota, error) {
 	q := models.AppStorageQuota{MaxKeys: 256, MaxTotalBytes: 1 << 20, MaxValueBytes: 16 << 10}
 	for env, p := range map[string]*int{"PLUGINS_STORAGE_MAX_KEYS": &q.MaxKeys, "PLUGINS_STORAGE_MAX_TOTAL_BYTES": &q.MaxTotalBytes, "PLUGINS_STORAGE_MAX_VALUE_BYTES": &q.MaxValueBytes} {
 		if raw := os.Getenv(env); raw != "" {
-			n, e := strconv.Atoi(raw)
-			if e != nil || n < 1 {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 {
 				return q, fmt.Errorf("%s inválido", env)
 			}
 			*p = n
@@ -32,9 +32,9 @@ func ValidateAppStorageQuota(q models.AppStorageQuota) error {
 
 // EffectiveAppStorageQuota aplica somente overrides positivos; zero/nil herda o padrão.
 func EffectiveAppStorageQuota(o models.AppStorageQuotaOverride) (models.AppStorageQuota, error) {
-	q, e := AppStorageDefaults()
-	if e != nil {
-		return q, e
+	q, err := AppStorageDefaults()
+	if err != nil {
+		return q, err
 	}
 	for _, v := range []struct {
 		p   *int

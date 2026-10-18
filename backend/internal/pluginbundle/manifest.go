@@ -76,8 +76,8 @@ func SafePath(s string) bool {
 func Parse(data []byte, c Config) (Manifest, error) {
 	var m Manifest
 	d := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
-	if e := d.Decode(&m); e != nil {
-		return m, e
+	if err := d.Decode(&m); err != nil {
+		return m, err
 	}
 	if m.ManifestVersion != 1 || !identifier.MatchString(m.ID) || !displayName(m.Name) || utf8.RuneCountInString(m.Name) > 80 || !validVersion(m.Version) || m.MinPapoAPI != 1 {
 		return m, fmt.Errorf("identidade/API do manifest inválida")
@@ -135,8 +135,8 @@ func Parse(data []byte, c Config) (Manifest, error) {
 			return m, fmt.Errorf("entry inválido")
 		}
 		if s.EntryURL != "" {
-			if _, e := HTTPSOrigin(s.EntryURL); e != nil {
-				return m, e
+			if _, err := HTTPSOrigin(s.EntryURL); err != nil {
+				return m, err
 			}
 		}
 		if s.EntryURLSetting != "" && settings[s.EntryURLSetting].Type != "https_url" {
@@ -175,8 +175,8 @@ func Parse(data []byte, c Config) (Manifest, error) {
 		}
 	}
 	for _, s := range m.RemoteOrigins {
-		o, e := HTTPSOrigin(s)
-		if e != nil || o != s {
+		o, err := HTTPSOrigin(s)
+		if err != nil || o != s {
 			return m, fmt.Errorf("origem inválida: %s", s)
 		}
 	}
@@ -185,8 +185,8 @@ func Parse(data []byte, c Config) (Manifest, error) {
 
 // HTTPSOrigin faz validação sintática; o serviço aplica a política SSRF/DNS da PR 18.
 func HTTPSOrigin(raw string) (string, error) {
-	u, e := url.Parse(raw)
-	if e != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Port() != "" && u.Port() != "443") || len(raw) > 2048 {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Port() != "" && u.Port() != "443") || len(raw) > 2048 {
 		return "", fmt.Errorf("URL HTTPS inválida")
 	}
 	return "https://" + strings.ToLower(u.Host), nil
@@ -264,15 +264,15 @@ func validDefault(s Setting) bool {
 		if !ok {
 			return false
 		}
-		_, e := uuid.Parse(v)
-		return e == nil
+		_, err := uuid.Parse(v)
+		return err == nil
 	case "https_url":
 		v, ok := s.Default.(string)
 		if !ok {
 			return false
 		}
-		_, e := HTTPSOrigin(v)
-		return e == nil
+		_, err := HTTPSOrigin(v)
+		return err == nil
 	}
 	return false
 }

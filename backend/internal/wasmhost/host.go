@@ -85,9 +85,9 @@ func New(ctx context.Context, l Limits) (*Host, error) {
 		return nil, fmt.Errorf("limites inválidos")
 	}
 	h := &Host{limits: l, slots: make(chan struct{}, l.Concurrency), compiler: make(chan struct{}, 1), cache: map[string]*compiled{}, states: map[string]*installation{}, runtimes: map[int]wazero.Runtime{}}
-	r, e := h.newRuntime(ctx, 16)
-	if e != nil {
-		return nil, e
+	r, err := h.newRuntime(ctx, 16)
+	if err != nil {
+		return nil, err
 	}
 	h.runtime = r
 	h.runtimes[16] = r
@@ -104,13 +104,13 @@ func (h *Host) newRuntime(ctx context.Context, mb int) (wazero.Runtime, error) {
 	wasi_snapshot_preview1.NewFunctionExporter().ExportFunctions(allowed)
 	// encoding/json do TinyGo referencia clock/args; argumentos ficam vazios e relógio nega acesso.
 	allowed.NewFunctionBuilder().WithFunc(func(context.Context, api.Module, uint32, uint64, uint32) uint32 { return 52 }).Export("clock_time_get")
-	if _, e := allowed.Instantiate(ctx); e != nil {
+	if _, err := allowed.Instantiate(ctx); err != nil {
 		r.Close(ctx)
-		return nil, e
+		return nil, err
 	}
-	if _, e := r.NewHostModuleBuilder("papo_host_v1").NewFunctionBuilder().WithFunc(h.call).Export("call").Instantiate(ctx); e != nil {
+	if _, err := r.NewHostModuleBuilder("papo_host_v1").NewFunctionBuilder().WithFunc(h.call).Export("call").Instantiate(ctx); err != nil {
 		r.Close(ctx)
-		return nil, e
+		return nil, err
 	}
 	return r, nil
 }
@@ -442,8 +442,8 @@ func (h *Host) Close(ctx context.Context) error {
 	defer h.mu.Unlock()
 	var first error
 	for _, r := range h.runtimes {
-		if e := r.Close(ctx); e != nil && first == nil {
-			first = e
+		if err := r.Close(ctx); err != nil && first == nil {
+			first = err
 		}
 	}
 	return first

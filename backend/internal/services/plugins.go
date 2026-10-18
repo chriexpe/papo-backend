@@ -41,9 +41,9 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 	if json.Unmarshal(data, &req) != nil {
 		return pluginResponse(nil, ErrInvalidInput)
 	}
-	a, e := activeApp(ctx, id)
-	if e != nil {
-		return pluginResponse(nil, e)
+	a, err := activeApp(ctx, id)
+	if err != nil {
+		return pluginResponse(nil, err)
 	}
 	if a.Kind != "plugin" || a.PluginState != "enabled" || (a.LifecyclePending && ctx.Value(pluginTransitionKey{}) != a.ID) {
 		return pluginResponse(nil, ErrPermissionDenied)
@@ -59,14 +59,14 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 	var result any
 	switch req.Method {
 	case "users.resolve":
-		result, e = m.ResolveUsers(ctx, a.ID, req.IDs)
+		result, err = m.ResolveUsers(ctx, a.ID, req.IDs)
 	case "asset.read":
 		var content []byte
-		content, e = pluginbundle.ReadAsset(b.Directory, req.Path, req.Offset, req.Length, m.Config)
-		if e == nil {
+		content, err = pluginbundle.ReadAsset(b.Directory, req.Path, req.Offset, req.Length, m.Config)
+		if err == nil {
 			result = map[string]any{"data": content, "offset": req.Offset, "length": len(content)}
 		} else {
-			e = ErrInvalidInput
+			err = ErrInvalidInput
 		}
 	case "kv.get", "kv.put", "kv.delete":
 		if !a.Capabilities.PrivateStorage {
@@ -76,19 +76,19 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 			return pluginResponse(nil, ErrInvalidInput)
 		}
 		if req.Method == "kv.get" {
-			result, e = storage.GetAppStorage(ctx, id, req.Key)
+			result, err = storage.GetAppStorage(ctx, id, req.Key)
 		} else {
 			if req.Method == "kv.put" && (!json.Valid(req.Value)) {
 				return pluginResponse(nil, ErrInvalidInput)
 			}
-			result, e = storage.MutateAppStorage(ctx, id, req.Key, req.Value, req.Method == "kv.delete")
+			result, err = storage.MutateAppStorage(ctx, id, req.Key, req.Value, req.Method == "kv.delete")
 		}
 	case "invite.send":
-		result, e = m.SendAppInvite(ctx, a, req.ToUserID, req.Text, req.Data)
+		result, err = m.SendAppInvite(ctx, a, req.ToUserID, req.Text, req.Data)
 	case "message.send":
 		if req.Components != nil {
-			if e = ValidateAppButtons(ctx, id, *req.Components); e != nil {
-				return pluginResponse(nil, e)
+			if err = ValidateAppButtons(ctx, id, *req.Components); err != nil {
+				return pluginResponse(nil, err)
 			}
 		}
 
@@ -110,8 +110,8 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 			ctx = context.WithValue(ctx, appButtonsKey{}, true)
 			ctx = storage.WithMessageComponents(ctx, *req.Components)
 		}
-		msg, created, e = CreatePluginMessage(ctx, id, req.ChannelID, req.ExternalMessageID, req.Content, "", nil, req.Embeds)
-		if e == nil {
+		msg, created, err = CreatePluginMessage(ctx, id, req.ChannelID, req.ExternalMessageID, req.Content, "", nil, req.Embeds)
+		if err == nil {
 			comps, err := storage.AppComponents(ctx, []string{msg.ID})
 			if err != nil {
 				return pluginResponse(nil, err)
@@ -124,8 +124,8 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 		}
 	case "message.edit":
 		if req.Components != nil {
-			if e = ValidateAppButtons(ctx, id, *req.Components); e != nil {
-				return pluginResponse(nil, e)
+			if err = ValidateAppButtons(ctx, id, *req.Components); err != nil {
+				return pluginResponse(nil, err)
 			}
 		}
 
@@ -142,11 +142,11 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 			return pluginResponse(nil, ErrInvalidEmbed)
 		}
 		var msg models.MessageWithAttachment
-		msg, e = EditAppMessage(ctx, a, req.ChannelID, req.MessageID, req.Content, req.Embeds)
-		if e == nil && req.Components != nil {
-			e = storage.SaveAppComponents(ctx, id, req.ChannelID, msg.ID, *req.Components)
+		msg, err = EditAppMessage(ctx, a, req.ChannelID, req.MessageID, req.Content, req.Embeds)
+		if err == nil && req.Components != nil {
+			err = storage.SaveAppComponents(ctx, id, req.ChannelID, msg.ID, *req.Components)
 		}
-		if e == nil {
+		if err == nil {
 			comps, err := storage.AppComponents(ctx, []string{msg.ID})
 			if err != nil {
 				return pluginResponse(nil, err)
@@ -159,8 +159,8 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 		}
 	case "message.delete":
 		var channel string
-		channel, e = DeleteAppMessage(ctx, a, req.ChannelID, req.MessageID)
-		if e == nil && m.Effects.Deleted != nil {
+		channel, err = DeleteAppMessage(ctx, a, req.ChannelID, req.MessageID)
+		if err == nil && m.Effects.Deleted != nil {
 			m.Effects.Deleted(ctx, channel, req.MessageID)
 		}
 	case "log":
@@ -171,9 +171,9 @@ func (m *PluginManager) hostCall(ctx context.Context, id string, b pluginbundle.
 	case "time.now":
 		result = time.Now().UTC().Format(time.RFC3339Nano)
 	default:
-		e = ErrInvalidInput
+		err = ErrInvalidInput
 	}
-	return pluginResponse(result, e)
+	return pluginResponse(result, err)
 }
 
 // pluginResponse mantém erros de autorização dentro do protocolo do guest.

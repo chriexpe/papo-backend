@@ -41,27 +41,27 @@ type Validator func(context.Context, []byte, int) error
 // Load usa exatamente a mesma validação na descoberta, check e pack.
 func Load(ctx context.Context, dir string, c Config, validate Validator) (Bundle, error) {
 	var b Bundle
-	info, e := os.Lstat(dir)
-	if e != nil {
-		return b, e
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return b, err
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return b, fmt.Errorf("pasta inválida")
 	}
-	root, e := os.OpenRoot(dir)
-	if e != nil {
-		return b, e
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return b, err
 	}
 	defer root.Close()
 	var files []string
 	var total int64
 	entries := 0
-	e = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if e := ctx.Err(); e != nil {
-			return e
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if name == "." {
 			return nil
@@ -76,9 +76,9 @@ func Load(ctx context.Context, dir string, c Config, validate Validator) (Bundle
 		if d.IsDir() {
 			return nil
 		}
-		i, e := d.Info()
-		if e != nil {
-			return e
+		i, err := d.Info()
+		if err != nil {
+			return err
 		}
 		if !i.Mode().IsRegular() {
 			return fmt.Errorf("arquivo especial: %s", name)
@@ -97,8 +97,8 @@ func Load(ctx context.Context, dir string, c Config, validate Validator) (Bundle
 		files = append(files, name)
 		return nil
 	})
-	if e != nil {
-		return b, e
+	if err != nil {
+		return b, err
 	}
 	sort.Strings(files)
 	h := sha256.New()
@@ -108,14 +108,14 @@ func Load(ctx context.Context, dir string, c Config, validate Validator) (Bundle
 			return b, fmt.Errorf("colisão de nomes")
 		}
 		fold[strings.ToLower(name)] = true
-		f, e := root.Open(name)
-		if e != nil {
-			return b, e
+		f, err := root.Open(name)
+		if err != nil {
+			return b, err
 		}
-		info, e := f.Stat()
-		if e != nil {
+		info, err := f.Stat()
+		if err != nil {
 			f.Close()
-			return b, e
+			return b, err
 		}
 		if !info.Mode().IsRegular() {
 			f.Close()
@@ -126,42 +126,42 @@ func Load(ctx context.Context, dir string, c Config, validate Validator) (Bundle
 		h.Write(binary.BigEndian.AppendUint64(nil, uint64(info.Size())))
 		var data []byte
 		if name == "plugin.wasm" || name == "plugin.toml" || name == "icon.png" || name == "icon.webp" {
-			data, e = io.ReadAll(io.LimitReader(f, fileLimit(name, c)+1))
-			if e == nil && int64(len(data)) > fileLimit(name, c) {
-				e = fmt.Errorf("limite excedido")
+			data, err = io.ReadAll(io.LimitReader(f, fileLimit(name, c)+1))
+			if err == nil && int64(len(data)) > fileLimit(name, c) {
+				err = fmt.Errorf("limite excedido")
 			}
 			h.Write(data)
 		} else {
 			var n int64
-			n, e = io.Copy(h, io.LimitReader(f, fileLimit(name, c)+1))
-			if e == nil && (n > fileLimit(name, c) || n != info.Size()) {
-				e = fmt.Errorf("arquivo alterado")
+			n, err = io.Copy(h, io.LimitReader(f, fileLimit(name, c)+1))
+			if err == nil && (n > fileLimit(name, c) || n != info.Size()) {
+				err = fmt.Errorf("arquivo alterado")
 			}
 		}
 		f.Close()
-		if e != nil {
-			return b, e
+		if err != nil {
+			return b, err
 		}
 		switch name {
 		case "plugin.wasm":
 			b.Module = data
 			b.ModuleDigest = plugins.NewModule(data).Digest
 		case "plugin.toml":
-			b.Manifest, e = Parse(data, c)
-			if e != nil {
-				return b, e
+			b.Manifest, err = Parse(data, c)
+			if err != nil {
+				return b, err
 			}
 		case "icon.png", "icon.webp":
 			format := "png"
 			if name == "icon.webp" {
 				format = "webp"
 			}
-			conf, actual, e := image.DecodeConfig(strings.NewReader(string(data)))
-			if e != nil || actual != format || conf.Width < 1 || conf.Height < 1 || conf.Width > 4096 || conf.Height > 4096 {
+			conf, actual, err := image.DecodeConfig(strings.NewReader(string(data)))
+			if err != nil || actual != format || conf.Width < 1 || conf.Height < 1 || conf.Width > 4096 || conf.Height > 4096 {
 				return b, fmt.Errorf("ícone inválido")
 			}
-			if _, _, e = image.Decode(strings.NewReader(string(data))); e != nil {
-				return b, fmt.Errorf("ícone inválido: %w", e)
+			if _, _, err = image.Decode(strings.NewReader(string(data))); err != nil {
+				return b, fmt.Errorf("ícone inválido: %w", err)
 			}
 		}
 	}
@@ -185,13 +185,13 @@ func Load(ctx context.Context, dir string, c Config, validate Validator) (Bundle
 		}
 	}
 	if validate != nil {
-		if e = validate(ctx, b.Module, b.Manifest.Runtime.MaxMemoryMB); e != nil {
-			return b, e
+		if err = validate(ctx, b.Module, b.Manifest.Runtime.MaxMemoryMB); err != nil {
+			return b, err
 		}
 	}
-	b.Directory, e = filepath.Abs(dir)
-	if e != nil {
-		return b, e
+	b.Directory, err = filepath.Abs(dir)
+	if err != nil {
+		return b, err
 	}
 	b.Files = files
 	b.Digest = hex.EncodeToString(h.Sum(nil))
@@ -226,35 +226,35 @@ func ReadAsset(dir, name string, offset, length int64, c Config) ([]byte, error)
 	if !SafePath(name) || offset < 0 || length < 1 || length > c.ReadBytes {
 		return nil, fmt.Errorf("asset request inválido")
 	}
-	root, e := os.OpenRoot(dir)
-	if e != nil {
-		return nil, e
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
 	}
 	defer root.Close()
 	parts := strings.Split(name, "/")
 	for i := range parts {
-		info, e := root.Lstat(strings.Join(parts[:i+1], "/"))
-		if e != nil {
-			return nil, e
+		info, err := root.Lstat(strings.Join(parts[:i+1], "/"))
+		if err != nil {
+			return nil, err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("symlink recusado")
 		}
 	}
-	f, e := root.Open(name)
-	if e != nil {
-		return nil, e
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
 	}
 	defer f.Close()
-	i, e := f.Stat()
-	if e != nil {
-		return nil, e
+	i, err := f.Stat()
+	if err != nil {
+		return nil, err
 	}
 	if !i.Mode().IsRegular() || i.Size() > c.AssetBytes || offset > i.Size() {
 		return nil, fmt.Errorf("asset inválido")
 	}
-	if _, e = f.Seek(offset, io.SeekStart); e != nil {
-		return nil, e
+	if _, err = f.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
 	}
 	return io.ReadAll(io.LimitReader(f, length))
 }
