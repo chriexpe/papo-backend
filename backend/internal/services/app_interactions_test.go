@@ -541,6 +541,28 @@ func TestAppConcurrentResolveStaysAvailable(t *testing.T) {
 	}
 }
 
+// TestReferenceGamesDoNotOverwrite mantém partidas simultâneas em chaves
+// próprias no jogo de referência.
+func TestReferenceGamesDoNotOverwrite(t *testing.T) {
+	m, u, v, a, channel, _ := interactionFixture(t)
+	w, x := newWebhookTestUser(t), newWebhookTestUser(t)
+	ids := []string{}
+	for _, pair := range [][2]string{{u.ID, v.ID}, {w.ID, x.ID}} {
+		in := InteractionInput{InstallationID: a.ID, Kind: "user_action", ChannelID: channel, ActionID: "convidar", TargetUserID: pair[1]}
+		res, err := m.Interact(testCtx(), pair[0], in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, res.InteractionID)
+	}
+	for i, id := range ids {
+		entry, err := storage.GetAppStorage(testCtx(), a.ID, "game:"+id)
+		if err != nil || !strings.Contains(string(entry.Value), id) {
+			t.Fatal("partida sobrescrita", i, string(entry.Value), err)
+		}
+	}
+}
+
 // TestAppUISessionSurvivesUnrelatedModeration garante que banir outro usuário,
 // atribuir roles a terceiros ou editar a ACL de outro canal não encerra sessões
 // de quem continua lendo o canal app.

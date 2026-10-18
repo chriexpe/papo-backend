@@ -31,11 +31,13 @@ func pointer(b []byte) uint32 { return uint32(uintptr(unsafe.Pointer(&b[0]))) }
 //export alloc
 func alloc(n uint32) uint32 { return uint32(uintptr(C.malloc(C.ulong(n)))) }
 
-// Call usa scratch pertencente ao guest e não repete operações após resposta grande.
+// Call envia uma requisição ao host e devolve o envelope bruto
+// {"ok":...,"result":...,"error":{"code":...}}. Usa scratch pertencente ao
+// guest e não repete operações após resposta grande.
 func Call(req any) (json.RawMessage, error) {
-	data, e := json.Marshal(req)
-	if e != nil {
-		return nil, e
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
 	}
 	n := hostCall(pointer(data), uint32(len(data)), pointer(scratch[:]), uint32(len(scratch)))
 	if n > uint32(len(scratch)) {
@@ -44,22 +46,49 @@ func Call(req any) (json.RawMessage, error) {
 	return append([]byte(nil), scratch[:n]...), nil
 }
 
-// Asset lê um trecho base64 de arquivo confinado sem expor filesystem WASI.
-func Asset(path string, offset, length int64) ([]byte, error) {
-	b, e := Call(map[string]any{"method": "asset.read", "path": path, "offset": offset, "length": length})
-	if e != nil {
-		return nil, e
+// HostError é uma recusa do host. Code é forbidden, invalid_param, not_found,
+// rate_limited, quota_exceeded ou internal; o host não envia detalhes.
+type HostError struct {
+	Code string
+}
+
+func (e *HostError) Error() string { return "host recusou a operação: " + e.Code }
+
+// Host envia req e devolve somente o result; uma recusa vira *HostError.
+func Host(req any) (json.RawMessage, error) {
+	b, err := Call(req)
+	if err != nil {
+		return nil, err
 	}
 	var out struct {
-		OK     bool `json:"ok"`
-		Result struct {
-			Data []byte `json:"data"`
-		} `json:"result"`
+		OK     bool            `json:"ok"`
+		Result json.RawMessage `json:"result"`
+		Error  struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
-	if e = json.Unmarshal(b, &out); e != nil || !out.OK {
-		return nil, errors.New("asset recusado")
+	if err = json.Unmarshal(b, &out); err != nil {
+		return nil, err
 	}
-	return out.Result.Data, nil
+	if !out.OK {
+		return nil, &HostError{Code: out.Error.Code}
+	}
+	return out.Result, nil
+}
+
+// Asset lê um trecho base64 de arquivo confinado sem expor filesystem WASI.
+func Asset(path string, offset, length int64) ([]byte, error) {
+	b, err := Host(map[string]any{"method": "asset.read", "path": path, "offset": offset, "length": length})
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Data []byte `json:"data"`
+	}
+	if err = json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out.Data, nil
 }
 
 //export invoke
@@ -145,16 +174,13 @@ type UserProfile struct {
 
 // ResolveUsers retorna somente perfis autorizados; ausentes e negados são omitidos.
 func ResolveUsers(ids []string) ([]UserProfile, error) {
-	b, e := Call(map[string]any{"method": "users.resolve", "ids": ids})
-	if e != nil {
-		return nil, e
+	b, err := Host(map[string]any{"method": "users.resolve", "ids": ids})
+	if err != nil {
+		return nil, err
 	}
-	var out struct {
-		OK     bool          `json:"ok"`
-		Result []UserProfile `json:"result"`
+	var out []UserProfile
+	if err = json.Unmarshal(b, &out); err != nil {
+		return nil, err
 	}
-	if json.Unmarshal(b, &out) != nil || !out.OK {
-		return nil, errors.New("resolução de usuários recusada")
-	}
-	return out.Result, nil
+	return out, nil
 }
