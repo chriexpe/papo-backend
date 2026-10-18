@@ -176,3 +176,8 @@ func RequireManageRoles() echo.MiddlewareFunc {
 func RequireManageWebhooks() echo.MiddlewareFunc {
 	return RequireRolePermission(func(p models.RolePermissions) bool { return p.ManageWebhooks })
 }
+
+// RequireManageApps autoriza a gestão de instalações com a permissão manage_apps.
+func RequireManageApps() echo.MiddlewareFunc {
+	return RequireRolePermission(func(p models.RolePermissions) bool { return p.ManageApps })
+}

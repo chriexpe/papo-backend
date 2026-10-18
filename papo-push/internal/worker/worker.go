@@ -215,6 +215,17 @@ func buildMessage(payload models.PushJobPayload, preview string) delivery.Messag
 		"message_id": payload.MessageID,
 		"channel_id": payload.ChannelID,
 	}
+	if payload.AppInstallationID != "" {
+		data["app_installation_id"] = payload.AppInstallationID
+	}
+	if payload.Type == "app_invite" {
+		if preview == "generic" {
+			body = payload.Author + " enviou um convite"
+		}
+		if preview == "hidden" {
+			body = "Novo convite"
+		}
+	}
 	if payload.NotificationID != nil {
 		data["notification_id"] = *payload.NotificationID
 	}

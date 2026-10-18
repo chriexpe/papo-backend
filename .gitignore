@@ -74,3 +74,6 @@ __pycache__
 .moderation
 safety-xs-v1.onnx
 papo-push
+# Pastas canônicas de plugins instalados localmente (exemplos são versionados).
+/plugins/
+/backend/plugins/

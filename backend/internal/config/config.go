@@ -18,6 +18,9 @@ type Config struct {
 	JWTSecret         string
 	HMACSecret        string
 	BaseURL           string
+	AppsOrigin        string
+	AppEmbedMaxWidth  int
+	AppEmbedMaxHeight int
 	MaxUsernameLength int
 	MinPasswordLength int
 	MaxPasswordLength int
@@ -54,6 +57,10 @@ type Config struct {
 	// pela rotina de manutenção (services.RunMaintenance), que roda no boot e
 	// a cada 12h.
 	LogDuration time.Duration
+
+	// Snapshots de apps: idade máxima e teto de entregas por instalação.
+	AppEventRetention     time.Duration
+	AppEventMaxDeliveries int
 
 	// Voz/câmera (SFU embutido, WEBRTC_PAPO.md). STUN/TURN vazios por padrão:
 	// em LAN o ICE resolve direto; TURN (com TURN_SECRET) é requisito para
@@ -135,6 +142,9 @@ func LoadConfig() *Config {
 		JWTSecret:         getEnv("JWT_SECRET", ""),
 		HMACSecret:        getEnv("HMAC_SECRET", ""),
 		BaseURL:           getEnv("BASE_URL", "https://papo.com/"),
+		AppsOrigin:        getEnv("APPS_ORIGIN", ""),
+		AppEmbedMaxWidth:  getEnvInt("APP_EMBED_MAX_WIDTH", 560),
+		AppEmbedMaxHeight: getEnvInt("APP_EMBED_MAX_HEIGHT", 420),
 		MaxUsernameLength: getEnvInt("MAX_USERNAME_LENGTH", 16),
 		MinPasswordLength: getEnvInt("MIN_PASSWORD_LENGTH", 8),
 		MaxPasswordLength: getEnvInt("MAX_PASSWORD_LENGTH", 64),
@@ -169,6 +179,9 @@ func LoadConfig() *Config {
 		RobotsCacheTTL:       time.Duration(getEnvInt("ROBOTS_CACHE_TTL", 3600)) * time.Second,
 		PreviewFetchRateGlob: getEnvInt("PREVIEW_FETCH_RATE_GLOBAL", 30),
 		PreviewFetchRateUser: getEnvInt("PREVIEW_FETCH_RATE_PER_USER", 10),
+
+		AppEventRetention:     time.Duration(getEnvInt("APP_EVENT_RETENTION_DAYS", 7)) * 24 * time.Hour,
+		AppEventMaxDeliveries: getEnvInt("APP_EVENT_MAX_DELIVERIES", 10000),
 
 		LogDuration: time.Duration(getEnvInt("LOG_DURATION", 90)) * 24 * time.Hour,
 

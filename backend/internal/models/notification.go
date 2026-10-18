@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Tipos de configuração de notificação por canal (channel_user_settings).
 // Ausência de row equivale a NotificationTypeOnlyMentions (padrão).
@@ -42,13 +45,18 @@ type ChannelNotificationCandidate struct {
 // /users/:user_id/notifications), com o preview do conteúdo da mensagem
 // truncado a 512 caracteres.
 type NotificationSummary struct {
-	ID             string    `json:"id"`
-	MessageID      string    `json:"message_id"`
-	ChannelID      string    `json:"channel_id"`
-	AuthorID       *string   `json:"author_id"`
-	MessageContent string    `json:"message_content"`
-	Read           bool      `json:"read"`
-	CreatedAt      time.Time `json:"created_at"`
+	Kind              string          `json:"kind"`
+	AppInstallationID *string         `json:"app_installation_id,omitempty"`
+	Payload           json.RawMessage `json:"payload,omitempty"`
+	ExpiresAt         *time.Time      `json:"expires_at,omitempty"`
+	InviteStatus      *string         `json:"invite_status,omitempty"`
+	ID                string          `json:"id"`
+	MessageID         string          `json:"message_id"`
+	ChannelID         string          `json:"channel_id"`
+	AuthorID          *string         `json:"author_id"`
+	MessageContent    string          `json:"message_content"`
+	Read              bool            `json:"read"`
+	CreatedAt         time.Time       `json:"created_at"`
 }
 
 // NotificationList é a resposta de GET /users/:user_id/notifications
@@ -56,4 +64,16 @@ type NotificationSummary struct {
 type NotificationList struct {
 	Notifications []NotificationSummary `json:"notifications"`
 	HasMore       bool                  `json:"has_more"`
+}
+
+// MarshalJSON representa a ausência de mensagem em convites sem alterar notificações antigas.
+func (n NotificationSummary) MarshalJSON() ([]byte, error) {
+	type plain NotificationSummary
+	if n.Kind == "app_invite" {
+		return json.Marshal(struct {
+			plain
+			MessageID *string `json:"message_id"`
+		}{plain(n), nil})
+	}
+	return json.Marshal(plain(n))
 }

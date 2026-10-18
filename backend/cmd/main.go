@@ -5,18 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"time"
 
+	"papo/internal/appevents"
+	"papo/internal/appgateway"
 	"papo/internal/config"
 	"papo/internal/handlers"
 	"papo/internal/middleware"
 	"papo/internal/moderation"
+	"papo/internal/pluginbundle"
 	"papo/internal/push"
 	"papo/internal/services"
 	"papo/internal/storage"
 	"papo/internal/utils"
+	"papo/internal/wasmhost"
 	"papo/internal/webrtc"
 	"papo/internal/websocket"
 
@@ -117,6 +122,12 @@ func main() {
 	defer stopPush()
 	push.Init(cfg, pushCtx)
 
+	// Eventos de apps têm ciclo de vida próprio e SQL cancelável no shutdown.
+	// O dispatcher acorda os consumidores do gateway depois de atribuir entregas.
+	appGateway := appgateway.NewRegistry()
+	appEvents := appevents.Start(context.Background(), cfg.AppEventRetention, cfg.AppEventMaxDeliveries, appGateway.Wake)
+	defer appEvents.Shutdown()
+
 	e := echo.New()
 
 	// IP do cliente (echo.Echo.IPExtractor): o fallback legacy do Echo confia
@@ -175,7 +186,7 @@ func main() {
 	// (POST /webhooks/:webhook_id/messages) são dispensados aqui e usam o
 	// próprio limite de upload (110MB) registrado na rota.
 	e.Use(middleware.BodyLimit(middleware.MaxJSONBodySize, func(c echo.Context) bool {
-		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages"
+		return c.Path() == "/messages" || c.Path() == "/webhooks/:webhook_id/messages" || c.Path() == "/app/channels/:channel_id/messages"
 	}))
 
 	e.GET("/health", handlers.HealthHandler)
@@ -187,6 +198,40 @@ func main() {
 	handlers.RegisterDirectMessageRoutes(e, cfg)
 	handlers.RegisterMessageRoutes(e, cfg)
 	handlers.RegisterWebhookRoutes(e, cfg)
+	pluginConfig, err := pluginbundle.LoadConfig()
+	if err != nil {
+		utils.Fatal(err.Error())
+	}
+	hostLimits := wasmhost.DefaultLimits()
+	hostLimits.ArtifactBytes = int(pluginConfig.WasmBytes)
+	pluginHost, err := wasmhost.New(context.Background(), hostLimits)
+	if err != nil {
+		utils.Errorf("falha ao iniciar plugins: %v", err)
+		return
+	}
+	defer pluginHost.Close(context.Background())
+	pluginManager, err := services.NewPluginManager(pluginConfig, pluginHost, handlers.PluginEffects())
+	if err != nil {
+		utils.Fatal(err.Error())
+	}
+	if _, err = config.AppStorageDefaults(); err != nil {
+		utils.Fatal(err.Error())
+	}
+	services.SetPluginSurfaceSource(pluginManager)
+	pluginCtx, stopPlugins := context.WithCancel(context.Background())
+	defer stopPlugins()
+	if err = pluginManager.Rescan(pluginCtx); err != nil {
+		utils.Fatal(err.Error())
+	}
+	pluginWatchDone := make(chan struct{})
+	go func() { defer close(pluginWatchDone); pluginManager.Watch(pluginCtx) }()
+	defer func() { stopPlugins(); <-pluginWatchDone }()
+	handlers.RegisterPluginRoutes(e, cfg.BaseURL, pluginManager)
+	handlers.RegisterAppInteractionRoutes(e, cfg.BaseURL, pluginManager)
+	stopAppCleanup := pluginManager.StartInteractionCleanup(pluginCtx)
+	defer stopAppCleanup()
+	handlers.RegisterAppRoutes(e, cfg, appGateway)
+	defer appGateway.Shutdown()
 	handlers.RegisterAttachmentRoutes(e, cfg)
 	handlers.RegisterMediaRoutes(e, cfg)
 	handlers.RegisterEmbedRoutes(e, cfg)
@@ -198,7 +243,7 @@ func main() {
 
 	addr := fmt.Sprintf(":%s", cfg.ServerPort)
 	go func() {
-		if err := e.Start(addr); err != nil {
+		if err := e.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			utils.Fatal("Falha ao iniciar o servidor: " + err.Error())
 		}
 	}()
@@ -210,9 +255,14 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Conexões promovidas a WebSocket não são encerradas por http.Server.Shutdown.
+	stopPlugins()
+	appGateway.Shutdown()
 	if err := e.Shutdown(ctx); err != nil {
 		utils.Fatal("Falha ao desligar o servidor: " + err.Error())
 	}
+
+	appEvents.Shutdown()
 
 	// Encerra a moderação de imagens (workers da fila + processo Python).
 	moderation.Shutdown()

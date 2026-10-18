@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"encoding/json"
 	"time"
 
 	"papo/internal/models"
@@ -14,6 +15,7 @@ const (
 	EventTypeMessageEdit         EventType = "message_edit"
 	EventTypeMessageDelete       EventType = "message_delete"
 	EventTypeMessagePin          EventType = "message_pin"
+	EventTypeAppInvalidate       EventType = "app_invalidate"
 	EventTypeChannelCreate       EventType = "channel_create"
 	EventTypeChannelUpdate       EventType = "channel_update"
 	EventTypeChannelDelete       EventType = "channel_delete"
@@ -177,27 +179,30 @@ type ScreenShareStopInbound struct {
 // ReplyTo é a mensagem referenciada (null quando a mensagem não é uma
 // resposta); pode apontar para uma mensagem já excluída (apontador pendente).
 type MessageOutbound struct {
-	Type      EventType `json:"type"`
-	ID        string    `json:"id"`
-	ChannelID string    `json:"channel_id"`
-	AuthorID  string    `json:"author_id"`
+	Components [][]models.AppButton `json:"components,omitempty"`
+	Type       EventType            `json:"type"`
+	ID         string               `json:"id"`
+	ChannelID  string               `json:"channel_id"`
+	AuthorID   string               `json:"author_id"`
 	// WebhookID/ExternalAuthor estão presentes somente em mensagens enviadas
 	// por webhook (author_id vazio nesse caso).
-	WebhookID      *string                    `json:"webhook_id,omitempty"`
-	ExternalAuthor *models.ExternalAuthor     `json:"external_author,omitempty"`
-	Content        string                     `json:"content"`
-	CreatedAt      time.Time                  `json:"created_at"`
-	ReplyTo        *string                    `json:"reply_to"`
-	Attachments    []models.MessageAttachment `json:"attachments,omitempty"`
+	AppInstallationID *string                    `json:"app_installation_id,omitempty"`
+	WebhookID         *string                    `json:"webhook_id,omitempty"`
+	ExternalAuthor    *models.ExternalAuthor     `json:"external_author,omitempty"`
+	Content           string                     `json:"content"`
+	CreatedAt         time.Time                  `json:"created_at"`
+	ReplyTo           *string                    `json:"reply_to"`
+	Attachments       []models.MessageAttachment `json:"attachments,omitempty"`
 }
 
 // MessageEditOutbound é o evento de edição de mensagem distribuído aos clientes.
 type MessageEditOutbound struct {
-	Type      EventType `json:"type"`
-	ID        string    `json:"id"`
-	ChannelID string    `json:"channel_id"`
-	Content   string    `json:"content"`
-	EditedAt  time.Time `json:"edited_at"`
+	Components *[][]models.AppButton `json:"components,omitempty"`
+	Type       EventType             `json:"type"`
+	ID         string                `json:"id"`
+	ChannelID  string                `json:"channel_id"`
+	Content    string                `json:"content"`
+	EditedAt   time.Time             `json:"edited_at"`
 }
 
 // MessageDeleteOutbound é o evento de exclusão de mensagem distribuído aos clientes.
@@ -262,22 +267,24 @@ type MessagePinOutbound struct {
 // ChannelCreateOutbound é o evento de criação de canal distribuído aos clientes.
 // Topic é null para canais category (ou sem tópico).
 type ChannelCreateOutbound struct {
-	Type        EventType `json:"type"`
-	ChannelID   string    `json:"channel_id"`
-	Name        string    `json:"name"`
-	ChannelType string    `json:"channel_type"`
-	Position    int       `json:"position"`
-	Topic       *string   `json:"topic"`
+	App         *models.AppChannel `json:"app,omitempty"`
+	Type        EventType          `json:"type"`
+	ChannelID   string             `json:"channel_id"`
+	Name        string             `json:"name"`
+	ChannelType string             `json:"channel_type"`
+	Position    int                `json:"position"`
+	Topic       *string            `json:"topic"`
 }
 
 // ChannelUpdateOutbound é o evento de atualização de canal distribuído aos clientes.
 // Topic é null para canais category (ou sem tópico).
 type ChannelUpdateOutbound struct {
-	Type      EventType `json:"type"`
-	ChannelID string    `json:"channel_id"`
-	Name      string    `json:"name"`
-	Position  int       `json:"position"`
-	Topic     *string   `json:"topic"`
+	App       *models.AppChannel `json:"app,omitempty"`
+	Type      EventType          `json:"type"`
+	ChannelID string             `json:"channel_id"`
+	Name      string             `json:"name"`
+	Position  int                `json:"position"`
+	Topic     *string            `json:"topic"`
 }
 
 // ChannelDeleteOutbound é o evento de exclusão de canal distribuído aos clientes.
@@ -367,9 +374,32 @@ type ErrorOutbound struct {
 // quando a configuração 'all' gera evento sem row); UserID é o autor da
 // mensagem; MessageContent é o conteúdo truncado a 512 caracteres.
 type NewNotificationOutbound struct {
-	Type           EventType `json:"type"`
-	ID             string    `json:"id"`
-	UserID         string    `json:"user_id"`
-	MessageID      string    `json:"message_id"`
-	MessageContent string    `json:"message_content"`
+	Kind              string     `json:"kind,omitempty"`
+	AppInstallationID string     `json:"app_installation_id,omitempty"`
+	Payload           any        `json:"payload,omitempty"`
+	ExpiresAt         *time.Time `json:"expires_at,omitempty"`
+	Type              EventType  `json:"type"`
+	ID                string     `json:"id"`
+	UserID            string     `json:"user_id"`
+	MessageID         string     `json:"message_id"`
+	MessageContent    string     `json:"message_content"`
+}
+
+// AppInvalidateOutbound requires destroying live surfaces and fetching fresh payloads.
+// It never grants authority or automatically reactivates historical embeds.
+type AppInvalidateOutbound struct {
+	Type              EventType `json:"type"`
+	AppInstallationID string    `json:"app_installation_id"`
+}
+
+// MarshalJSON permite message_id nulo somente no novo tipo de convite.
+func (n NewNotificationOutbound) MarshalJSON() ([]byte, error) {
+	type plain NewNotificationOutbound
+	if n.Kind == "app_invite" {
+		return json.Marshal(struct {
+			plain
+			MessageID *string `json:"message_id"`
+		}{plain(n), nil})
+	}
+	return json.Marshal(plain(n))
 }
