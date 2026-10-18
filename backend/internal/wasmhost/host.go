@@ -84,7 +84,14 @@ func New(ctx context.Context, l Limits) (*Host, error) {
 		l.ArtifactBytes < 1 || l.Deadline <= 0 {
 		return nil, fmt.Errorf("limites inválidos")
 	}
-	h := &Host{limits: l, slots: make(chan struct{}, l.Concurrency), compiler: make(chan struct{}, 1), cache: map[string]*compiled{}, states: map[string]*installation{}, runtimes: map[int]wazero.Runtime{}}
+	h := &Host{
+		limits:   l,
+		slots:    make(chan struct{}, l.Concurrency),
+		compiler: make(chan struct{}, 1),
+		cache:    map[string]*compiled{},
+		states:   map[string]*installation{},
+		runtimes: map[int]wazero.Runtime{},
+	}
 	r, err := h.newRuntime(ctx, 16)
 	if err != nil {
 		return nil, err
@@ -138,7 +145,11 @@ func validate(c wazero.CompiledModule) error {
 		return plugins.ErrInvalidArtifact
 	}
 	f := c.ExportedFunctions()
-	if !signature(f["alloc"], []api.ValueType{i32}, []api.ValueType{i32}) || !signature(f["free"], []api.ValueType{i32}, nil) || !signature(f["invoke"], []api.ValueType{i32, i32}, []api.ValueType{i64}) || !signature(f["_initialize"], nil, nil) || f["_start"] != nil {
+	exports := signature(f["alloc"], []api.ValueType{i32}, []api.ValueType{i32}) &&
+		signature(f["free"], []api.ValueType{i32}, nil) &&
+		signature(f["invoke"], []api.ValueType{i32, i32}, []api.ValueType{i64}) &&
+		signature(f["_initialize"], nil, nil)
+	if !exports || f["_start"] != nil {
 		return plugins.ErrInvalidArtifact
 	}
 	return nil

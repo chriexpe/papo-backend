@@ -161,7 +161,7 @@ fallback por plataforma. Não são implementados frontend, runtime, botões ou
 `app_invalidate` nesta correção. Persistência futura da página pertence ao
 `app_storage` da PR 5, sem bridge/SDK privilegiado.
 
-## Interações e ponte HTTP confinada (§10)
+## Interações e ponte HTTP confinada
 
 A UI não recebe credenciais Papo ou bridge nativa. O cliente autenticado obtém um
  ticket de lançamento e o entrega somente no fragmento `#papo_ticket=...`.

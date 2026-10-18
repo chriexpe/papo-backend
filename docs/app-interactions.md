@@ -1,7 +1,8 @@
-# Interações, convites e ponte UI — PR 5
+# Interações, convites e ponte UI
 
-A implementação inclui §9.0 e §10.1–10.4 do plano v7, depois do merge C4.
-Não inclui on_event, comandos ou SSE. Domínio não importa wazero.
+Botões em mensagens de plugins, ações de usuário nos canais app, convites e a
+ponte HTTP entre a UI isolada e o plugin. Não inclui on_event, comandos ou SSE.
+O domínio não importa wazero.
 
 ## Mensagens e ações
 
@@ -11,7 +12,7 @@ até duas linhas de cinco botões. `id` é único por mensagem (1–64 caractere
 é booleano. `opens` opcional referencia somente superfície embed própria.
 Esse botão abre diretamente o frame e pede launch; não chama on_interaction.
 Uma mensagem pode conter só botões. Cards nativos continuam permitidos, junto
-de no máximo um frame. O contrato de frames da C4 permanece size/load/display/poster.
+de no máximo um frame. O contrato de frames continua size/load/display/poster (docs/app-surfaces.md).
 
 Listagem e fixados hidratam os botões atuais; instalações indisponíveis os
 retornam desabilitados. WS `message` inclui components quando existem;

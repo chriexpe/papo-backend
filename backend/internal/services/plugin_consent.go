@@ -67,7 +67,23 @@ func (m *PluginManager) Preview(ctx context.Context, actor, id string, o PluginO
 
 // preview resolve valores e fontes sem conceder nada nem instanciar Wasm.
 func (m *PluginManager) preview(ctx context.Context, actor string, b pluginbundle.Bundle, o PluginOptions) (PluginPreview, error) {
-	p := PluginPreview{ID: b.Manifest.ID, Digest: b.Digest, Version: b.Manifest.Version, Name: b.Manifest.Name, Settings: map[string]any{}, RequestedPermissions: sorted(b.Manifest.Permissions.Request), Permissions: []string{}, BlockedPermissions: []string{}, Scopes: []string{}, ExplicitScopes: []string{}, Origins: []string{}, Surfaces: []AppSurfaceDeclaration{}, MaxMemoryMB: b.Manifest.Runtime.MaxMemoryMB, State: "discovered", ExpiresAt: o.ExpiresAt}
+	p := PluginPreview{
+		ID:                   b.Manifest.ID,
+		Digest:               b.Digest,
+		Version:              b.Manifest.Version,
+		Name:                 b.Manifest.Name,
+		Settings:             map[string]any{},
+		RequestedPermissions: sorted(b.Manifest.Permissions.Request),
+		Permissions:          []string{},
+		BlockedPermissions:   []string{},
+		Scopes:               []string{},
+		ExplicitScopes:       []string{},
+		Origins:              []string{},
+		Surfaces:             []AppSurfaceDeclaration{},
+		MaxMemoryMB:          b.Manifest.Runtime.MaxMemoryMB,
+		State:                "discovered",
+		ExpiresAt:            o.ExpiresAt,
+	}
 	if p.ExpiresAt == 0 {
 		p.ExpiresAt = time.Now().Add(15 * time.Minute).Unix()
 	}
@@ -296,7 +312,13 @@ func expanded(next, old []string) bool {
 
 // capabilities converte somente grants conhecidos para os checks comuns do REST.
 func capabilities(p []string) models.AppCapabilities {
-	return models.AppCapabilities{SendMessages: has(p, "send_messages"), ReadMessages: has(p, "read_messages"), PostAppEmbeds: has(p, "post_app_embeds"), PrivateStorage: has(p, "private_storage"), SendInvites: has(p, "send_invites")}
+	return models.AppCapabilities{
+		SendMessages:   has(p, "send_messages"),
+		ReadMessages:   has(p, "read_messages"),
+		PostAppEmbeds:  has(p, "post_app_embeds"),
+		PrivateStorage: has(p, "private_storage"),
+		SendInvites:    has(p, "send_invites"),
+	}
 }
 
 // jsonValue mantém uma representação SQL/JSON canônica sem expor objetos mutáveis.

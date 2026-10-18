@@ -183,7 +183,7 @@ func Parse(data []byte, c Config) (Manifest, error) {
 	return m, nil
 }
 
-// HTTPSOrigin faz validação sintática; o serviço aplica a política SSRF/DNS da PR 18.
+// HTTPSOrigin faz validação sintática; o serviço aplica a política SSRF/DNS das superfícies remotas.
 func HTTPSOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Port() != "" && u.Port() != "443") || len(raw) > 2048 {
@@ -192,7 +192,7 @@ func HTTPSOrigin(raw string) (string, error) {
 	return "https://" + strings.ToLower(u.Host), nil
 }
 
-// UIExtension coincide com o allowlist da rota pública da PR 18.
+// UIExtension coincide com o allowlist da rota pública de UI (handlers.AppUIHandler).
 func UIExtension(name string) bool {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".html", ".css", ".js", ".mjs", ".json", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".otf", ".txt", ".wasm":

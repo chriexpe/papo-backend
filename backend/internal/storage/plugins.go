@@ -8,7 +8,11 @@ import (
 
 // FindPlugin consulta a instalação persistente associada à pasta, inclusive desativada.
 func FindPlugin(ctx context.Context, key string) (models.AppInstallation, error) {
-	return scanApp(GetDB().QueryRowContext(ctx, "SELECT "+appColumns+" FROM app_installations WHERE app_key=$1 AND kind='plugin' AND revoked_at IS NULL ORDER BY created_at,id LIMIT 1", key))
+	return scanApp(GetDB().QueryRowContext(ctx,
+		"SELECT "+appColumns+` FROM app_installations
+		 WHERE app_key = $1 AND kind = 'plugin' AND revoked_at IS NULL
+		 ORDER BY created_at, id LIMIT 1`,
+		key))
 }
 
 // PluginApproval reúne os metadados que o consentimento aprovou exatamente.
@@ -33,12 +37,18 @@ func SavePlugin(ctx context.Context, p PluginApproval) (models.AppInstallation, 
 	if _, err = tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,1))", p.Key); err != nil {
 		return models.AppInstallation{}, err
 	}
-	a, err := scanApp(tx.QueryRowContext(ctx, "SELECT "+appColumns+" FROM app_installations WHERE app_key=$1 AND kind='plugin' AND revoked_at IS NULL ORDER BY created_at,id LIMIT 1 FOR UPDATE", p.Key))
+	a, err := scanApp(tx.QueryRowContext(ctx,
+		"SELECT "+appColumns+` FROM app_installations
+		 WHERE app_key = $1 AND kind = 'plugin' AND revoked_at IS NULL
+		 ORDER BY created_at, id LIMIT 1 FOR UPDATE`,
+		p.Key))
 	if err == ErrNotFound {
 		if p.ExpectedRevision != 0 {
 			return a, ErrUniqueViolation
 		}
-		a, err = scanApp(tx.QueryRowContext(ctx, "INSERT INTO app_installations(app_key,kind,name,created_by) VALUES($1,'plugin',$2,$3) RETURNING "+appColumns, p.Key, p.Name, p.Actor))
+		a, err = scanApp(tx.QueryRowContext(ctx,
+			"INSERT INTO app_installations (app_key, kind, name, created_by) VALUES ($1, 'plugin', $2, $3) RETURNING "+appColumns,
+			p.Key, p.Name, p.Actor))
 	}
 	if err != nil {
 		return a, err
@@ -47,7 +57,15 @@ func SavePlugin(ctx context.Context, p PluginApproval) (models.AppInstallation, 
 		return a, ErrUniqueViolation
 	}
 	caps, _ := json.Marshal(p.Capabilities)
-	_, err = tx.ExecContext(ctx, `UPDATE app_installations SET name=$2,plugin_digest=$3,version=$4,settings=$5,approved_origins=$6,approved_permissions=$7,plugin_surfaces=$8,max_memory_mb=$9,capabilities=$10,state='enabled',lifecycle_pending=true,explicit_scopes=$12,avatar_media=$11,plugin_revision=plugin_revision+1,storage_quota=$13 WHERE id=$1`, a.ID, p.Name, p.Digest, p.Version, p.Settings, p.Origins, p.Permissions, p.Surfaces, p.MemoryMB, string(caps), p.Avatar, p.ExplicitScopes, string(mustQuotaJSON(p.StorageQuota)))
+	_, err = tx.ExecContext(ctx,
+		`UPDATE app_installations SET
+		     name = $2, plugin_digest = $3, version = $4, settings = $5, approved_origins = $6,
+		     approved_permissions = $7, plugin_surfaces = $8, max_memory_mb = $9, capabilities = $10,
+		     state = 'enabled', lifecycle_pending = true, explicit_scopes = $12, avatar_media = $11,
+		     plugin_revision = plugin_revision + 1, storage_quota = $13
+		 WHERE id = $1`,
+		a.ID, p.Name, p.Digest, p.Version, p.Settings, p.Origins, p.Permissions, p.Surfaces, p.MemoryMB,
+		string(caps), p.Avatar, p.ExplicitScopes, string(mustQuotaJSON(p.StorageQuota)))
 	if err != nil {
 		return a, err
 	}
@@ -59,7 +77,9 @@ func SavePlugin(ctx context.Context, p PluginApproval) (models.AppInstallation, 
 		creator = a.CreatedBy
 	}
 	for _, scope := range p.Scopes {
-		if _, err = tx.ExecContext(ctx, "INSERT INTO app_channel_scopes(app_installation_id,channel_id,created_by) VALUES($1,$2,$3)", a.ID, scope, creator); err != nil {
+		if _, err = tx.ExecContext(ctx,
+			"INSERT INTO app_channel_scopes (app_installation_id, channel_id, created_by) VALUES ($1, $2, $3)",
+			a.ID, scope, creator); err != nil {
 			return a, err
 		}
 	}
@@ -76,7 +96,12 @@ func SetPluginState(ctx context.Context, id, state string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, "UPDATE app_installations SET state=$2,lifecycle_pending=false,plugin_revision=plugin_revision+1, capabilities=CASE WHEN $2 IN ('disabled','removed') THEN '{}'::jsonb ELSE capabilities END WHERE id=$1 AND kind='plugin'", id, state); err != nil {
+	if _, err = tx.ExecContext(ctx,
+		`UPDATE app_installations SET
+		     state = $2, lifecycle_pending = false, plugin_revision = plugin_revision + 1,
+		     capabilities = CASE WHEN $2 IN ('disabled', 'removed') THEN '{}'::jsonb ELSE capabilities END
+		 WHERE id = $1 AND kind = 'plugin'`,
+		id, state); err != nil {
 		return err
 	}
 	if state == "disabled" || state == "removed" {
@@ -92,7 +117,11 @@ func SetPluginState(ctx context.Context, id, state string) error {
 
 // QuarantinePlugin não sobrescreve aprovação concorrente de outro digest.
 func QuarantinePlugin(ctx context.Context, id, digest string) error {
-	_, err := GetDB().ExecContext(ctx, "UPDATE app_installations SET state='quarantined',lifecycle_pending=false,plugin_revision=plugin_revision+1 WHERE id=$1 AND plugin_digest=$2 AND state='enabled'", id, digest)
+	_, err := GetDB().ExecContext(ctx,
+		`UPDATE app_installations
+		 SET state = 'quarantined', lifecycle_pending = false, plugin_revision = plugin_revision + 1
+		 WHERE id = $1 AND plugin_digest = $2 AND state = 'enabled'`,
+		id, digest)
 	return err
 }
 
@@ -116,7 +145,8 @@ func PluginScopes(ctx context.Context, id string) ([]string, error) {
 
 // ListPluginInstallations permite reconciliar remoções mesmo após reiniciar o processo.
 func ListPluginInstallations(ctx context.Context) ([]models.AppInstallation, error) {
-	rows, err := GetDB().QueryContext(ctx, "SELECT "+appColumns+" FROM app_installations WHERE kind='plugin' AND revoked_at IS NULL ORDER BY created_at DESC,id DESC")
+	rows, err := GetDB().QueryContext(ctx,
+		"SELECT "+appColumns+" FROM app_installations WHERE kind = 'plugin' AND revoked_at IS NULL ORDER BY created_at DESC, id DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +164,10 @@ func ListPluginInstallations(ctx context.Context) ([]models.AppInstallation, err
 
 // FinishPlugin publica a ativação somente depois dos hooks e do callback com sucesso.
 func FinishPlugin(ctx context.Context, id string, revision int64) error {
-	r, err := GetDB().ExecContext(ctx, "UPDATE app_installations SET lifecycle_pending=false,plugin_revision=plugin_revision+1 WHERE id=$1 AND plugin_revision=$2 AND state='enabled' AND lifecycle_pending", id, revision)
+	r, err := GetDB().ExecContext(ctx,
+		`UPDATE app_installations SET lifecycle_pending = false, plugin_revision = plugin_revision + 1
+		 WHERE id = $1 AND plugin_revision = $2 AND state = 'enabled' AND lifecycle_pending`,
+		id, revision)
 	if err != nil {
 		return err
 	}
